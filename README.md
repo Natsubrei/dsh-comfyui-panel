@@ -16,7 +16,7 @@ P0 of a zero-install ComfyUI integration for the DeepSeek Harness Web UI.
   stream (queue status, `execution_start`, `executing`, `progress`, `executed`,
   `execution_success` / `execution_error` / `execution_interrupted`) to
   `/api/comfyui/events`, so the Host sees runs without polling.
-- Registers four model tools:
+- Registers six model tools:
   - `comfyui_status` — upstream reachability, the last synced workflow, and the
     latest run state.
   - `comfyui_graph_read` — read the last synced UI workflow (summary or full).
@@ -24,6 +24,12 @@ P0 of a zero-install ComfyUI integration for the DeepSeek Harness Web UI.
     the `prompt_id`; optionally wait for history.
   - `comfyui_progress` — the latest panel events (current node, step progress,
     errors), the run record, and a live `/queue` snapshot.
+- Adds a Host → panel command channel. `comfyui_edit` queues an edit for the
+  session; the panel long-polls `/api/comfyui/commands/poll`, applies the edit
+  inside the iframe (add/remove node, set widget, connect/disconnect), re-syncs
+  the workflow, and posts the outcome to `/api/comfyui/commands/result`.
+  `comfyui_node_info` reads a cached `/object_info` so the model can look up
+  class types and input names before editing.
 
 ## Configuration
 
@@ -71,10 +77,12 @@ Run the host smoke test with:
 node test/host-smoke.mjs
 ```
 
-## Current limits (P0)
+## Current limits
 
-- Model graph **edits** are not implemented yet; the model can read the last
-  synced graph and run it.
+- Edits require the ComfyUI panel to be open in the same session; the command
+  channel is a long-poll and the panel applies operations inside the iframe.
+- `comfyui_edit` does not validate the graph semantics; a bad edit is rejected
+  by ComfyUI when it converts the graph to a prompt.
 - Sync is polling-based (about once per second while the tab is open).
 - Verified against a live ComfyUI 0.42.0 (CUDA) with
   Qwen-Image 2.1 Turbo int8: the panel loads the real frontend through the
@@ -86,17 +94,16 @@ node test/host-smoke.mjs
   the next milestone.
 - The panel is an iframe, so it does not inherit DSH theme tokens; this is a
   deliberate exception for UI-workflow fidelity and all third-party node UIs.
-- Graph sync is still polling-based (~1.2 s). Execution events are pushed over
-  the panel's own ComfyUI WebSocket, so progress and errors are near real-time,
-  but they only exist while the panel is mounted.
-- There is no Host → panel command channel yet; the model can observe a run but
-  cannot edit the graph.
+- Execution events are pushed over the panel's own ComfyUI WebSocket, so
+  progress and errors are near real-time, but they only exist while the panel
+  is mounted.
 
 ## Next
 
-1. Add a Host → panel command channel (SSE or long-poll) and use it to apply
-   edits: add/remove node, set widget value, connect/disconnect.
-2. Derive a semantic projection of the UI workflow for the model (ids, types,
-   widget values, links) instead of raw JSON.
-3. Scope tools per session and add a one-line `systemPrompt.context` digest.
-4. Persist workflows with `storageDomain`.
+1. Derive a semantic projection of the UI workflow for the model (ids, types,
+   widget values, links) instead of raw JSON, and expose it through
+   `comfyui_graph_read`.
+2. Scope tools per session and add a one-line `systemPrompt.context` digest.
+3. Persist workflows with `storageDomain`.
+4. Keep the ComfyUI process alive (or start it from the panel) so reopening the
+   tab does not wait for a cold boot.

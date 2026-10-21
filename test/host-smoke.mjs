@@ -45,6 +45,18 @@ const upstream = http.createServer((req, res) => {
     res.end('console.log("app")')
     return
   }
+  if (req.url === '/object_info') {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({
+      KSampler: {
+        category: 'sampling',
+        input: { required: { model: ['MODEL', {}], seed: ['INT', {}], steps: ['INT', {}] } },
+        output: ['LATENT'],
+        output_name: ['LATENT'],
+      },
+    }))
+    return
+  }
   if (req.url === '/queue') {
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ queue_running: [], queue_pending: [] }))
@@ -129,6 +141,41 @@ assert.match(progress.text, /"value": 3/)
 assert.match(progress.text, /"max": 8/)
 assert.match(progress.text, /"pending": 0/)
 assert.match(progress.text, /"hasPanelEvents": true/)
+
+const nodeInfo = await tools.get('comfyui_node_info').execute({ type: 'KSampler' }, exec)
+assert.match(nodeInfo.text, /"model"/)
+const searched = await tools.get('comfyui_node_info').execute({ search: 'ksam' }, exec)
+assert.match(searched.text, /KSampler/)
+
+// Simulate the open panel: keep a long-poll pending, enqueue an edit, answer it.
+const pollPromise = fetches.get('/api/comfyui/commands/poll').fetch(new Request(
+  'http://127.0.0.1/api/comfyui/commands/poll',
+  { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 's1', timeoutMs: 3000 }) },
+))
+await new Promise(resolve => setTimeout(resolve, 50))
+const editPromise = tools.get('comfyui_edit').execute({ operations: [{ op: 'set_widget', id: 7, name: 'steps', value: 8 }] }, exec)
+const polled = await (await pollPromise).json()
+assert.equal(polled.command.operations[0].op, 'set_widget')
+const answered = await fetches.get('/api/comfyui/commands/result').fetch(new Request(
+  'http://127.0.0.1/api/comfyui/commands/result',
+  {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId: 's1', id: polled.command.id, ok: true, value: { applied: 1 } }),
+  },
+))
+assert.equal((await answered.json()).accepted, true)
+const edited = await editPromise
+assert.match(edited.text, /"applied": 1/)
+
+// A session without a connected panel must be refused instead of hanging.
+await assert.rejects(
+  () => tools.get('comfyui_edit').execute(
+    { operations: [{ op: 'remove_node', id: 1 }] },
+    { agent: { session: { id: 's2' } }, signal: new AbortController().signal },
+  ),
+  /not connected/,
+)
 
 console.log('P0 host smoke test passed')
 

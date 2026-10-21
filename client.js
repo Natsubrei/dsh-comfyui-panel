@@ -19,6 +19,8 @@ window.__ModuleLoader__.load({
     const PANEL_URL = '/comfyui/'
     const STATE_URL = '/api/comfyui/state'
     const EVENT_URL = '/api/comfyui/events'
+    const COMMAND_POLL_URL = '/api/comfyui/commands/poll'
+    const COMMAND_RESULT_URL = '/api/comfyui/commands/result'
 
     const en = {
       title: 'ComfyUI',
@@ -172,6 +174,72 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function findNode(graph, id) {
+      if (typeof graph.getNodeById === 'function') return graph.getNodeById(id)
+      return graph._nodes_by_id?.[id] ?? (Array.isArray(graph._nodes) ? graph._nodes.find(node => node.id === id) : undefined)
+    }
+
+    function coerceWidgetValue(widget, value) {
+      if (widget === undefined) return value
+      if (typeof widget.value === 'number') {
+        const number = typeof value === 'number' ? value : Number(value)
+        if (Number.isFinite(number)) return number
+      }
+      if (typeof widget.value === 'boolean') return value === true || value === 'true'
+      if (typeof widget.value === 'string') return String(value)
+      return value
+    }
+
+    /** Apply one host edit inside the iframe's LiteGraph editor. */
+    function applyOperation({ graph, LiteGraph, app, operation }) {
+      const op = operation?.op
+      if (op === 'add_node') {
+        const node = LiteGraph.createNode(operation.type)
+        if (node === undefined || node === null) throw new Error(`Unknown node type "${operation.type}"`)
+        if (Array.isArray(operation.pos)) node.pos = operation.pos
+        if (Number.isInteger(operation.id)) node.id = operation.id
+        graph.add(node)
+        for (const [name, value] of Object.entries(operation.widgets ?? {})) {
+          const widget = node.widgets?.find(candidate => candidate.name === name)
+          if (widget === undefined) throw new Error(`Node ${node.id} (${operation.type}) has no widget "${name}"`)
+          widget.value = coerceWidgetValue(widget, value)
+          widget.callback?.(widget.value, app?.canvas, node)
+        }
+        graph.setDirtyCanvas?.(true, true)
+        return { op, id: node.id, type: node.type }
+      }
+      const node = findNode(graph, operation.id)
+      if (node === undefined || node === null) throw new Error(`Node ${operation.id} not found`)
+      if (op === 'remove_node') {
+        graph.remove(node)
+        graph.setDirtyCanvas?.(true, true)
+        return { op, id: operation.id }
+      }
+      if (op === 'set_widget') {
+        const widget = node.widgets?.find(candidate => candidate.name === operation.name)
+        if (widget === undefined) throw new Error(`Node ${operation.id} has no widget "${operation.name}"`)
+        widget.value = coerceWidgetValue(widget, operation.value)
+        widget.callback?.(widget.value, app?.canvas, node)
+        return { op, id: operation.id, name: operation.name, value: widget.value }
+      }
+      if (op === 'connect' || op === 'disconnect') {
+        const inputs = node.inputs ?? []
+        const slot = inputs.findIndex(input => input.name === operation.to?.input)
+        if (slot === -1) throw new Error(`Node ${node.id} has no input "${operation.to?.input}"`)
+        if (op === 'connect') {
+          const source = findNode(graph, operation.from?.id)
+          if (source === undefined || source === null) throw new Error(`Source node ${operation.from?.id} not found`)
+          source.connect(operation.from?.output ?? 0, node, slot)
+          return { op, from: operation.from, to: { id: node.id, input: operation.to?.input }, slot }
+        }
+        if (typeof node.disconnectInput === 'function') node.disconnectInput(slot)
+        else if (inputs[slot]?.link !== null && inputs[slot]?.link !== undefined) graph.removeLink(inputs[slot].link)
+        graph.setDirtyCanvas?.(true, true)
+        return { op, id: node.id, input: operation.to?.input }
+      }
+      throw new Error(`Unknown operation "${op}"`)
+    }
+
     function ComfyPanel({ sessionId, t }) {      const iframeRef = useRef(null)
       const appRef = useRef(null)
       const lastJsonRef = useRef('')
@@ -242,6 +310,62 @@ window.__ModuleLoader__.load({
         }
       }, [push, readApp, t])
       syncRef.current = syncNow
+
+      const applyOperations = useCallback(async (app, operations) => {
+        const win = iframeRef.current?.contentWindow
+        const LiteGraph = win?.LiteGraph
+        const graph = app.rootGraph ?? app.graph
+        if (graph === undefined || graph === null || LiteGraph === undefined) throw new Error('ComfyUI graph is not ready')
+        const applied = []
+        for (const operation of operations) {
+          applied.push(applyOperation({ graph, LiteGraph, app, operation }))
+        }
+        graph.setDirtyCanvas?.(true, true)
+        await syncNow(true)
+        return { applied: applied.length, operations: applied }
+      }, [syncNow])
+
+      const commandRef = useRef(null)
+      commandRef.current = applyOperations
+
+      useEffect(() => {
+        if (sessionId === undefined || sessionId === null) return undefined
+        let disposed = false
+        const loop = async () => {
+          while (!disposed) {
+            try {
+              const response = await fetch(COMMAND_POLL_URL, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ sessionId, timeoutMs: 20000 }),
+              })
+              if (!response.ok) throw new Error(`command poll HTTP ${response.status}`)
+              const data = await response.json()
+              const command = data?.command
+              if (command === undefined || command === null) continue
+              let payload
+              try {
+                const app = readApp()
+                if (app === null) throw new Error('The ComfyUI panel is still loading')
+                const value = await commandRef.current(app, command.operations ?? [])
+                payload = { sessionId, id: command.id, ok: true, value }
+              } catch (error) {
+                payload = { sessionId, id: command.id, ok: false, error: error instanceof Error ? error.message : String(error) }
+              }
+              await fetch(COMMAND_RESULT_URL, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(payload),
+              }).catch(() => {})
+            } catch {
+              if (disposed) break
+              await new Promise(resolve => setTimeout(resolve, 3000))
+            }
+          }
+        }
+        void loop()
+        return () => { disposed = true }
+      }, [readApp, sessionId])
 
       const postEvent = useCallback((event) => {
         if (sessionId === undefined || sessionId === null) return

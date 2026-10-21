@@ -31,6 +31,12 @@ export function apply(ctx, rawConfig = {}) {
   const sessions = new Map()
   /** sessionId -> { latest, runs: Map<promptId, run> } from the panel event socket */
   const progress = new Map()
+  /** sessionId -> { queue: command[], waiters: waiter[], lastPollAt } */
+  const commandQueues = new Map()
+  /** command id -> { resolve, timer } while comfyui_edit waits for the panel */
+  const pendingCommands = new Map()
+  /** cached /object_info for comfyui_node_info */
+  let objectInfoCache = { at: 0, data: null }
 
   ctx.logger?.info(`dsh-comfyui: upstream ${upstream.href}, panel ${prefix}/`)
 
@@ -66,7 +72,27 @@ export function apply(ctx, rawConfig = {}) {
   }, 'dsh-comfyui: event route')
 
   ctx.effect(() => {
-    const disposers = [statusTool(), graphReadTool(), runTool(), progressTool()].map(tool => ctx.tools.register(tool))
+    const dispose = ctx.connection.fetch.register({
+      path: '/api/comfyui/commands/poll',
+      methods: ['POST'],
+      requestBody: 'buffered',
+      fetch: request => bridgeCommandPoll(request),
+    })
+    return () => { void dispose() }
+  }, 'dsh-comfyui: command poll route')
+
+  ctx.effect(() => {
+    const dispose = ctx.connection.fetch.register({
+      path: '/api/comfyui/commands/result',
+      methods: ['POST'],
+      requestBody: 'buffered',
+      fetch: request => bridgeCommandResult(request),
+    })
+    return () => { void dispose() }
+  }, 'dsh-comfyui: command result route')
+
+  ctx.effect(() => {
+    const disposers = [statusTool(), graphReadTool(), runTool(), progressTool(), editTool(), nodeInfoTool()].map(tool => ctx.tools.register(tool))
     return () => {
       for (const dispose of disposers.reverse()) dispose()
     }
@@ -334,6 +360,77 @@ export function apply(ctx, rawConfig = {}) {
     return { latest: bucket.latest, run }
   }
 
+  // ── Command channel ─────────────────────────────────────────────────────
+  // `comfyui_edit` queues an edit for the session. The panel's long-poll picks
+  // it up, applies it inside the iframe, and posts the result back, because the
+  // editor can only be mutated in the browser.
+
+  function commandState(sessionId) {
+    let state = commandQueues.get(sessionId)
+    if (state === undefined) {
+      state = { queue: [], waiters: [], lastPollAt: 0 }
+      commandQueues.set(sessionId, state)
+    }
+    return state
+  }
+
+  function enqueueCommand(sessionId, command) {
+    const state = commandState(sessionId)
+    const waiter = state.waiters.shift()
+    if (waiter !== undefined) waiter.resolve(command)
+    else state.queue.push(command)
+  }
+
+  async function bridgeCommandPoll(request) {
+    let body
+    try {
+      body = JSON.parse(await request.text())
+    } catch {
+      return json({ ok: false, error: 'invalid JSON body' }, 400)
+    }
+    const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+    if (sessionId.length === 0) return json({ ok: false, error: 'sessionId is required' }, 400)
+    const timeoutMs = clamp(Number.isFinite(body?.timeoutMs) ? body.timeoutMs : 20000, 1000, 25000)
+    const state = commandState(sessionId)
+    state.lastPollAt = Date.now()
+    if (state.queue.length > 0) return json({ ok: true, command: state.queue.shift() })
+    return new Promise(resolve => {
+      let settled = false
+      const finish = value => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        const index = state.waiters.indexOf(waiter)
+        if (index !== -1) state.waiters.splice(index, 1)
+        resolve(value)
+      }
+      const timer = setTimeout(() => finish(json({ ok: true, command: null })), timeoutMs)
+      const waiter = { resolve: command => finish(json({ ok: true, command })) }
+      state.waiters.push(waiter)
+      request.signal?.addEventListener('abort', () => finish(json({ ok: false, error: 'poll aborted' }, 499)))
+    })
+  }
+
+  async function bridgeCommandResult(request) {
+    let body
+    try {
+      body = JSON.parse(await request.text())
+    } catch {
+      return json({ ok: false, error: 'invalid JSON body' }, 400)
+    }
+    const id = typeof body?.id === 'string' ? body.id : ''
+    const pending = pendingCommands.get(id)
+    if (pending === undefined) return json({ ok: true, accepted: false })
+    pendingCommands.delete(id)
+    clearTimeout(pending.timer)
+    pending.resolve({
+      ok: body?.ok !== false,
+      value: body?.value ?? null,
+      error: typeof body?.error === 'string' ? body.error.slice(0, 2000) : null,
+    })
+    return json({ ok: true, accepted: true })
+  }
+
   // ── Tools ───────────────────────────────────────────────────────────────
 
   function statusTool() {
@@ -473,6 +570,127 @@ export function apply(ctx, rawConfig = {}) {
             queueError: queue.ok === true ? undefined : (queue.error ?? `HTTP ${queue.status}`),
           }, null, 2),
         }
+      },
+    }
+  }
+
+  function editTool() {
+    return {
+      name: 'comfyui_edit',
+      description: 'Edit the workflow open in the ComfyUI panel: add or remove nodes, set widget values, and connect or disconnect inputs. Requires the panel to be open in this session. Call comfyui_graph_read first to see node ids, and comfyui_node_info to check class types and input names. Operations run in order; the panel re-syncs the workflow afterwards.',
+      parameters: {
+        type: 'object',
+        properties: {
+          operations: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 32,
+            description: 'Ordered edits to apply inside the ComfyUI editor.',
+            items: {
+              type: 'object',
+              properties: {
+                op: { type: 'string', enum: ['add_node', 'remove_node', 'set_widget', 'connect', 'disconnect'] },
+                type: { type: 'string', description: 'Node class for add_node, e.g. KSampler.' },
+                id: { type: 'integer', description: 'Node id for add_node (optional), remove_node and set_widget.' },
+                pos: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Canvas position for add_node.' },
+                widgets: { type: 'object', additionalProperties: { description: 'Initial widget value.' }, description: 'Widget values for add_node, keyed by widget name.' },
+                name: { type: 'string', description: 'Widget name for set_widget.' },
+                value: { description: 'New widget value for set_widget; coerced to the widget type.' },
+                from: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'integer' },
+                    output: { type: 'integer', description: 'Output slot index on the source node.' },
+                  },
+                  required: ['id', 'output'],
+                  additionalProperties: false,
+                },
+                to: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'integer' },
+                    input: { type: 'string', description: 'Input name on the target node.' },
+                  },
+                  required: ['id', 'input'],
+                  additionalProperties: false,
+                },
+              },
+              required: ['op'],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ['operations'],
+        additionalProperties: false,
+      },
+      output: textOutput(),
+      async execute(args, exec) {
+        const sessionId = sessionOf(exec)
+        const operations = Array.isArray(args?.operations) ? args.operations : []
+        if (operations.length === 0) throw new Error('operations must contain at least one edit')
+        const state = commandState(sessionId)
+        if (Date.now() - state.lastPollAt > 12000) {
+          throw new Error('The ComfyUI panel is not connected for this session. Open the ComfyUI tab and wait for Connected, then retry.')
+        }
+        const id = randomUUID()
+        const answer = await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            pendingCommands.delete(id)
+            reject(new Error('The ComfyUI panel did not answer the edit in time. It may be reloading.'))
+          }, 45000)
+          pendingCommands.set(id, { resolve, timer })
+          enqueueCommand(sessionId, { id, operations, at: Date.now() })
+        })
+        if (answer.ok !== true) throw new Error(`ComfyUI rejected the edit: ${answer.error ?? 'unknown error'}`)
+        return { text: JSON.stringify({ id, applied: operations.length, result: answer.value }, null, 2) }
+      },
+    }
+  }
+
+  async function objectInfo() {
+    if (objectInfoCache.data !== null && Date.now() - objectInfoCache.at < 600_000) return objectInfoCache.data
+    const response = await fetchJson('/object_info', 30000)
+    if (response.ok !== true) throw new Error(`Could not load /object_info: ${response.error ?? `HTTP ${response.status}`}`)
+    objectInfoCache = { at: Date.now(), data: response.data }
+    return objectInfoCache.data
+  }
+
+  function nodeInfoTool() {
+    return {
+      name: 'comfyui_node_info',
+      description: 'Look up ComfyUI node classes: pass `type` for the exact class input/output schema, or `search` for matching class names. Use it before comfyui_edit add_node to get the class_type and input names right.',
+      parameters: {
+        type: 'object',
+        properties: {
+          type: { type: 'string', description: 'Exact class_type, e.g. KSampler.' },
+          search: { type: 'string', description: 'Case-insensitive substring to match class names.' },
+          limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Maximum matches for search (default 20).' },
+        },
+        additionalProperties: false,
+      },
+      output: textOutput(),
+      async execute(args) {
+        const data = await objectInfo()
+        const wanted = typeof args?.type === 'string' ? args.type : ''
+        if (wanted !== '') {
+          const entry = data[wanted]
+          if (entry === undefined) throw new Error(`Unknown node type "${wanted}". Use search to find the right class_type.`)
+          return {
+            text: JSON.stringify({
+              type: wanted,
+              category: entry.category,
+              description: entry.description,
+              input: entry.input,
+              output: entry.output,
+              output_name: entry.output_name,
+            }, null, 2),
+          }
+        }
+        const needle = typeof args?.search === 'string' ? args.search.toLowerCase() : ''
+        const names = Object.keys(data)
+          .filter(name => needle === '' || name.toLowerCase().includes(needle))
+          .slice(0, clamp(args?.limit ?? 20, 1, 100))
+        return { text: JSON.stringify({ total: Object.keys(data).length, matches: names }, null, 2) }
       },
     }
   }
