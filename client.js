@@ -243,6 +243,7 @@ window.__ModuleLoader__.load({
     function ComfyPanel({ sessionId, t }) {      const iframeRef = useRef(null)
       const appRef = useRef(null)
       const lastJsonRef = useRef('')
+      const lastForcedAtRef = useRef(0)
       const revisionRef = useRef(0)
       const [status, setStatus] = useState('loading')
       const [bootSeconds, setBootSeconds] = useState(0)
@@ -417,6 +418,13 @@ window.__ModuleLoader__.load({
         let disposed = false
         let socket = null
         let retry = null
+        let lastMessageAt = Date.now()
+        const watchdog = setInterval(() => {
+          if (disposed) return
+          if (Date.now() - lastMessageAt > 120000) {
+            try { socket.close() } catch { /* already closed */ }
+          }
+        }, 15000)
         const connect = () => {
           if (disposed) return
           const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
@@ -428,6 +436,7 @@ window.__ModuleLoader__.load({
             return
           }
           socket.onmessage = message => {
+            lastMessageAt = Date.now()
             if (typeof message.data !== 'string') return
             let parsed
             try {
@@ -450,6 +459,7 @@ window.__ModuleLoader__.load({
         connect()
         return () => {
           disposed = true
+          clearInterval(watchdog)
           if (retry !== null) clearTimeout(retry)
           if (socket !== null) {
             socket.onclose = null
@@ -472,7 +482,9 @@ window.__ModuleLoader__.load({
             return
           }
           try {
-            await push(app, false)
+            const force = Date.now() - lastForcedAtRef.current > 30000
+            if (force) lastForcedAtRef.current = Date.now()
+            await push(app, force)
           } catch (error) {
             lastJsonRef.current = ''
             setStatus('error')
