@@ -1,13 +1,12 @@
 {
   "name": "@local/dsh-comfyui",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "type": "module",
   "description": "ComfyUI workflow editor inside the DeepSeek Harness Web UI",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
-    "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
   "files": [
@@ -18,10 +17,16 @@
     "storage.js",
     "supervisor.js",
     "cordis.patch.yml",
-    "locale/*.json",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "AGENTS.md",
+    "scripts/dsh-web.sh"
   ],
+  "scripts": {
+    "check": "node --check index.js && node --check client.js && node --check projection.js && node --check storage.js && node --check supervisor.js && node --check service.js && node --check test/host-smoke.mjs && node --check test/dsh-contract.mjs",
+    "test": "npm run check && node test/host-smoke.mjs",
+    "contract": "node test/dsh-contract.mjs"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

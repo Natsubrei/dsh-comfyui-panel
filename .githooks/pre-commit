@@ -1,0 +1,4 @@
+#!/bin/sh
+# Keep the executable smoke contract green before every commit.
+set -e
+exec npm test --silent

@@ -116,17 +116,22 @@ Then open the **ComfyUI** tab in a session and wait for **Connected**. The
 mock page exposes a one-node workflow. `comfyui_run` should return `p1`. Stop
 the mock before starting a real ComfyUI on port 8188.
 
-Run the host tests with:
+Run the checks with:
 
 ```bash
-node test/host-smoke.mjs
+npm test          # syntax checks + host smoke test
+npm run contract  # real DSH runtime, needs ../deepseek-harness
 ```
 
-They cover the proxy, redirect, asset caching, the workflow and event bridges,
-session-scoped tools and digest, the projection fallback, persistence across
-two Host instances, the edit round-trip, the panel-managed start/stop/restart of
-a real child process, and the supervisor's adoption path. The test prints
-`host smoke test passed`.
+`npm test` covers the proxy, redirect, asset caching, the workflow and event
+bridges, session-scoped tools and digest, the projection fallback, persistence
+across two Host instances, the edit round-trip, the panel-managed
+start/stop/restart of a real child process, and the supervisor's adoption path.
+It prints `host smoke test passed`. `npm run contract` mounts the plugin next to
+the real Cordis context, `ToolRuntime`, `SystemPrompt`, and
+`HostConnectionService`, so an invalid Fetch path or a tool schema the registry
+rejects fails locally instead of at install time. Both are run by the
+pre-commit hook; see [AGENTS.md](AGENTS.md) for reload and logging steps.
 
 ## Current limits
 
