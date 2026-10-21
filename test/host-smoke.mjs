@@ -40,6 +40,11 @@ const upstream = http.createServer((req, res) => {
     })
     return
   }
+  if (req.url === '/assets/app-abc123.js') {
+    res.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'no-store' })
+    res.end('console.log("app")')
+    return
+  }
   if (req.url === '/queue') {
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ queue_running: [], queue_pending: [] }))
@@ -69,6 +74,10 @@ assert.match(await page.text(), /mock comfy/)
 const redirect = await fetch(`http://127.0.0.1:${PROXY_PORT}/comfyui`, { redirect: 'manual' })
 assert.equal(redirect.status, 308)
 assert.equal(redirect.headers.get('location'), '/comfyui/')
+
+const asset = await fetch(`http://127.0.0.1:${PROXY_PORT}/comfyui/assets/app-abc123.js`)
+assert.equal(asset.status, 200)
+assert.equal(asset.headers.get('cache-control'), 'public, max-age=31536000, immutable')
 
 const post = await fetches.get('/api/comfyui/state').fetch(new Request(
   'http://127.0.0.1/api/comfyui/state?sessionId=s1',

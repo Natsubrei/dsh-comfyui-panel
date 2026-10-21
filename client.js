@@ -115,15 +115,16 @@ window.__ModuleLoader__.load({
       }
     `
 
-    function StatBar({ status, stats, message, runText, onSync, onReload, onOpen, t }) {
+    function StatBar({ status, stats, message, runText, bootSeconds, onSync, onReload, onOpen, t }) {
       const statText = t('stats')
         .replace('{{nodes}}', String(stats.nodes))
         .replace('{{links}}', String(stats.links))
         .replace('{{revision}}', String(stats.revision))
+      const statusText = status === 'loading' && bootSeconds > 0 ? `${t('loading')} ${bootSeconds}s` : t(status)
       return h('div', { className: 'dsh-comfyui-bar' },
         h('span', { className: 'dsh-comfyui-dot', 'data-status': status }),
         h('span', { className: 'dsh-comfyui-title' }, t('title')),
-        h('span', { className: 'dsh-comfyui-status' }, t(status)),
+        h('span', { className: 'dsh-comfyui-status' }, statusText),
         runText === '' ? null : h('span', { className: 'dsh-comfyui-run' }, runText),
         h('span', { className: 'dsh-comfyui-stats', title: statText }, statText),
         h('button', { className: 'dsh-comfyui-button', type: 'button', onClick: onSync }, t('sync')),
@@ -176,6 +177,7 @@ window.__ModuleLoader__.load({
       const lastJsonRef = useRef('')
       const revisionRef = useRef(0)
       const [status, setStatus] = useState('loading')
+      const [bootSeconds, setBootSeconds] = useState(0)
       const [stats, setStats] = useState({ nodes: 0, links: 0, revision: 0 })
       const [message, setMessage] = useState('')
       const [run, setRun] = useState(null)
@@ -376,6 +378,18 @@ window.__ModuleLoader__.load({
         window.open(PANEL_URL, '_blank', 'noopener')
       }, [])
 
+      useEffect(() => {
+        if (status !== 'loading') {
+          setBootSeconds(0)
+          return undefined
+        }
+        const started = Date.now()
+        const timer = setInterval(() => {
+          setBootSeconds(Math.round((Date.now() - started) / 1000))
+        }, 1000)
+        return () => clearInterval(timer)
+      }, [status])
+
       let runText = ''
       if (run !== null) {
         if (run.status === 'queued') runText = t('queued')
@@ -399,6 +413,7 @@ window.__ModuleLoader__.load({
           stats,
           message,
           runText,
+          bootSeconds,
           t,
           onSync: () => { void syncRef.current?.(true) },
           onReload: reload,

@@ -121,6 +121,7 @@ export function apply(ctx, rawConfig = {}) {
     }, upstreamResponse => {
       const headersOut = filterResponseHeaders(upstreamResponse.headers)
       rewriteLocation(headersOut, target)
+      allowAssetCaching(headersOut, target)
       res.writeHead(upstreamResponse.statusCode ?? 502, headersOut)
       upstreamResponse.pipe(res)
     })
@@ -516,6 +517,17 @@ export function apply(ctx, rawConfig = {}) {
     } catch {
       // A relative or malformed Location is forwarded as-is.
     }
+  }
+
+  /**
+   * The ComfyUI frontend serves hashed bundles under /assets/ with
+   * `Cache-Control: no-store`, which makes every panel open re-download them.
+   * Hashed names are safe to cache forever; everything else keeps the upstream
+   * policy.
+   */
+  function allowAssetCaching(headers, target) {
+    if (!target.pathname.includes('/assets/')) return
+    headers['cache-control'] = 'public, max-age=31536000, immutable'
   }
 
   async function fetchJson(path, timeoutMs, init = {}) {
