@@ -843,7 +843,9 @@ window.__ModuleLoader__.load({
           onService: () => setServiceOpen(current => !current),
         }),
         message === '' ? null : h('div', { className: 'dsh-comfyui-notice', 'data-tone': status === 'error' ? 'error' : 'info' }, message),
-        serviceOpen || (service !== null && service.health === false) ? servicePanel : null,
+        // Explicit-only: an unhealthy upstream must not force this form open
+        // and resize the panel; the Server button carries that affordance.
+        serviceOpen ? servicePanel : null,
         h('iframe', {
           ref: iframeRef,
           className: 'dsh-comfyui-frame',
