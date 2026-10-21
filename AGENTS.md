@@ -59,7 +59,8 @@ for the version.
    re-admit. Reload the page before investigating plugin code.
 
 There is no browser tool in this profile, so ask the user to confirm the panel
-or supply a screenshot when a change is UI-only.
+or supply a screenshot when a change is UI-only. When a browser tool is
+available, screenshot and click through the checklist instead.
 
 ## Logs
 
@@ -70,8 +71,9 @@ or supply a screenshot when a change is UI-only.
 
 ## Gotchas
 
-- `/tmp` can be a small tmpfs (a few GB) on some machines. Multi-GB model downloads belong in
-  the workspace (`.dl_parts/`) or `~/workspace/.tmp`; check `df` first.
+- `/tmp` can be a small tmpfs (a few GB) on some machines. Multi-GB model
+  downloads belong in the workspace (`.dl_parts/`) or `~/workspace/.tmp`; check
+  `df` first.
 - Read a file with the `read` tool immediately before editing it. Shell reads
   (`sed`, `cat`) and Python rewrites do not populate the edit cache, which
   produces "file has not been read" and "file changed since it was read".
