@@ -163,6 +163,10 @@ pre-commit hook; see [AGENTS.md](AGENTS.md) for reload and logging steps.
   record (`sessionId -> { workflow, prompt, semantic, revision }`), capped at
   the 20 most recently updated sessions. The model only sees the projection and
   its own edit results.
+- **`revision` tracks edits, not the viewport.** The frontend serializes
+  `extra.ds` (zoom/pan) into every workflow, so the Host strips it before
+  comparing and storing: scrolling, zooming, or resizing the panel does not
+  change `rev`, while real edits still advance it.
 - **Tools follow the session.** Registration happens on `agent.ctx`, so an
   agent-scoped tool list and prompt context decide visibility; unregistering
   happens through the same effect chain when the plugin unloads.

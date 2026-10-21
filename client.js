@@ -454,6 +454,13 @@ window.__ModuleLoader__.load({
           throw new Error(t('bridgeUnavailable'))
         }
         const workflow = JSON.parse(JSON.stringify(graph.serialize()))
+        // The frontend stamps `extra.ds` (zoom and pan) on every serialization,
+        // so scrolling, zooming, or resizing the panel would otherwise look
+        // like an edit and grow the revision the model reads.
+        if (workflow.extra !== null && typeof workflow.extra === 'object') {
+          delete workflow.extra.ds
+          if (Object.keys(workflow.extra).length === 0) delete workflow.extra
+        }
         const selection = Object.keys(app.canvas?.selected_nodes ?? {})
           .map(Number)
           .filter(Number.isInteger)

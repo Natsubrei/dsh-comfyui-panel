@@ -303,6 +303,24 @@ const resync = await host.fetches.get('/api/comfyui/state').fetch(new Request(
 ))
 assert.equal((await resync.json()).revision, 1)
 
+// Zoom, pan, and window resizes only change `extra.ds`; a scroll must not
+// count as an edit or the revision would creep while the user looks around.
+const scrolled = await host.fetches.get('/api/comfyui/state').fetch(new Request(
+  'http://127.0.0.1/api/comfyui/state?sessionId=s1',
+  {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: 's1',
+      revision: 3,
+      workflow: { ...workflow, extra: { ds: { scale: 0.5, offset: [12, 34] } } },
+      prompt: { 7: { class_type: 'KSampler', inputs: {} }, 4: { class_type: 'UNETLoader', inputs: {} } },
+      semantic,
+    }),
+  },
+))
+assert.equal((await scrolled.json()).revision, 1, 'view-only canvas state must not bump the revision')
+
 // A session only sees ComfyUI once its own workflow has synced.
 const s1 = addAgent(host, 's1')
 const s2 = addAgent(host, 's2')
@@ -328,6 +346,7 @@ assert.equal(sampler.inputs.model, '4:0')
 const readRaw = parse(await s1.tools.get('comfyui_graph_read').execute({ full: true }, exec))
 assert.equal(readRaw.workflow.nodes.length, 2)
 assert.equal(readRaw.revision, 1)
+assert.equal('ds' in (readRaw.workflow.extra ?? {}), false, 'view state is stripped from the stored workflow')
 
 const run = parse(await s1.tools.get('comfyui_run').execute({}, exec))
 assert.equal(run.prompt_id, 'p1')
@@ -412,6 +431,28 @@ assert.equal(legacyRead.projectedFrom, 'workflow')
 assert.equal(legacyRead.nodes.find(node => node.id === 1).inputs.latent_image, '2:0')
 assert.ok(Array.isArray(legacyRead.nodes.find(node => node.id === 1).widgetsValues))
 assert.equal(legacyRead.apiPrompt.available, false)
+
+// A real edit still moves the revision forward, and view state around it
+// does not change that.
+const postChange = body => host.fetches.get('/api/comfyui/state').fetch(new Request(
+  'http://127.0.0.1/api/comfyui/state?sessionId=s-change',
+  { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
+))
+const changeBody = semanticNow => ({
+  sessionId: 's-change',
+  revision: 1,
+  workflow: { ...workflow, extra: { ds: { scale: 1, offset: [0, 0] } } },
+  prompt: { 7: { class_type: 'KSampler', inputs: {} }, 4: { class_type: 'UNETLoader', inputs: {} } },
+  semantic: semanticNow,
+})
+assert.equal((await (await postChange(changeBody(semantic))).json()).revision, 1)
+const editedSemantic = {
+  ...semantic,
+  nodes: semantic.nodes.map(node => node.id === 7
+    ? { ...node, widgets: { ...node.widgets, steps: 20 } }
+    : node),
+}
+assert.equal((await (await postChange({ ...changeBody(editedSemantic), revision: 2 })).json()).revision, 2)
 
 // ── Persistence ───────────────────────────────────────────────────────────
 

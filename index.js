@@ -21,7 +21,7 @@ import https from 'node:https'
 import net from 'node:net'
 import tls from 'node:tls'
 import { randomUUID } from 'node:crypto'
-import { digestLine, projectFromWorkflow, sanitizeSemantic } from './projection.js'
+import { digestLine, projectFromWorkflow, sanitizeSemantic, stripViewState } from './projection.js'
 import { createWorkflowStore } from './storage.js'
 import { createServiceController } from './service.js'
 
@@ -299,7 +299,9 @@ export function apply(ctx, rawConfig = {}) {
     }
     const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
     if (sessionId.length === 0) return json({ ok: false, error: 'sessionId is required' }, 400)
-    const workflow = isObject(body.workflow) ? body.workflow : null
+    // View-only canvas state (zoom/pan) is not an edit; drop it before the
+    // content comparison so a scroll or resize cannot bump the revision.
+    const workflow = isObject(body.workflow) ? stripViewState(body.workflow) : null
     const prompt = isObject(body.prompt) ? body.prompt : null
     if (workflow === null) return json({ ok: false, error: 'workflow must be an object' }, 400)
     const previous = sessions.get(sessionId)

@@ -54,8 +54,10 @@ for the version.
 
 1. Hard-refresh the GUI, open the **ComfyUI** tab, wait for **Connected**.
 2. The header digest should read `ComfyUI: rev … · N nodes · … · panel open.`
-3. Queue one run; `comfyui_progress` should go `queued` → `running` → success.
-4. If the tab says "panel is not connected", the Host↔panel WebSocket did not
+3. Zoom, pan, and resize the panel; `rev` must not change. Edit a widget; it
+   must go up by exactly one.
+4. Queue one run; `comfyui_progress` should go `queued` → `running` → success.
+5. If the tab says "panel is not connected", the Host↔panel WebSocket did not
    re-admit. Reload the page before investigating plugin code.
 
 There is no browser tool in this profile, so ask the user to confirm the panel

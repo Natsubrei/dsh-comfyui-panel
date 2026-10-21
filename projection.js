@@ -163,3 +163,28 @@ export function digestLine(state, { connected = false, run = null } = {}) {
   parts.push(connected ? 'panel open' : 'panel closed')
   return `ComfyUI: ${parts.join(' · ')}.`
 }
+
+/**
+ * Drop view-only canvas state from a UI workflow.
+ *
+ * The ComfyUI frontend writes `extra.ds` (zoom and pan offset) into every
+ * serialization while "save and restore canvas position" is enabled, so
+ * scrolling the canvas, zooming, or resizing the panel would otherwise look
+ * like a graph edit and bump the revision the model reads.
+ * @param workflow - a UI workflow object.
+ * @returns the same object when it carries no view state, else a shallow copy.
+ */
+export function stripViewState(workflow) {
+  if (workflow === null || typeof workflow !== 'object') return workflow
+  const extra = workflow.extra
+  if (extra === null || typeof extra !== 'object' || Array.isArray(extra)) return workflow
+  if (!Object.prototype.hasOwnProperty.call(extra, 'ds')) return workflow
+  const { ds: viewState, ...rest } = extra
+  // An emptied `extra` must disappear entirely: `{}` and a missing key are
+  // different signatures, so keeping it would still look like an edit.
+  if (Object.keys(rest).length === 0) {
+    const { extra: _extra, ...graph } = workflow
+    return graph
+  }
+  return { ...workflow, extra: rest }
+}

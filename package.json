@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-comfyui",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "private": true,
   "type": "module",
   "description": "ComfyUI workflow editor inside the DeepSeek Harness Web UI",
