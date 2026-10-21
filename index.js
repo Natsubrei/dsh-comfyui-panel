@@ -1,22 +1,29 @@
 /**
- * Host half of the dsh-comfyui P0 bundle.
+ * Host half of the dsh-comfyui bundle.
  *
- * It owns four things:
+ * It owns five things:
  *  - an authenticated same-origin proxy for the ComfyUI frontend (`/comfyui`),
  *  - the WebSocket proxy the frontend uses at `/comfyui/ws`,
- *  - a workflow bridge (`/api/comfyui/state`) and an event bridge
- *    (`/api/comfyui/events`) fed by the panel's ComfyUI event socket,
- *  - four model tools.
+ *  - a workflow bridge (`/api/comfyui/state`), an event bridge
+ *    (`/api/comfyui/events`), and the edit command channel fed by the panel,
+ *  - per-session model tools plus one runtime-context digest line,
+ *  - optional durability (workflow store) and process supervision (ComfyUI).
  *
  * The ComfyUI frontend treats its pathname as its API base, so serving it below
  * `/comfyui/` keeps `/comfyui/api/*` and `/comfyui/ws` on the DSH origin. That
  * is what lets the panel's parent page reach `window.comfyAPI.app.app`.
+ *
+ * Tools and the digest are registered through each Agent's own context, so a
+ * session only sees them once a ComfyUI workflow has synced for that session.
  */
 import http from 'node:http'
 import https from 'node:https'
 import net from 'node:net'
 import tls from 'node:tls'
 import { randomUUID } from 'node:crypto'
+import { digestLine, projectFromWorkflow, sanitizeSemantic } from './projection.js'
+import { createWorkflowStore } from './storage.js'
+import { createSupervisor, disabledSupervisor } from './supervisor.js'
 
 /** Required Host services: the HTTP carrier, its auth admission, and the Tool registry. */
 export const inject = ['webServer', 'connection', 'tools']
@@ -27,7 +34,7 @@ export function apply(ctx, rawConfig = {}) {
   const upstream = config.upstream
   const prefix = config.prefix
   const clientId = `dsh-comfyui-${randomUUID()}`
-  /** sessionId -> { workflow, prompt, revision, nodes, links, types, updatedAt } */
+  /** sessionId -> { workflow, prompt, semantic, revision, nodes, links, types, updatedAt } */
   const sessions = new Map()
   /** sessionId -> { latest, runs: Map<promptId, run> } from the panel event socket */
   const progress = new Map()
@@ -35,10 +42,66 @@ export function apply(ctx, rawConfig = {}) {
   const commandQueues = new Map()
   /** command id -> { resolve, timer } while comfyui_edit waits for the panel */
   const pendingCommands = new Map()
+  /** sessionId -> disposer of the tools + digest registered on that session's Agent */
+  const sessionTools = new Map()
+  /** sessionId -> pending debounce timer for the workflow store */
+  const persistTimers = new Map()
   /** cached /object_info for comfyui_node_info */
   let objectInfoCache = { at: 0, data: null }
 
+  const store = createWorkflowStore(ctx, ctx.logger)
+  const supervisor = config.supervise.enabled
+    ? createSupervisor({
+        config: config.supervise,
+        probe: async () => (await fetchJson('/system_stats', 2500)).ok === true,
+        logger: ctx.logger,
+      })
+    : disabledSupervisor()
+
   ctx.logger?.info(`dsh-comfyui: upstream ${upstream.href}, panel ${prefix}/`)
+
+  // Adopt or start ComfyUI before the panel can load it, and stop an owned
+  // child when the plugin unloads. Probe-only supervision leaves the process
+  // alone when it is already running.
+  ctx.effect(() => {
+    void supervisor.start()
+    return () => { void supervisor.stop() }
+  }, 'dsh-comfyui: process supervision')
+
+  // Load persisted workflows, then give already-open sessions their tools.
+  // The panel re-syncs within 30 s anyway; this covers a Host restart with the
+  // tab closed, where the workflow must still be readable and runnable.
+  ctx.effect(() => {
+    let disposed = false
+    void store.ready.then(records => {
+      if (disposed) return
+      for (const record of records) {
+        if (sessions.has(record.sessionId)) continue
+        sessions.set(record.sessionId, stateFromRecord(record))
+        registerSessionTools(record.sessionId)
+      }
+      if (records.length > 0) ctx.logger?.info(`dsh-comfyui: restored ${records.length} workflow(s) from storage`)
+    }).catch(error => ctx.logger?.warn(`dsh-comfyui: could not restore workflows: ${String(error)}`))
+    return () => {
+      disposed = true
+      for (const timer of persistTimers.values()) clearTimeout(timer)
+      persistTimers.clear()
+      for (const dispose of sessionTools.values()) dispose()
+      sessionTools.clear()
+      void store.close()
+    }
+  }, 'dsh-comfyui: workflow persistence')
+
+  // A session's Agent can appear after its panel has already synced (the tab is
+  // open while the first message is being sent) or long after (resume).
+  ctx.on('agent/created', ({ agent }) => {
+    const sessionId = agent?.session?.id
+    if (typeof sessionId === 'string' && sessions.has(sessionId)) registerSessionTools(sessionId)
+  })
+  ctx.on('agent/disposed', ({ agent }) => {
+    const sessionId = agent?.session?.id
+    if (typeof sessionId === 'string') sessionTools.delete(sessionId)
+  })
 
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
@@ -90,13 +153,6 @@ export function apply(ctx, rawConfig = {}) {
     })
     return () => { void dispose() }
   }, 'dsh-comfyui: command result route')
-
-  ctx.effect(() => {
-    const disposers = [statusTool(), graphReadTool(), runTool(), progressTool(), editTool(), nodeInfoTool()].map(tool => ctx.tools.register(tool))
-    return () => {
-      for (const dispose of disposers.reverse()) dispose()
-    }
-  }, 'dsh-comfyui: tools')
 
   // ── HTTP proxy ──────────────────────────────────────────────────────────
 
@@ -230,10 +286,23 @@ export function apply(ctx, rawConfig = {}) {
     const workflow = isObject(body.workflow) ? body.workflow : null
     const prompt = isObject(body.prompt) ? body.prompt : null
     if (workflow === null) return json({ ok: false, error: 'workflow must be an object' }, 400)
+    const previous = sessions.get(sessionId)
+    const incoming = Number.isSafeInteger(body.revision) ? body.revision : 0
+    let semantic = sanitizeSemantic(body.semantic)
+    // A projection that sees no nodes while the raw workflow has some comes
+    // from a frontend whose live-node layout this client does not recognize;
+    // prefer the raw fallback over claiming the graph is empty.
+    if (semantic !== null && semantic.nodes.length === 0
+      && Array.isArray(workflow.nodes) && workflow.nodes.length > 0) {
+      semantic = null
+    }
     const state = {
       workflow,
       prompt,
-      revision: Number.isSafeInteger(body.revision) ? body.revision : (sessions.get(sessionId)?.revision ?? 0) + 1,
+      semantic,
+      // The panel's counter restarts with the page while the Host may hold a
+      // higher persisted revision; keep the descriptive revision monotonic.
+      revision: Math.max(incoming, (previous?.revision ?? 0) + 1),
       nodes: Array.isArray(workflow.nodes) ? workflow.nodes.length : 0,
       links: Array.isArray(workflow.links) ? workflow.links.length : 0,
       types: Array.isArray(workflow.nodes)
@@ -242,7 +311,43 @@ export function apply(ctx, rawConfig = {}) {
       updatedAt: Date.now(),
     }
     sessions.set(sessionId, state)
+    registerSessionTools(sessionId)
+    schedulePersist(sessionId)
     return json({ ok: true, ...summary(state) })
+  }
+
+  function stateFromRecord(record) {
+    const workflow = record.workflow
+    return {
+      workflow,
+      prompt: record.prompt ?? null,
+      semantic: sanitizeSemantic(record.semantic),
+      revision: record.revision,
+      nodes: Array.isArray(workflow.nodes) ? workflow.nodes.length : 0,
+      links: Array.isArray(workflow.links) ? workflow.links.length : 0,
+      types: Array.isArray(workflow.nodes)
+        ? [...new Set(workflow.nodes.map(node => node?.type).filter(type => typeof type === 'string'))].slice(0, 64)
+        : [],
+      updatedAt: record.updatedAt,
+    }
+  }
+
+  /** Debounced persistence: the panel syncs about once per second while editing. */
+  function schedulePersist(sessionId) {
+    if (persistTimers.has(sessionId)) return
+    persistTimers.set(sessionId, setTimeout(() => {
+      persistTimers.delete(sessionId)
+      const state = sessions.get(sessionId)
+      if (state === undefined) return
+      void store.save({
+        sessionId,
+        revision: state.revision,
+        updatedAt: state.updatedAt,
+        workflow: state.workflow,
+        prompt: state.prompt,
+        semantic: state.semantic,
+      }).catch(error => ctx.logger?.warn(`dsh-comfyui: could not persist ${sessionId}: ${String(error)}`))
+    }, 1500))
   }
 
   function summary(state) {
@@ -253,6 +358,8 @@ export function apply(ctx, rawConfig = {}) {
       types: state.types,
       updatedAt: state.updatedAt,
       hasPrompt: state.prompt !== null,
+      hasProjection: state.semantic !== null,
+      selection: state.semantic?.selection ?? [],
     }
   }
 
@@ -431,16 +538,63 @@ export function apply(ctx, rawConfig = {}) {
     return json({ ok: true, accepted: true })
   }
 
-  // ── Tools ───────────────────────────────────────────────────────────────
+  // ── Session tools ───────────────────────────────────────────────────────
+  // Tools and the digest live on each Agent's context. A session gets them
+  // once a workflow has synced for it (or was restored from storage), so
+  // unrelated sessions never see ComfyUI capabilities.
 
-  function statusTool() {
+  function registerSessionTools(sessionId) {
+    if (sessionTools.has(sessionId)) return
+    let agent
+    try {
+      agent = ctx.get('agents')?.get(sessionId)
+    } catch {
+      agent = undefined
+    }
+    if (agent === undefined || agent === null) return
+    const sessionCtx = agent.ctx
+    const undo = []
+    try {
+      const add = register => { undo.push(register()) }
+      add(() => sessionCtx.tools.register(statusTool(sessionId)))
+      add(() => sessionCtx.tools.register(graphReadTool(sessionId)))
+      add(() => sessionCtx.tools.register(runTool(sessionId)))
+      add(() => sessionCtx.tools.register(progressTool(sessionId)))
+      add(() => sessionCtx.tools.register(editTool(sessionId)))
+      add(() => sessionCtx.tools.register(nodeInfoTool()))
+      add(() => sessionCtx.systemPrompt.context({
+        name: 'comfyui:workflow',
+        order: 220,
+        text: () => digestLine(sessions.get(sessionId), {
+          connected: panelConnected(sessionId),
+          run: latestProgress(sessionId).run,
+        }),
+      }))
+    } catch (error) {
+      for (const dispose of undo.reverse()) dispose()
+      ctx.logger?.warn(`dsh-comfyui: cannot register tools for session ${sessionId}: ${String(error)}`)
+      return
+    }
+    let dispose
+    try {
+      dispose = sessionCtx.effect(() => () => {
+        for (const undoOne of undo.reverse()) undoOne()
+      }, 'dsh-comfyui: session tools')
+    } catch (error) {
+      for (const undoOne of undo.reverse()) undoOne()
+      ctx.logger?.warn(`dsh-comfyui: cannot own tools for session ${sessionId}: ${String(error)}`)
+      return
+    }
+    sessionTools.set(sessionId, dispose)
+  }
+
+  function statusTool(sessionId) {
     return {
       name: 'comfyui_status',
-      description: 'Report whether the ComfyUI server is reachable and what workflow the DSH ComfyUI panel last synced for this session.',
+      description: 'Report ComfyUI server health, this session\'s synced workflow summary, and the latest run.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       output: textOutput(),
-      async execute(_args, exec) {
-        const sessionId = sessionOf(exec)
+      async execute() {
         const state = sessions.get(sessionId)
         const health = await fetchJson('/system_stats', 2500).catch(error => ({ ok: false, error: error.message }))
         return {
@@ -450,72 +604,75 @@ export function apply(ctx, rawConfig = {}) {
             connected: health.ok === true,
             system: health.ok === true ? health.data : null,
             error: health.ok === true ? undefined : (health.error ?? `HTTP ${health.status}`),
+            panelConnected: panelConnected(sessionId),
             workflow: state === undefined ? null : summary(state),
             progress: latestProgress(sessionId),
+            persistence: {
+              backend: store.backend,
+              ...(store.reason === null ? {} : { reason: store.reason }),
+            },
+            supervisor: supervisor.snapshot(),
           }, null, 2),
         }
       },
     }
   }
 
-  function resolveSnapshot(sessionId) {
-    const own = sessions.get(sessionId)
-    const panel = panelSessionId()
-    const panelState = panel === null ? undefined : sessions.get(panel)
-    if (own === undefined) {
-      if (panelState !== undefined) return { sessionId: panel, state: panelState }
-      let bestId = null
-      for (const [id, state] of sessions) {
-        if (bestId === null || state.updatedAt > sessions.get(bestId).updatedAt) bestId = id
-      }
-      return bestId === null ? null : { sessionId: bestId, state: sessions.get(bestId) }
-    }
-    if (panelState !== undefined && panel !== sessionId && panelState.updatedAt > own.updatedAt) {
-      return { sessionId: panel, state: panelState }
-    }
-    return { sessionId, state: own }
-  }
-
-  function panelSessionId() {
-    let bestId = null
-    for (const [id, state] of commandQueues) {
-      if (Date.now() - state.lastPollAt > 15000) continue
-      if (bestId === null || state.lastPollAt > commandQueues.get(bestId).lastPollAt) bestId = id
-    }
-    return bestId
-  }
-
-  function graphReadTool() {
+  function graphReadTool(sessionId) {
     return {
       name: 'comfyui_graph_read',
-      description: 'Read the ComfyUI UI workflow last synced from a DSH panel. Uses this session when it has synced one, otherwise the most recently synced panel. Use full=true to include the complete workflow JSON.',
+      description: 'Read the ComfyUI workflow synced in this session: each node\'s id, class type, widget values, and inputs. An input maps to "<sourceNodeId>:<outputSlot>". Pass full=true for the raw UI workflow and API prompt.',
       parameters: {
         type: 'object',
-        properties: { full: { type: 'boolean', description: 'Include the complete UI workflow JSON.' } },
+        properties: {
+          full: { type: 'boolean', description: 'Return the raw UI workflow and API prompt instead of the projection.' },
+        },
         additionalProperties: false,
       },
       output: textOutput(),
-      async execute(args, exec) {
-        const requested = sessionOf(exec)
-        const resolved = resolveSnapshot(requested)
-        if (resolved === null) {
-          return { text: 'No ComfyUI workflow has been synced yet. Open the ComfyUI tab and wait for it to connect.' }
+      async execute(args) {
+        const state = sessions.get(sessionId)
+        if (state === undefined) {
+          throw new Error('No ComfyUI workflow has synced in this session. Open the ComfyUI tab in this session and wait for Connected.')
         }
-        const payload = { sessionId: resolved.sessionId, ...summary(resolved.state) }
-        if (resolved.sessionId !== requested) payload.requestedSessionId = requested
         if (args?.full === true) {
-          payload.workflow = resolved.state.workflow
-          payload.prompt = resolved.state.prompt
+          return {
+            text: JSON.stringify({
+              sessionId,
+              revision: state.revision,
+              updatedAt: state.updatedAt,
+              workflow: state.workflow,
+              prompt: state.prompt,
+            }, null, 2),
+          }
         }
-        return { text: JSON.stringify(payload, null, 2) }
+        const semantic = state.semantic ?? projectFromWorkflow(state.workflow)
+        return {
+          text: JSON.stringify({
+            sessionId,
+            revision: state.revision,
+            updatedAt: state.updatedAt,
+            projectedFrom: state.semantic === null ? 'workflow' : 'panel',
+            ...(state.semantic === null
+              ? { note: 'Widget names are unavailable without the panel; widgetsValues is positional.' }
+              : {}),
+            nodes: semantic.nodes,
+            linkCount: semantic.linkCount ?? state.links,
+            selection: semantic.selection ?? [],
+            apiPrompt: {
+              available: state.prompt !== null,
+              nodes: isObject(state.prompt) ? Object.keys(state.prompt).length : 0,
+            },
+          }, null, 2),
+        }
       },
     }
   }
 
-  function runTool() {
+  function runTool(sessionId) {
     return {
       name: 'comfyui_run',
-      description: 'Queue the last synced ComfyUI workflow. Returns the prompt id; set wait=true to poll /history until it settles.',
+      description: 'Queue the workflow synced in this session. Returns the prompt id; set wait=true to poll /history until it settles.',
       parameters: {
         type: 'object',
         properties: {
@@ -526,11 +683,8 @@ export function apply(ctx, rawConfig = {}) {
       },
       output: textOutput(),
       async execute(args, exec) {
-        const requested = sessionOf(exec)
-        const resolved = resolveSnapshot(requested)
-        if (resolved === null) throw new Error('No ComfyUI workflow has been synced yet. Open the ComfyUI tab first.')
-        const { state } = resolved
-        const sessionId = resolved.sessionId
+        const state = sessions.get(sessionId)
+        if (state === undefined) throw new Error('No ComfyUI workflow has synced in this session. Open the ComfyUI tab in this session first.')
         if (state.prompt === null) throw new Error('The synced workflow has no API prompt yet. Wait for the ComfyUI panel to finish syncing.')
         const response = await fetchJson('/prompt', 15000, {
           method: 'POST',
@@ -564,23 +718,17 @@ export function apply(ctx, rawConfig = {}) {
     }
   }
 
-  function progressTool() {
+  function progressTool(sessionId) {
     return {
       name: 'comfyui_progress',
-      description: 'Report the latest ComfyUI execution state for this session: the panel event stream (queue, current node, step progress, errors), the run record, and the live queue snapshot.',
+      description: 'Report the latest ComfyUI execution state for this session: panel events (current node, step progress, errors), the run record, and the live queue snapshot.',
       parameters: {
         type: 'object',
         properties: { promptId: { type: 'string', description: 'Optional prompt id to inspect; defaults to the latest run.' } },
         additionalProperties: false,
       },
       output: textOutput(),
-      async execute(args, exec) {
-        const requested = sessionOf(exec)
-        let sessionId = requested
-        if (!progress.has(sessionId)) {
-          const panel = panelSessionId()
-          if (panel !== null) sessionId = panel
-        }
+      async execute(args) {
         const bucket = progress.get(sessionId)
         const wanted = typeof args?.promptId === 'string' && args.promptId.length > 0 ? args.promptId : null
         const run = wanted === null ? latestProgress(sessionId).run : (bucket?.runs.get(wanted) ?? null)
@@ -593,7 +741,7 @@ export function apply(ctx, rawConfig = {}) {
         return {
           text: JSON.stringify({
             sessionId,
-            requestedSessionId: sessionId === requested ? undefined : requested,
+            panelConnected: panelConnected(sessionId),
             hasPanelEvents: bucket !== undefined && bucket.latest !== null,
             run,
             history,
@@ -610,10 +758,10 @@ export function apply(ctx, rawConfig = {}) {
     }
   }
 
-  function editTool() {
+  function editTool(sessionId) {
     return {
       name: 'comfyui_edit',
-      description: 'Edit the workflow open in the ComfyUI panel: add or remove nodes, set widget values, and connect or disconnect inputs. Requires the panel to be open in this session. Call comfyui_graph_read first to see node ids, and comfyui_node_info to check class types and input names. Operations run in order; the panel re-syncs the workflow afterwards.',
+      description: 'Edit the workflow open in this session\'s ComfyUI panel: add or remove nodes, set widget values, and connect or disconnect inputs. Requires the panel to be open in this session. Call comfyui_graph_read first to see node ids and widget names, and comfyui_node_info to check class types and input names. Operations run in order; the panel re-syncs the workflow afterwards.',
       parameters: {
         type: 'object',
         properties: {
@@ -660,17 +808,11 @@ export function apply(ctx, rawConfig = {}) {
         additionalProperties: false,
       },
       output: textOutput(),
-      async execute(args, exec) {
-        const requested = sessionOf(exec)
+      async execute(args) {
         const operations = Array.isArray(args?.operations) ? args.operations : []
         if (operations.length === 0) throw new Error('operations must contain at least one edit')
-        let sessionId = requested
-        if (Date.now() - commandState(requested).lastPollAt > 12000) {
-          const panel = panelSessionId()
-          if (panel === null) {
-            throw new Error('No ComfyUI panel is connected. Open the ComfyUI tab and wait for Connected, then retry.')
-          }
-          sessionId = panel
+        if (!panelConnected(sessionId)) {
+          throw new Error('The ComfyUI panel is not connected in this session. Open the ComfyUI tab in this session and wait for Connected, then retry.')
         }
         const id = randomUUID()
         const answer = await new Promise((resolve, reject) => {
@@ -686,7 +828,6 @@ export function apply(ctx, rawConfig = {}) {
           text: JSON.stringify({
             id,
             sessionId,
-            requestedSessionId: sessionId === requested ? undefined : requested,
             applied: operations.length,
             result: answer.value,
           }, null, 2),
@@ -759,8 +900,16 @@ export function apply(ctx, rawConfig = {}) {
     }
   }
 
-  function sessionOf(exec) {
-    return exec.agent?.session?.id ?? 'unknown'
+  /**
+   * Whether this session's panel is listening for commands. A long-poll stays
+   * open for up to 20 s, so an idle waiter counts as connected even when the
+   * last request started earlier than the freshness window.
+   */
+  function panelConnected(sessionId) {
+    const state = commandQueues.get(sessionId)
+    if (state === undefined) return false
+    if (state.waiters.length > 0) return true
+    return Date.now() - state.lastPollAt <= 15000
   }
 
   function targetUrl(requestUrl) {
@@ -822,7 +971,33 @@ function normalizeConfig(raw) {
   if (!prefix.startsWith('/')) prefix = `/${prefix}`
   prefix = prefix.replace(/\/+$/, '')
   if (prefix.length === 0) throw new Error('dsh-comfyui: prefix must not be empty')
-  return { upstream, prefix }
+  return { upstream, prefix, supervise: normalizeSupervise(raw?.supervise) }
+}
+
+/**
+ * Validate the optional process-supervision block. A misconfiguration fails
+ * loud at load: silently not supervising would look like a working setup that
+ * simply never starts ComfyUI.
+ */
+function normalizeSupervise(raw) {
+  const enabled = raw?.enabled === true
+  if (!enabled) return { enabled: false }
+  const command = typeof raw?.command === 'string' && raw.command.length > 0 ? raw.command : 'python3'
+  const args = Array.isArray(raw?.args) ? raw.args.map(String) : ['main.py', '--listen', '127.0.0.1']
+  const cwd = typeof raw?.cwd === 'string' && raw.cwd.length > 0 ? raw.cwd : null
+  if (cwd === null) throw new Error('dsh-comfyui: supervise.cwd is required when supervise.enabled is true')
+  return {
+    enabled: true,
+    command,
+    args,
+    cwd,
+    env: isObject(raw?.env) ? Object.fromEntries(Object.entries(raw.env).map(([key, value]) => [key, String(value)])) : {},
+    restartDelayMs: clamp(Number(raw?.restartDelayMs ?? 5000), 500, 120000),
+    maxRestarts: clamp(Number(raw?.maxRestarts ?? 5), 0, 50),
+    probeIntervalMs: clamp(Number(raw?.probeIntervalMs ?? 20000), 5000, 300000),
+    startTimeoutMs: clamp(Number(raw?.startTimeoutMs ?? 120000), 5000, 600000),
+    logPath: typeof raw?.logPath === 'string' && raw.logPath.length > 0 ? raw.logPath : null,
+  }
 }
 
 function pathOf(requestUrl) {

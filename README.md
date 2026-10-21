@@ -1,35 +1,47 @@
 # dsh-comfyui
 
-P0 of a zero-install ComfyUI integration for the DeepSeek Harness Web UI.
+ComfyUI inside the DeepSeek Harness Web UI: the real editor in a right-side
+panel, a workflow the model can read and edit, and runs the model can start.
 
-## What this P0 does
+## What it does
 
 - Serves the real ComfyUI frontend under the DSH origin at `/comfyui/`
   through an authenticated reverse proxy (HTTP + WebSocket).
 - Adds a **ComfyUI** tab to the right sidebar. The tab is session-scoped and
-  can be used full-screen; it loads `/comfyui/` in a same-origin iframe.
+  can be used full-screen; it loads `/comfyui/` in a same-origin iframe, so
+  third-party nodes keep their own UI.
 - Bridges the iframe editor to the Host: once `window.comfyAPI.app.app` is
-  available, the panel periodically serializes the UI workflow, asks
-  `app.graphToPrompt()` for the API prompt, and POSTs both to
-  `/api/comfyui/state`.
+  available, the panel periodically serializes the UI workflow, builds a
+  semantic projection from the live nodes (ids, class types, widget names and
+  values, input sources, selection), asks `app.graphToPrompt()` for the API
+  prompt, and POSTs all three to `/api/comfyui/state`.
 - Opens a second ComfyUI WebSocket from the panel and forwards a compact event
   stream (queue status, `execution_start`, `executing`, `progress`, `executed`,
   `execution_success` / `execution_error` / `execution_interrupted`) to
   `/api/comfyui/events`, so the Host sees runs without polling.
-- Registers six model tools:
-  - `comfyui_status` — upstream reachability, the last synced workflow, and the
-    latest run state.
-  - `comfyui_graph_read` — read the last synced UI workflow (summary or full).
-  - `comfyui_run` — submit the last synced API prompt to ComfyUI and return
-    the `prompt_id`; optionally wait for history.
-  - `comfyui_progress` — the latest panel events (current node, step progress,
-    errors), the run record, and a live `/queue` snapshot.
-- Adds a Host → panel command channel. `comfyui_edit` queues an edit for the
-  session; the panel long-polls `/api/comfyui/commands/poll`, applies the edit
-  inside the iframe (add/remove node, set widget, connect/disconnect), re-syncs
-  the workflow, and posts the outcome to `/api/comfyui/commands/result`.
-  `comfyui_node_info` reads a cached `/object_info` so the model can look up
-  class types and input names before editing.
+- Registers six model tools **on the Agent context of each session that has a
+  synced workflow**. Other sessions see no ComfyUI tools:
+  - `comfyui_status` — upstream reachability, panel connection, workflow
+    summary, persistence backend, supervisor state, and the latest run.
+  - `comfyui_graph_read` — the semantic projection: per node `id`, `type`,
+    `title`, `mode`, `widgets` (`name -> value`), and `inputs`
+    (`name -> "<sourceNodeId>:<slot>"`). `full=true` returns the raw UI
+    workflow and API prompt.
+  - `comfyui_run` — submit the synced API prompt and return the `prompt_id`;
+    optionally wait for history.
+  - `comfyui_progress` — panel events (current node, step progress, errors),
+    the run record, and a live `/queue` snapshot.
+  - `comfyui_edit` — add/remove nodes, set widget values, connect/disconnect
+    inside the open panel through a Host → panel command channel.
+  - `comfyui_node_info` — cached `/object_info` lookup for class types and
+    input names.
+- Adds one runtime-context digest line to those sessions, e.g.
+  `ComfyUI: rev 14 · 9 nodes · 9 links · selected 7 · panel open.`
+- Persists each session's workflow, API prompt, and projection through
+  `ctx.storageDomain` (domain `dsh_comfyui`), so a Host restart does not lose
+  the graph. Storage failures degrade to memory without blocking the bridge.
+- Optionally supervises the ComfyUI process: adopt an already-running server,
+  or start one and restart it after a crash.
 
 ## Configuration
 
@@ -45,17 +57,40 @@ P0 of a zero-install ComfyUI integration for the DeepSeek Harness Web UI.
 ```
 
 `prefix` is the same-origin path the panel is served from; `upstream` is the
-ComfyUI server. Both must agree with the panel's hard-coded `/comfyui/` for
-P0.
+ComfyUI server. Both must agree with the panel's hard-coded `/comfyui/`.
+
+To let the Host own the ComfyUI process, add a `supervise` block:
+
+```yaml
+        supervise:
+          enabled: true
+          command: /opt/ComfyUI/.venv/bin/python
+          args: [main.py, --listen, 127.0.0.1, --port, '8188']
+          cwd: /opt/ComfyUI
+          restartDelayMs: 5000
+          maxRestarts: 5
+          probeIntervalMs: 20000
+          startTimeoutMs: 120000
+          logPath: /var/log/comfyui/comfyui.log
+```
+
+`cwd` is required when supervision is enabled; a missing value fails the
+plugin load instead of silently never starting ComfyUI. `command` defaults to
+`python3`, `args` to `main.py --listen 127.0.0.1`. An upstream that already
+answers `/system_stats` is adopted (`state: external`) rather than duplicated.
+Stopping the plugin stops only a process it started.
 
 ## Requirements
 
 - A running ComfyUI whose frontend is the standard `comfyui-frontend-package`
   build (relative `./assets/...`, `api_base` derived from the path).
-- The DSH Web profile. The panel relies on the same-origin iframe and on
-  `window.comfyAPI.app.app`, which is a legacy compatibility shim exposed by
-  the ComfyUI frontend, not a stable public API. Pin the ComfyUI frontend
-  version for anything beyond P0.
+- The DSH Web profile with `storage` + `storage-json` + `storage-domain`
+  mounted (the default profile has them). Without them, workflows stay in
+  memory.
+- The panel relies on the same-origin iframe and on
+  `window.comfyAPI.app.app`, a legacy compatibility shim exposed by the
+  ComfyUI frontend, not a stable public API. Pin the ComfyUI frontend version
+  for anything beyond this milestone.
 
 ## Try it without ComfyUI
 
@@ -66,44 +101,51 @@ torch:
 node test/mock-comfyui.mjs
 ```
 
-Then open the **ComfyUI** action in a session header (or the right-sidebar
-guide), and the panel should show **Connected**, `1 nodes · 0 links`, and the
-mock page. `comfyui_run` should return `p1`. Stop the mock before starting a
-real ComfyUI on port 8188.
+Then open the **ComfyUI** tab in a session and wait for **Connected**. The
+mock page exposes a one-node workflow. `comfyui_run` should return `p1`. Stop
+the mock before starting a real ComfyUI on port 8188.
 
-Run the host smoke test with:
+Run the host tests with:
 
 ```bash
 node test/host-smoke.mjs
 ```
 
+They cover the proxy, redirect, asset caching, the workflow and event bridges,
+session-scoped tools and digest, the projection fallback, persistence across
+two Host instances, the edit round-trip, and a real supervised child process.
+The test prints `host smoke test passed`.
+
 ## Current limits
 
 - Edits require the ComfyUI panel to be open in the same session; the command
   channel is a long-poll and the panel applies operations inside the iframe.
-- `comfyui_edit` does not validate the graph semantics; a bad edit is rejected
-  by ComfyUI when it converts the graph to a prompt.
-- Sync is polling-based (about once per second while the tab is open).
-- Verified against a live ComfyUI 0.42.0 (CUDA) with
-  Qwen-Image 2.1 Turbo int8: the panel loads the real frontend through the
-  proxy, `graphToPrompt()` reaches `/api/comfyui/state`, and Run queues a
-  prompt. ComfyUI's `origin_only_middleware` rejects a POST whose `Origin`
-  netloc differs from `Host`, so the proxy strips `Origin`/`Referer` for both
-  HTTP and WebSocket upstream requests.
-- Host state is in memory only; a DSH restart clears it. Persistence comes in
-  the next milestone.
+- `comfyui_edit` does not validate graph semantics; a bad edit is rejected
+  when ComfyUI converts the graph to a prompt.
+- Sync is polling-based (about once per second while the tab is visible).
+- A session that never opened the panel shows no ComfyUI tools. After a Host
+  restart a persisted session gets them back; a brand-new session gets them on
+  its first panel sync.
+- `save`/`cancel` of a run are not exposed yet; `comfyui_run` only queues.
 - The panel is an iframe, so it does not inherit DSH theme tokens; this is a
-  deliberate exception for UI-workflow fidelity and all third-party node UIs.
-- Execution events are pushed over the panel's own ComfyUI WebSocket, so
-  progress and errors are near real-time, but they only exist while the panel
-  is mounted.
+  deliberate exception for UI-workflow fidelity and third-party node UIs.
+- Execution events arrive over the panel's own ComfyUI WebSocket, so progress
+  and errors exist only while the panel is mounted.
+- The supervisor cannot distinguish a hung ComfyUI from one doing a long
+  generation that stops answering `/system_stats`; health restarts should be
+  tuned per workload.
 
-## Next
+## Design notes
 
-1. Derive a semantic projection of the UI workflow for the model (ids, types,
-   widget values, links) instead of raw JSON, and expose it through
-   `comfyui_graph_read`.
-2. Scope tools per session and add a one-line `systemPrompt.context` digest.
-3. Persist workflows with `storageDomain`.
-4. Keep the ComfyUI process alive (or start it from the panel) so reopening the
-   tab does not wait for a cold boot.
+- **The UI workflow stays canonical.** The API prompt is derived by the real
+  `graphToPrompt()`; the projection is a read-only view built from the same
+  nodes, so the model never sees a second, lossy graph representation as truth.
+- **State lives in the plugin.** Workflows survive restarts through a domain KV
+  record (`sessionId -> { workflow, prompt, semantic, revision }`), capped at
+  the 20 most recently updated sessions. The model only sees the projection and
+  its own edit results.
+- **Tools follow the session.** Registration happens on `agent.ctx`, so an
+  agent-scoped tool list and prompt context decide visibility; unregistering
+  happens through the same effect chain when the plugin unloads.
+- **No core or ComfyUI changes.** The proxy, the iframe reach into
+  `comfyAPI.app.app`, and the command channel are the whole integration.

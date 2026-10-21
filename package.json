@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-comfyui",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "ComfyUI workflow editor inside the DeepSeek Harness Web UI",
@@ -13,6 +13,9 @@
   "files": [
     "index.js",
     "client.js",
+    "projection.js",
+    "storage.js",
+    "supervisor.js",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",

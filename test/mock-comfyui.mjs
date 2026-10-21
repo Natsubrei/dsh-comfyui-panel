@@ -33,12 +33,28 @@ const PAGE = `<!doctype html>
 <script>
   window.comfyAPI = window.comfyAPI || {};
   window.comfyAPI.app = window.comfyAPI.app || {};
+  var sampler = {
+    id: 1,
+    type: 'KSampler',
+    title: 'KSampler',
+    mode: 0,
+    widgets: [
+      { name: 'seed', value: 0 },
+      { name: 'control_after_generate', value: 'fixed' },
+      { name: 'steps', value: 8 },
+      { name: 'cfg', value: 2.5 }
+    ],
+    inputs: [],
+    outputs: [{ name: 'LATENT' }]
+  };
   window.comfyAPI.app.app = {
     rootGraph: {
+      _nodes: [sampler],
+      links: new Map(),
       serialize: () => ({
         last_node_id: 1,
         last_link_id: 0,
-        nodes: [{ id: 1, type: 'KSampler', pos: [80, 80], size: [240, 120], widgets_values: [0, 'fixed'] }],
+        nodes: [{ id: 1, type: 'KSampler', pos: [80, 80], size: [240, 120], title: 'KSampler', widgets_values: [0, 'fixed', 8, 2.5] }],
         links: [],
         groups: [],
         config: {},
@@ -46,8 +62,9 @@ const PAGE = `<!doctype html>
         version: 1
       })
     },
+    canvas: { selected_nodes: {} },
     async graphToPrompt() {
-      return { output: { 1: { class_type: 'KSampler', inputs: { seed: 0 } } } };
+      return { output: { 1: { class_type: 'KSampler', inputs: { seed: 0, steps: 8 } } } };
     }
   };
 </script>

@@ -190,6 +190,74 @@ window.__ModuleLoader__.load({
       return value
     }
 
+    const MAX_VALUE_STRING = 240
+    const MAX_PROJECTED_ENTRIES = 64
+
+    /** Bound one widget value to JSON-safe data the Host can store and a model can read. */
+    function projectValue(value, depth = 0) {
+      if (value === null || typeof value === 'boolean') return value
+      if (typeof value === 'number') return Number.isFinite(value) ? value : String(value)
+      if (typeof value === 'string') return value.length > MAX_VALUE_STRING ? `${value.slice(0, MAX_VALUE_STRING)}…` : value
+      if (depth >= 2) return '…'
+      if (Array.isArray(value)) return value.slice(0, MAX_PROJECTED_ENTRIES).map(item => projectValue(item, depth + 1))
+      if (typeof value === 'object') {
+        const out = Object.create(null)
+        for (const [key, item] of Object.entries(value).slice(0, MAX_PROJECTED_ENTRIES)) {
+          if (key === '__proto__') continue
+          out[key] = projectValue(item, depth + 1)
+        }
+        return out
+      }
+      return String(value)
+    }
+
+    /**
+     * Build the semantic projection from the live LiteGraph nodes, where widget
+     * and input names are known. An input becomes `"<sourceNodeId>:<slot>"`,
+     * matching what comfyui_edit's connect.from expects.
+     */
+    function projectGraph(app) {
+      const graph = app.rootGraph ?? app.graph
+      const nodes = Array.isArray(graph?._nodes) ? graph._nodes : []
+      const links = graph?.links instanceof Map ? graph.links : new Map(Object.entries(graph?.links ?? {}))
+      const linkOf = id => links.get(id) ?? links.get(String(id))
+      const projected = []
+      for (const node of nodes) {
+        if (node === null || typeof node !== 'object') continue
+        if (!Number.isInteger(node.id) || typeof node.type !== 'string') continue
+        const widgets = Object.create(null)
+        for (const widget of Array.isArray(node.widgets) ? node.widgets : []) {
+          if (widget === null || typeof widget !== 'object' || widget.value === undefined) continue
+          const name = typeof widget.name === 'string' && widget.name.length > 0 ? widget.name : null
+          if (name === null || name === '__proto__') continue
+          widgets[name] = projectValue(widget.value)
+        }
+        const inputs = Object.create(null)
+        for (const input of Array.isArray(node.inputs) ? node.inputs : []) {
+          if (input === null || typeof input !== 'object') continue
+          if (input.link === null || input.link === undefined) continue
+          const link = linkOf(input.link)
+          if (link === null || typeof link !== 'object') continue
+          if (!Number.isInteger(link.origin_id) || !Number.isInteger(link.origin_slot)) continue
+          inputs[String(input.name)] = `${link.origin_id}:${link.origin_slot}`
+        }
+        const entry = { id: node.id, type: node.type, widgets, inputs }
+        if (typeof node.title === 'string' && node.title.length > 0 && node.title !== node.type) entry.title = node.title
+        if (node.mode === 2) entry.mode = 'mute'
+        else if (node.mode === 4) entry.mode = 'bypass'
+        projected.push(entry)
+      }
+      projected.sort((left, right) => left.id - right.id)
+      const selected = Object.keys(app.canvas?.selected_nodes ?? {})
+        .map(Number)
+        .filter(Number.isInteger)
+      return {
+        nodes: projected,
+        linkCount: links.size,
+        selection: selected,
+      }
+    }
+
     /** Apply one host edit inside the iframe's LiteGraph editor. */
     function applyOperation({ graph, LiteGraph, app, operation }) {
       const op = operation?.op
@@ -240,7 +308,8 @@ window.__ModuleLoader__.load({
       throw new Error(`Unknown operation "${op}"`)
     }
 
-    function ComfyPanel({ sessionId, t }) {      const iframeRef = useRef(null)
+    function ComfyPanel({ sessionId, t }) {
+      const iframeRef = useRef(null)
       const appRef = useRef(null)
       const lastJsonRef = useRef('')
       const lastForcedAtRef = useRef(0)
@@ -268,11 +337,20 @@ window.__ModuleLoader__.load({
           throw new Error(t('bridgeUnavailable'))
         }
         const workflow = JSON.parse(JSON.stringify(graph.serialize()))
-        const json = JSON.stringify(workflow)
+        const selection = Object.keys(app.canvas?.selected_nodes ?? {})
+          .map(Number)
+          .filter(Number.isInteger)
+        const json = `${JSON.stringify(workflow)}|${selection.join(',')}`
         if (!force && json === lastJsonRef.current) return
         lastJsonRef.current = json
         setStatus('syncing')
         setMessage('')
+        let semantic = null
+        try {
+          semantic = projectGraph(app)
+        } catch {
+          // A projection failure must not block the raw workflow sync.
+        }
         let prompt = null
         try {
           const converted = await app.graphToPrompt()
@@ -288,7 +366,7 @@ window.__ModuleLoader__.load({
         const response = await fetch(`${STATE_URL}?sessionId=${encodeURIComponent(sessionId)}`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ sessionId, workflow, prompt, revision }),
+          body: JSON.stringify({ sessionId, workflow, prompt, semantic, revision }),
         })
         if (!response.ok) throw new Error(`${t('syncFailed')} HTTP ${response.status}`)
         setStats({ nodes, links, revision })

@@ -6,3 +6,11 @@
       config:
         upstream: http://127.0.0.1:8188
         prefix: /comfyui
+        # Optional process supervision. When enabled, the Host adopts a running
+        # upstream or starts ComfyUI itself and restarts it after a crash.
+        # supervise:
+        #   enabled: true
+        #   command: /path/to/ComfyUI/.venv/bin/python
+        #   args: [main.py, --listen, 127.0.0.1, --port, '8188']
+        #   cwd: /path/to/ComfyUI
+        #   logPath: /var/log/comfyui/comfyui.log
