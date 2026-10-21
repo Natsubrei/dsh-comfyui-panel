@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ComfyUI workflow">
+  <rect width="64" height="64" rx="14" fill="#111827"/>
+  <path d="M18 20h12v10H18zM36 20h10v10H36zM27 36h10v10H27z" fill="none" stroke="#7dd3fc" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M30 25h6M23 30v6h4M41 30v6h-4" fill="none" stroke="#fbbf24" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="18" cy="20" r="2.5" fill="#fbbf24"/>
+  <circle cx="46" cy="30" r="2.5" fill="#7dd3fc"/>
+  <circle cx="27" cy="46" r="2.5" fill="#fbbf24"/>
+</svg>

@@ -1,0 +1,19 @@
+{
+  "meta": {
+    "title": "ComfyUI",
+    "description": "Build and run ComfyUI workflows inside DeepSeek Harness."
+  },
+  "title": "ComfyUI",
+  "description": "Open the real ComfyUI editor in a DSH panel. Edits sync to the Host and are available to the model.",
+  "loading": "Starting ComfyUI…",
+  "ready": "Connected",
+  "syncing": "Syncing…",
+  "error": "Bridge error",
+  "sync": "Sync",
+  "reload": "Reload",
+  "open": "Open in new tab",
+  "noSession": "No session",
+  "stats": "{{nodes}} nodes · {{links}} links · rev {{revision}}",
+  "bridgeUnavailable": "ComfyUI did not expose its editor API. Check that the panel is served from /comfyui/.",
+  "syncFailed": "Could not send the workflow to the Host."
+}
