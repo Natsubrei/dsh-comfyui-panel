@@ -168,14 +168,26 @@ assert.equal((await answered.json()).accepted, true)
 const edited = await editPromise
 assert.match(edited.text, /"applied": 1/)
 
-// A session without a connected panel must be refused instead of hanging.
-await assert.rejects(
-  () => tools.get('comfyui_edit').execute(
-    { operations: [{ op: 'remove_node', id: 1 }] },
-    { agent: { session: { id: 's2' } }, signal: new AbortController().signal },
-  ),
-  /not connected/,
-)
+// A session without its own panel falls back to the most recently polling one.
+const fallbackPoll = fetches.get('/api/comfyui/commands/poll').fetch(new Request(
+  'http://127.0.0.1/api/comfyui/commands/poll',
+  { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 's1', timeoutMs: 3000 }) },
+))
+await new Promise(resolve => setTimeout(resolve, 50))
+const otherExec = { agent: { session: { id: 's2' } }, signal: new AbortController().signal }
+const fallbackEdit = tools.get('comfyui_edit').execute({ operations: [{ op: 'remove_node', id: 1 }] }, otherExec)
+const fallbackPolled = await (await fallbackPoll).json()
+await fetches.get('/api/comfyui/commands/result').fetch(new Request(
+  'http://127.0.0.1/api/comfyui/commands/result',
+  {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId: 's1', id: fallbackPolled.command.id, ok: true, value: { applied: 1 } }),
+  },
+))
+const fallbackResult = await fallbackEdit
+assert.match(fallbackResult.text, /"sessionId": "s1"/)
+assert.match(fallbackResult.text, /"requestedSessionId": "s2"/)
 
 console.log('P0 host smoke test passed')
 

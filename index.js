@@ -458,10 +458,37 @@ export function apply(ctx, rawConfig = {}) {
     }
   }
 
+  function resolveSnapshot(sessionId) {
+    const own = sessions.get(sessionId)
+    const panel = panelSessionId()
+    const panelState = panel === null ? undefined : sessions.get(panel)
+    if (own === undefined) {
+      if (panelState !== undefined) return { sessionId: panel, state: panelState }
+      let bestId = null
+      for (const [id, state] of sessions) {
+        if (bestId === null || state.updatedAt > sessions.get(bestId).updatedAt) bestId = id
+      }
+      return bestId === null ? null : { sessionId: bestId, state: sessions.get(bestId) }
+    }
+    if (panelState !== undefined && panel !== sessionId && panelState.updatedAt > own.updatedAt) {
+      return { sessionId: panel, state: panelState }
+    }
+    return { sessionId, state: own }
+  }
+
+  function panelSessionId() {
+    let bestId = null
+    for (const [id, state] of commandQueues) {
+      if (Date.now() - state.lastPollAt > 15000) continue
+      if (bestId === null || state.lastPollAt > commandQueues.get(bestId).lastPollAt) bestId = id
+    }
+    return bestId
+  }
+
   function graphReadTool() {
     return {
       name: 'comfyui_graph_read',
-      description: 'Read the ComfyUI UI workflow last synced from the DSH panel for this session. Use full=true to include the complete workflow JSON.',
+      description: 'Read the ComfyUI UI workflow last synced from a DSH panel. Uses this session when it has synced one, otherwise the most recently synced panel. Use full=true to include the complete workflow JSON.',
       parameters: {
         type: 'object',
         properties: { full: { type: 'boolean', description: 'Include the complete UI workflow JSON.' } },
@@ -469,15 +496,16 @@ export function apply(ctx, rawConfig = {}) {
       },
       output: textOutput(),
       async execute(args, exec) {
-        const sessionId = sessionOf(exec)
-        const state = sessions.get(sessionId)
-        if (state === undefined) {
-          return { text: `No ComfyUI workflow has been synced for this session yet. Open the ComfyUI tab and wait for it to connect.` }
+        const requested = sessionOf(exec)
+        const resolved = resolveSnapshot(requested)
+        if (resolved === null) {
+          return { text: 'No ComfyUI workflow has been synced yet. Open the ComfyUI tab and wait for it to connect.' }
         }
-        const payload = { sessionId, ...summary(state) }
+        const payload = { sessionId: resolved.sessionId, ...summary(resolved.state) }
+        if (resolved.sessionId !== requested) payload.requestedSessionId = requested
         if (args?.full === true) {
-          payload.workflow = state.workflow
-          payload.prompt = state.prompt
+          payload.workflow = resolved.state.workflow
+          payload.prompt = resolved.state.prompt
         }
         return { text: JSON.stringify(payload, null, 2) }
       },
@@ -498,9 +526,11 @@ export function apply(ctx, rawConfig = {}) {
       },
       output: textOutput(),
       async execute(args, exec) {
-        const sessionId = sessionOf(exec)
-        const state = sessions.get(sessionId)
-        if (state === undefined) throw new Error('No ComfyUI workflow has been synced for this session yet. Open the ComfyUI tab first.')
+        const requested = sessionOf(exec)
+        const resolved = resolveSnapshot(requested)
+        if (resolved === null) throw new Error('No ComfyUI workflow has been synced yet. Open the ComfyUI tab first.')
+        const { state } = resolved
+        const sessionId = resolved.sessionId
         if (state.prompt === null) throw new Error('The synced workflow has no API prompt yet. Wait for the ComfyUI panel to finish syncing.')
         const response = await fetchJson('/prompt', 15000, {
           method: 'POST',
@@ -517,7 +547,7 @@ export function apply(ctx, rawConfig = {}) {
         const promptId = response.data?.prompt_id
         if (typeof promptId !== 'string') throw new Error(`ComfyUI returned no prompt_id: ${JSON.stringify(response.data)}`)
         if (args?.wait !== true) {
-          return { text: JSON.stringify({ prompt_id: promptId, queued: true, revision: state.revision }, null, 2) }
+          return { text: JSON.stringify({ prompt_id: promptId, queued: true, sessionId, revision: state.revision }, null, 2) }
         }
         const timeout = clamp(args?.timeoutMs ?? 120000, 1000, 300000)
         const deadline = Date.now() + timeout
@@ -545,7 +575,12 @@ export function apply(ctx, rawConfig = {}) {
       },
       output: textOutput(),
       async execute(args, exec) {
-        const sessionId = sessionOf(exec)
+        const requested = sessionOf(exec)
+        let sessionId = requested
+        if (!progress.has(sessionId)) {
+          const panel = panelSessionId()
+          if (panel !== null) sessionId = panel
+        }
         const bucket = progress.get(sessionId)
         const wanted = typeof args?.promptId === 'string' && args.promptId.length > 0 ? args.promptId : null
         const run = wanted === null ? latestProgress(sessionId).run : (bucket?.runs.get(wanted) ?? null)
@@ -558,6 +593,7 @@ export function apply(ctx, rawConfig = {}) {
         return {
           text: JSON.stringify({
             sessionId,
+            requestedSessionId: sessionId === requested ? undefined : requested,
             hasPanelEvents: bucket !== undefined && bucket.latest !== null,
             run,
             history,
@@ -625,12 +661,16 @@ export function apply(ctx, rawConfig = {}) {
       },
       output: textOutput(),
       async execute(args, exec) {
-        const sessionId = sessionOf(exec)
+        const requested = sessionOf(exec)
         const operations = Array.isArray(args?.operations) ? args.operations : []
         if (operations.length === 0) throw new Error('operations must contain at least one edit')
-        const state = commandState(sessionId)
-        if (Date.now() - state.lastPollAt > 12000) {
-          throw new Error('The ComfyUI panel is not connected for this session. Open the ComfyUI tab and wait for Connected, then retry.')
+        let sessionId = requested
+        if (Date.now() - commandState(requested).lastPollAt > 12000) {
+          const panel = panelSessionId()
+          if (panel === null) {
+            throw new Error('No ComfyUI panel is connected. Open the ComfyUI tab and wait for Connected, then retry.')
+          }
+          sessionId = panel
         }
         const id = randomUUID()
         const answer = await new Promise((resolve, reject) => {
@@ -642,7 +682,15 @@ export function apply(ctx, rawConfig = {}) {
           enqueueCommand(sessionId, { id, operations, at: Date.now() })
         })
         if (answer.ok !== true) throw new Error(`ComfyUI rejected the edit: ${answer.error ?? 'unknown error'}`)
-        return { text: JSON.stringify({ id, applied: operations.length, result: answer.value }, null, 2) }
+        return {
+          text: JSON.stringify({
+            id,
+            sessionId,
+            requestedSessionId: sessionId === requested ? undefined : requested,
+            applied: operations.length,
+            result: answer.value,
+          }, null, 2),
+        }
       },
     }
   }
