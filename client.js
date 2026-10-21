@@ -21,6 +21,7 @@ window.__ModuleLoader__.load({
     const EVENT_URL = '/api/comfyui/events'
     const COMMAND_POLL_URL = '/api/comfyui/commands/poll'
     const COMMAND_RESULT_URL = '/api/comfyui/commands/result'
+    const SERVICE_URL = '/api/comfyui/service'
 
     const en = {
       title: 'ComfyUI',
@@ -40,6 +41,20 @@ window.__ModuleLoader__.load({
       queued: 'Queued',
       runFailed: 'Run failed',
       runInterrupted: 'Run interrupted',
+      server: 'Server',
+      serverRunning: 'ComfyUI running (pid {{pid}})',
+      serverExternal: 'ComfyUI running (started outside the plugin)',
+      serverStopped: 'ComfyUI is not running',
+      serverStarting: 'Starting ComfyUI…',
+      serverDir: 'ComfyUI directory',
+      serverDirHint: 'The folder that contains main.py',
+      serverAutoStart: 'Start with DSH',
+      serverStart: 'Start',
+      serverStop: 'Stop',
+      serverRestart: 'Restart',
+      serverSave: 'Save settings',
+      serverFailed: 'Could not control ComfyUI',
+      serverPick: 'Pick the ComfyUI folder, then start it here.',
     }
     const zh = {
       title: 'ComfyUI',
@@ -59,6 +74,20 @@ window.__ModuleLoader__.load({
       queued: '排队中',
       runFailed: '运行失败',
       runInterrupted: '运行已中断',
+      server: '服务',
+      serverRunning: 'ComfyUI 运行中（pid {{pid}}）',
+      serverExternal: 'ComfyUI 在运行（外部启动）',
+      serverStopped: 'ComfyUI 未运行',
+      serverStarting: '正在启动 ComfyUI…',
+      serverDir: 'ComfyUI 目录',
+      serverDirHint: '包含 main.py 的那个目录',
+      serverAutoStart: '随 DSH 启动',
+      serverStart: '启动',
+      serverStop: '停止',
+      serverRestart: '重启',
+      serverSave: '保存设置',
+      serverFailed: '无法控制 ComfyUI',
+      serverPick: '选好 ComfyUI 目录后，在这里启动它。',
     }
 
     const CSS = `
@@ -115,9 +144,42 @@ window.__ModuleLoader__.load({
         color: var(--dsw-alias-state-error-primary);
         border-color: var(--dsw-alias-state-error-primary);
       }
+      .dsh-comfyui-service {
+        display: flex; flex-direction: column; gap: 6px;
+        margin: 8px 10px 0; padding: 8px 10px; border-radius: 8px;
+        border: 1px solid var(--dsw-alias-border-l1);
+        background: var(--dsw-alias-bg-layer-1);
+        color: var(--dsw-alias-label-secondary);
+      }
+      .dsh-comfyui-service-head {
+        display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      }
+      .dsh-comfyui-service-state { margin-right: auto; color: var(--dsw-alias-label-primary); }
+      .dsh-comfyui-service-field {
+        display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      }
+      .dsh-comfyui-service-field > span { min-width: 90px; }
+      .dsh-comfyui-service-input {
+        flex: 1 1 220px; min-width: 0; height: 24px;
+        padding: 0 8px; border-radius: 6px;
+        border: 1px solid var(--dsw-alias-border-l1);
+        background: var(--dsw-alias-bg-base);
+        color: var(--dsw-alias-label-primary);
+        font: inherit;
+      }
+      .dsh-comfyui-service-input:focus-visible {
+        outline: 1px solid var(--dsw-alias-brand-primary);
+        outline-offset: 1px;
+      }
+      .dsh-comfyui-service-check {
+        display: flex; align-items: center; gap: 6px; cursor: pointer;
+      }
+      .dsh-comfyui-service-action { width: fit-content; }
+      .dsh-comfyui-service-message { color: var(--dsw-alias-state-error-primary); }
+      .dsh-comfyui-service-hint { color: var(--dsw-alias-label-secondary); }
     `
 
-    function StatBar({ status, stats, message, runText, bootSeconds, onSync, onReload, onOpen, t }) {
+    function StatBar({ status, stats, message, runText, bootSeconds, onSync, onReload, onOpen, onService, t }) {
       const statText = t('stats')
         .replace('{{nodes}}', String(stats.nodes))
         .replace('{{links}}', String(stats.links))
@@ -129,6 +191,7 @@ window.__ModuleLoader__.load({
         h('span', { className: 'dsh-comfyui-status' }, statusText),
         runText === '' ? null : h('span', { className: 'dsh-comfyui-run' }, runText),
         h('span', { className: 'dsh-comfyui-stats', title: statText }, statText),
+        h('button', { className: 'dsh-comfyui-button', type: 'button', onClick: onService }, t('server')),
         h('button', { className: 'dsh-comfyui-button', type: 'button', onClick: onSync }, t('sync')),
         h('button', { className: 'dsh-comfyui-button', type: 'button', onClick: onReload }, t('reload')),
         h('button', { className: 'dsh-comfyui-button', type: 'button', onClick: onOpen }, t('open')),
@@ -321,6 +384,15 @@ window.__ModuleLoader__.load({
       const [run, setRun] = useState(null)
       const eventRef = useRef({ pending: null, timer: null, sentAt: 0 })
       const syncRef = useRef(null)
+      const reloadRef = useRef(null)
+      const serviceDraftRef = useRef({ loaded: false })
+      const lastServiceHealthRef = useRef(null)
+      const [service, setService] = useState(null)
+      const [serviceOpen, setServiceOpen] = useState(false)
+      const [serviceCwd, setServiceCwd] = useState('')
+      const [serviceAutoStart, setServiceAutoStart] = useState(false)
+      const [serviceBusy, setServiceBusy] = useState(false)
+      const [serviceMessage, setServiceMessage] = useState('')
 
       const readApp = useCallback(() => {
         const win = iframeRef.current?.contentWindow
@@ -329,6 +401,51 @@ window.__ModuleLoader__.load({
         appRef.current = app
         return app
       }, [])
+
+      const loadService = useCallback(async () => {
+        try {
+          const response = await fetch(SERVICE_URL)
+          if (!response.ok) return
+          const data = await response.json()
+          if (data?.ok !== true) return
+          setService(data)
+          if (!serviceDraftRef.current.loaded) {
+            serviceDraftRef.current.loaded = true
+            setServiceCwd(data.settings?.cwd ?? data.detected ?? '')
+            setServiceAutoStart(data.settings?.autoStart === true)
+          }
+        } catch {
+          // The Host may be restarting; the next poll retries.
+        }
+      }, [])
+
+      const serviceAction = useCallback(async (action) => {
+        setServiceBusy(true)
+        setServiceMessage('')
+        try {
+          const body = { action }
+          if (action === 'save' || action === 'start') {
+            body.settings = { cwd: serviceCwd.trim(), autoStart: serviceAutoStart }
+          }
+          const response = await fetch(SERVICE_URL, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+          })
+          const data = await response.json().catch(() => ({}))
+          if (!response.ok || data?.ok !== true) throw new Error(data?.error ?? `HTTP ${response.status}`)
+          setService(data)
+          serviceDraftRef.current.loaded = true
+          if (data.settings) {
+            setServiceCwd(data.settings.cwd)
+            setServiceAutoStart(data.settings.autoStart === true)
+          }
+        } catch (error) {
+          setServiceMessage(`${t('serverFailed')}: ${error instanceof Error ? error.message : String(error)}`)
+        } finally {
+          setServiceBusy(false)
+        }
+      }, [serviceAutoStart, serviceCwd, t])
 
       const push = useCallback(async (app, force = false) => {
         if (sessionId === undefined || sessionId === null) return
@@ -577,6 +694,18 @@ window.__ModuleLoader__.load({
         }
       }, [push, readApp, sessionId])
 
+      useEffect(() => {
+        let disposed = false
+        void loadService()
+        const timer = setInterval(() => {
+          if (!disposed && document.visibilityState === 'visible') void loadService()
+        }, 5000)
+        return () => {
+          disposed = true
+          clearInterval(timer)
+        }
+      }, [loadService])
+
       const reload = useCallback(() => {
         const frame = iframeRef.current
         if (frame === null) return
@@ -587,6 +716,16 @@ window.__ModuleLoader__.load({
         setMessage('')
         frame.src = PANEL_URL
       }, [])
+      reloadRef.current = reload
+
+      // Starting ComfyUI from the panel brings the iframe back without a click:
+      // a false -> true health transition reloads the embedded frontend.
+      useEffect(() => {
+        if (service === null) return
+        const previous = lastServiceHealthRef.current
+        lastServiceHealthRef.current = service.health === true
+        if (previous === false && service.health === true) reloadRef.current?.()
+      }, [service])
 
       const open = useCallback(() => {
         window.open(PANEL_URL, '_blank', 'noopener')
@@ -620,6 +759,75 @@ window.__ModuleLoader__.load({
         )
       }
 
+      let serviceText = t('serverStopped')
+      if (service !== null && service.health === true) {
+        serviceText = service.state === 'external'
+          ? t('serverExternal')
+          : t('serverRunning').replace('{{pid}}', String(service.pid ?? '?'))
+      } else if (service !== null && (service.state === 'starting' || service.state === 'restarting')) {
+        serviceText = t('serverStarting')
+      }
+      const severity = service !== null && service.controllerError !== null && service.controllerError !== undefined
+      const servicePanel = h('div', { className: 'dsh-comfyui-service' },
+        h('div', { className: 'dsh-comfyui-service-head' },
+          h('span', { className: 'dsh-comfyui-service-state' }, serviceText),
+          h('button', {
+            className: 'dsh-comfyui-button',
+            type: 'button',
+            disabled: serviceBusy || serviceCwd.trim() === '' || service?.health === true,
+            onClick: () => { void serviceAction('start') },
+          }, t('serverStart')),
+          h('button', {
+            className: 'dsh-comfyui-button',
+            type: 'button',
+            disabled: serviceBusy || service?.health !== true || service?.owned === false,
+            onClick: () => { void serviceAction('stop') },
+          }, t('serverStop')),
+          h('button', {
+            className: 'dsh-comfyui-button',
+            type: 'button',
+            disabled: serviceBusy || service?.owned === false,
+            onClick: () => { void serviceAction('restart') },
+          }, t('serverRestart')),
+        ),
+        h('label', { className: 'dsh-comfyui-service-field' },
+          h('span', null, t('serverDir')),
+          h('input', {
+            className: 'dsh-comfyui-service-input',
+            value: serviceCwd,
+            placeholder: t('serverDirHint'),
+            spellCheck: false,
+            disabled: serviceBusy,
+            onChange: event => setServiceCwd(event.target.value),
+          }),
+        ),
+        h('label', { className: 'dsh-comfyui-service-check' },
+          h('input', {
+            type: 'checkbox',
+            checked: serviceAutoStart,
+            disabled: serviceBusy,
+            onChange: event => setServiceAutoStart(event.target.checked),
+          }),
+          h('span', null, t('serverAutoStart')),
+        ),
+        h('div', { className: 'dsh-comfyui-service-head' },
+          h('button', {
+            className: 'dsh-comfyui-button',
+            type: 'button',
+            disabled: serviceBusy || serviceCwd.trim() === '',
+            onClick: () => { void serviceAction('save') },
+          }, t('serverSave')),
+          service !== null && service.health === false
+            ? h('span', { className: 'dsh-comfyui-service-hint' }, t('serverPick'))
+            : null,
+        ),
+        serviceMessage === '' ? null : h('div', { className: 'dsh-comfyui-service-message' }, serviceMessage),
+        severity ? h('div', { className: 'dsh-comfyui-service-message' }, String(service.controllerError)) : null,
+        service !== null && typeof service.lastError === 'string' && service.lastError !== ''
+          ? h('div', { className: 'dsh-comfyui-service-message' }, service.lastError)
+          : null,
+      )
+
       return h('div', { className: 'dsh-comfyui-panel' },
         h('style', null, CSS),
         h(StatBar, {
@@ -632,8 +840,10 @@ window.__ModuleLoader__.load({
           onSync: () => { void syncRef.current?.(true) },
           onReload: reload,
           onOpen: open,
+          onService: () => setServiceOpen(current => !current),
         }),
         message === '' ? null : h('div', { className: 'dsh-comfyui-notice', 'data-tone': status === 'error' ? 'error' : 'info' }, message),
+        serviceOpen || (service !== null && service.health === false) ? servicePanel : null,
         h('iframe', {
           ref: iframeRef,
           className: 'dsh-comfyui-frame',

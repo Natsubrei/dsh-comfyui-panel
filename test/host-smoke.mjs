@@ -5,6 +5,9 @@
  */
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { apply } from '../index.js'
 import { createSupervisor } from '../supervisor.js'
 
@@ -108,22 +111,26 @@ function addAgent(host, sessionId) {
 }
 
 /** Storage medium shared across Host instances, like the JSON backend file. */
-function createStorage(records = new Map()) {
+function createStorage(state = { sessions: new Map(), settings: new Map() }) {
   const opened = []
   return {
-    records,
+    state,
     opened,
     async open(spec) {
       opened.push(spec)
-      for (const value of records.values()) spec.tables.sessions.valueSchema.parse(value)
-      const table = {
-        get: key => records.get(key),
-        entries: () => records.entries(),
-        get size() { return records.size },
-        async put(key, value) { records.set(key, value) },
-        async delete(key) { return records.delete(key) },
+      for (const value of state.sessions.values()) spec.tables.sessions.valueSchema.parse(value)
+      const tableFor = name => {
+        const records = state[name]
+        if (records === undefined) throw new Error(`undeclared table ${name}`)
+        return {
+          get: key => records.get(key),
+          entries: () => records.entries(),
+          get size() { return records.size },
+          async put(key, value) { records.set(key, value) },
+          async delete(key) { return records.delete(key) },
+        }
       }
-      return { table: () => table, close: async () => {} }
+      return { table: tableFor, close: async () => {} }
     },
   }
 }
@@ -183,7 +190,7 @@ await new Promise(resolve => upstream.listen(UPSTREAM_PORT, '127.0.0.1', resolve
 // ── Proxy, bridge, and session tools ──────────────────────────────────────
 
 const storage = createStorage()
-storage.records.set('s-restored', {
+storage.state.sessions.set('s-restored', {
   sessionId: 's-restored',
   revision: 7,
   updatedAt: Date.now() - 60000,
@@ -215,7 +222,8 @@ assert.equal(restoredRead.nodes.find(node => node.id === 1).widgets.steps, 8)
 assert.equal(restoredRead.nodes.find(node => node.id === 1).inputs.latent_image, '2:0')
 const restoredStatus = parse(await restoredScope.tools.get('comfyui_status').execute({}, execOf('s-restored')))
 assert.equal(restoredStatus.persistence.backend, 'storage')
-assert.equal(restoredStatus.supervisor.enabled, false)
+assert.equal(restoredStatus.service.state, 'stopped')
+assert.equal(restoredStatus.service.settings, null)
 assert.equal(restoredStatus.panelConnected, false)
 
 const proxyServer = http.createServer((req, res) => {
@@ -277,6 +285,23 @@ const got = await host.fetches.get('/api/comfyui/state').fetch(
 )
 assert.equal(got.status, 200)
 assert.equal((await got.json()).revision, 1)
+
+// A forced re-sync of identical content must not invent a new revision.
+const resync = await host.fetches.get('/api/comfyui/state').fetch(new Request(
+  'http://127.0.0.1/api/comfyui/state?sessionId=s1',
+  {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: 's1',
+      revision: 2,
+      workflow,
+      prompt: { 7: { class_type: 'KSampler', inputs: {} }, 4: { class_type: 'UNETLoader', inputs: {} } },
+      semantic,
+    }),
+  },
+))
+assert.equal((await resync.json()).revision, 1)
 
 // A session only sees ComfyUI once its own workflow has synced.
 const s1 = addAgent(host, 's1')
@@ -391,7 +416,7 @@ assert.equal(legacyRead.apiPrompt.available, false)
 // ── Persistence ───────────────────────────────────────────────────────────
 
 await delay(2000)
-const persisted = storage.records.get('s1')
+const persisted = storage.state.sessions.get('s1')
 assert.ok(persisted, 'the synced workflow should be persisted')
 assert.equal(persisted.semantic.nodes.find(node => node.id === 7).widgets.steps, 12)
 assert.equal(persisted.prompt[7].class_type, 'KSampler')
@@ -400,12 +425,57 @@ assert.throws(
   /revision/,
 )
 
+// ── Panel-managed service settings ────────────────────────────────────────
+
+const serviceGet = await host.fetches.get('/api/comfyui/service').fetch(new Request('http://127.0.0.1/api/comfyui/service'))
+const initialService = await serviceGet.json()
+assert.equal(serviceGet.status, 200)
+assert.equal(initialService.ok, true)
+assert.equal(initialService.health, true)
+assert.equal(initialService.settings, null)
+assert.ok(initialService.detected === null || typeof initialService.detected === 'string')
+
+const comfyRoot = mkdtempSync(join(tmpdir(), 'dsh-comfyui-service-'))
+writeFileSync(join(comfyRoot, 'main.py'), '')
+const saveService = await host.fetches.get('/api/comfyui/service').fetch(new Request('http://127.0.0.1/api/comfyui/service', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ action: 'save', settings: { cwd: comfyRoot, autoStart: false } }),
+}))
+const savedService = await saveService.json()
+assert.equal(saveService.status, 200)
+assert.equal(savedService.ok, true)
+assert.equal(savedService.settings.cwd, comfyRoot)
+assert.equal(savedService.state, 'stopped')
+assert.equal(savedService.owned, false)
+const storedSettings = storage.state.settings.get('service')
+assert.equal(storedSettings.cwd, comfyRoot)
+assert.equal(storedSettings.autoStart, false)
+
+// A directory without main.py is rejected with the reason.
+const badService = await host.fetches.get('/api/comfyui/service').fetch(new Request('http://127.0.0.1/api/comfyui/service', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ action: 'save', settings: { cwd: tmpdir(), autoStart: false } }),
+}))
+assert.equal(badService.status, 400)
+assert.match((await badService.json()).error, /main\.py/)
+
+const stopService = await host.fetches.get('/api/comfyui/service').fetch(new Request('http://127.0.0.1/api/comfyui/service', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ action: 'stop' }),
+}))
+assert.equal((await stopService.json()).ok, true)
+
 // A second Host with the same medium restores the workflow and its tools.
-const host2 = createHost(createStorage(storage.records))
+const host2 = createHost(createStorage(storage.state))
 const s1Again = addAgent(host2, 's1')
 apply(host2, { upstream: `http://127.0.0.1:${UPSTREAM_PORT}`, prefix: '/comfyui' })
 await delay(50)
 assert.ok(s1Again.tools.has('comfyui_graph_read'), 'a restored session should get tools')
+const restoredService = await (await host2.fetches.get('/api/comfyui/service').fetch(new Request('http://127.0.0.1/api/comfyui/service'))).json()
+assert.equal(restoredService.settings.cwd, comfyRoot)
 const restoredAgain = parse(await s1Again.tools.get('comfyui_graph_read').execute({}, exec))
 assert.ok(restoredAgain.revision >= 1)
 assert.equal(restoredAgain.nodes.find(node => node.id === 7).widgets.steps, 12)
@@ -469,6 +539,73 @@ assert.equal(adopter.snapshot().state, 'external')
 assert.equal(adopter.snapshot().pid, null)
 await adopter.stop()
 assert.equal(adopter.snapshot().state, 'stopped')
+
+// ── Panel-managed start/stop against a throwaway "ComfyUI" ─────────────────
+
+const PANEL_SERVICE_PORT = 18190
+const panelRoot = mkdtempSync(join(tmpdir(), 'dsh-comfyui-panel-'))
+writeFileSync(join(panelRoot, 'main.py'), `
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(b'{"system": {"comfyui_version": "fake"}}')
+    def log_message(self, *args):
+        pass
+HTTPServer(('127.0.0.1', ${PANEL_SERVICE_PORT}), Handler).serve_forever()
+`)
+
+const panelHost = createHost(createStorage())
+apply(panelHost, { upstream: `http://127.0.0.1:${PANEL_SERVICE_PORT}`, prefix: '/comfyui' })
+const servicePath = '/api/comfyui/service'
+const serviceStatus = async () => (await panelHost.fetches.get(servicePath).fetch(new Request(`http://127.0.0.1${servicePath}`))).json()
+const servicePost = async body => (await panelHost.fetches.get(servicePath).fetch(new Request(`http://127.0.0.1${servicePath}`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(body),
+}))).json()
+const waitForHealth = async expected => {
+  const deadline = Date.now() + 15000
+  while (Date.now() < deadline) {
+    const status = await serviceStatus()
+    const settled = expected
+      ? status.health === true && status.state === 'running'
+      : status.health === false && (status.state === 'stopped' || status.state === 'failed')
+    if (settled) return status
+    await delay(250)
+  }
+  throw new Error(`service did not become ${expected ? 'running' : 'stopped'}`)
+}
+
+try {
+  const initialPanel = await serviceStatus()
+  assert.equal(initialPanel.health, false)
+  const started = await servicePost({ action: 'start', settings: { cwd: panelRoot, autoStart: false } })
+  assert.equal(started.ok, true)
+  assert.equal(started.state, 'starting')
+  const running = await waitForHealth(true)
+  assert.equal(running.state, 'running')
+  assert.equal(running.owned, true)
+  assert.ok(Number.isInteger(running.pid))
+
+  const stopped = await servicePost({ action: 'stop' })
+  assert.equal(stopped.ok, true)
+  const down = await waitForHealth(false)
+  assert.equal(down.state, 'stopped')
+
+  // The panel can start it again after a stop.
+  const restarted = await servicePost({ action: 'start' })
+  assert.equal(restarted.ok, true)
+  const runningAgain = await waitForHealth(true)
+  assert.notEqual(runningAgain.pid, running.pid)
+  await servicePost({ action: 'stop' })
+  await waitForHealth(false)
+} finally {
+  await servicePost({ action: 'stop' }).catch(() => {})
+  panelHost.dispose()
+}
 
 assert.throws(
   () => apply(createHost(createStorage()), { upstream: 'http://127.0.0.1:8188', supervise: { enabled: true } }),

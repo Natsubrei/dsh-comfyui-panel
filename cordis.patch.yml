@@ -6,8 +6,9 @@
       config:
         upstream: http://127.0.0.1:8188
         prefix: /comfyui
-        # Optional process supervision. When enabled, the Host adopts a running
-        # upstream or starts ComfyUI itself and restarts it after a crash.
+        # Optional advanced process supervision. The panel can start, stop, and
+        # restart ComfyUI without this block; enabling it here takes precedence
+        # and starts ComfyUI together with the Host.
         # supervise:
         #   enabled: true
         #   command: /path/to/ComfyUI/.venv/bin/python

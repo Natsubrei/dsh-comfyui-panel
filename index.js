@@ -23,7 +23,7 @@ import tls from 'node:tls'
 import { randomUUID } from 'node:crypto'
 import { digestLine, projectFromWorkflow, sanitizeSemantic } from './projection.js'
 import { createWorkflowStore } from './storage.js'
-import { createSupervisor, disabledSupervisor } from './supervisor.js'
+import { createServiceController } from './service.js'
 
 /** Required Host services: the HTTP carrier, its auth admission, and the Tool registry. */
 export const inject = ['webServer', 'connection', 'tools']
@@ -50,22 +50,22 @@ export function apply(ctx, rawConfig = {}) {
   let objectInfoCache = { at: 0, data: null }
 
   const store = createWorkflowStore(ctx, ctx.logger)
-  const supervisor = config.supervise.enabled
-    ? createSupervisor({
-        config: config.supervise,
-        probe: async () => (await fetchJson('/system_stats', 2500)).ok === true,
-        logger: ctx.logger,
-      })
-    : disabledSupervisor()
+  const service = createServiceController({
+    upstream,
+    config: config.supervise,
+    probe: async () => (await fetchJson('/system_stats', 2500)).ok === true,
+    logger: ctx.logger,
+  })
 
   ctx.logger?.info(`dsh-comfyui: upstream ${upstream.href}, panel ${prefix}/`)
 
-  // Adopt or start ComfyUI before the panel can load it, and stop an owned
-  // child when the plugin unloads. Probe-only supervision leaves the process
-  // alone when it is already running.
+  // A `supervise` config, when present, starts ComfyUI at boot; otherwise the
+  // panel decides. Unloading the plugin stops only a process it started.
   ctx.effect(() => {
-    void supervisor.start()
-    return () => { void supervisor.stop() }
+    if (config.supervise.enabled) {
+      void service.start().catch(error => ctx.logger?.warn(`dsh-comfyui: could not start ComfyUI: ${String(error)}`))
+    }
+    return () => { void service.shutdown() }
   }, 'dsh-comfyui: process supervision')
 
   // Load persisted workflows, then give already-open sessions their tools.
@@ -73,7 +73,7 @@ export function apply(ctx, rawConfig = {}) {
   // tab closed, where the workflow must still be readable and runnable.
   ctx.effect(() => {
     let disposed = false
-    void store.ready.then(records => {
+    void store.ready.then(({ sessions: records, settings: serviceSettings }) => {
       if (disposed) return
       for (const record of records) {
         if (sessions.has(record.sessionId)) continue
@@ -81,6 +81,12 @@ export function apply(ctx, rawConfig = {}) {
         registerSessionTools(record.sessionId)
       }
       if (records.length > 0) ctx.logger?.info(`dsh-comfyui: restored ${records.length} workflow(s) from storage`)
+      if (serviceSettings !== null && !config.supervise.enabled) {
+        service.restore(serviceSettings)
+        if (serviceSettings.autoStart === true) {
+          void service.start().catch(error => ctx.logger?.warn(`dsh-comfyui: could not auto-start ComfyUI: ${String(error)}`))
+        }
+      }
     }).catch(error => ctx.logger?.warn(`dsh-comfyui: could not restore workflows: ${String(error)}`))
     return () => {
       disposed = true
@@ -153,6 +159,16 @@ export function apply(ctx, rawConfig = {}) {
     })
     return () => { void dispose() }
   }, 'dsh-comfyui: command result route')
+
+  ctx.effect(() => {
+    const dispose = ctx.connection.fetch.register({
+      path: '/api/comfyui/service',
+      methods: ['GET', 'POST'],
+      requestBody: 'buffered',
+      fetch: request => bridgeService(request),
+    })
+    return () => { void dispose() }
+  }, 'dsh-comfyui: service route')
 
   // ── HTTP proxy ──────────────────────────────────────────────────────────
 
@@ -296,32 +312,42 @@ export function apply(ctx, rawConfig = {}) {
       && Array.isArray(workflow.nodes) && workflow.nodes.length > 0) {
       semantic = null
     }
+    // The panel re-syncs on a timer even when nothing changed. Compare content
+    // so `revision` means "a change was synced" and idle re-syncs stay cheap.
+    const signature = JSON.stringify([workflow, prompt, semantic])
+    const changed = previous === undefined || previous.signature !== signature
     const state = {
       workflow,
       prompt,
       semantic,
+      signature,
       // The panel's counter restarts with the page while the Host may hold a
       // higher persisted revision; keep the descriptive revision monotonic.
-      revision: Math.max(incoming, (previous?.revision ?? 0) + 1),
+      revision: changed
+        ? Math.max(incoming, (previous?.revision ?? 0) + 1)
+        : (previous?.revision ?? incoming),
       nodes: Array.isArray(workflow.nodes) ? workflow.nodes.length : 0,
       links: Array.isArray(workflow.links) ? workflow.links.length : 0,
       types: Array.isArray(workflow.nodes)
         ? [...new Set(workflow.nodes.map(node => node?.type).filter(type => typeof type === 'string'))].slice(0, 64)
         : [],
-      updatedAt: Date.now(),
+      updatedAt: changed ? Date.now() : (previous?.updatedAt ?? Date.now()),
     }
     sessions.set(sessionId, state)
     registerSessionTools(sessionId)
-    schedulePersist(sessionId)
+    if (changed) schedulePersist(sessionId)
     return json({ ok: true, ...summary(state) })
   }
 
   function stateFromRecord(record) {
     const workflow = record.workflow
+    const prompt = record.prompt ?? null
+    const semantic = sanitizeSemantic(record.semantic)
     return {
       workflow,
-      prompt: record.prompt ?? null,
-      semantic: sanitizeSemantic(record.semantic),
+      prompt,
+      semantic,
+      signature: JSON.stringify([workflow, prompt, semantic]),
       revision: record.revision,
       nodes: Array.isArray(workflow.nodes) ? workflow.nodes.length : 0,
       links: Array.isArray(workflow.links) ? workflow.links.length : 0,
@@ -538,6 +564,40 @@ export function apply(ctx, rawConfig = {}) {
     return json({ ok: true, accepted: true })
   }
 
+  // ── Service bridge ──────────────────────────────────────────────────────
+  // The panel manages the ComfyUI process here; no profile configuration is
+  // involved. Settings are limited to the checkout directory and auto-start,
+  // and the host derives the command and arguments from them.
+
+  async function bridgeService(request) {
+    if (request.method === 'GET') {
+      return json({ ok: true, ...(await service.status()) })
+    }
+    let body
+    try {
+      const text = await request.text()
+      if (text.length > 100_000) return json({ ok: false, error: 'settings payload is too large' }, 413)
+      body = JSON.parse(text)
+    } catch {
+      return json({ ok: false, error: 'invalid JSON body' }, 400)
+    }
+    const action = typeof body?.action === 'string' ? body.action : ''
+    try {
+      if (action === 'save' || action === 'start') {
+        if (body?.settings !== undefined) service.save(body.settings)
+        const record = service.record()
+        if (record !== null) await store.saveSettings(record)
+      }
+      if (action === 'start') await service.start()
+      else if (action === 'stop') await service.stop()
+      else if (action === 'restart') await service.restart()
+      else if (action !== 'save') return json({ ok: false, error: `unknown action "${action}"` }, 400)
+      return json({ ok: true, ...(await service.status()) })
+    } catch (error) {
+      return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400)
+    }
+  }
+
   // ── Session tools ───────────────────────────────────────────────────────
   // Tools and the digest live on each Agent's context. A session gets them
   // once a workflow has synced for it (or was restored from storage), so
@@ -611,7 +671,7 @@ export function apply(ctx, rawConfig = {}) {
               backend: store.backend,
               ...(store.reason === null ? {} : { reason: store.reason }),
             },
-            supervisor: supervisor.snapshot(),
+            service: service.snapshot(),
           }, null, 2),
         }
       },

@@ -40,8 +40,10 @@ panel, a workflow the model can read and edit, and runs the model can start.
 - Persists each session's workflow, API prompt, and projection through
   `ctx.storageDomain` (domain `dsh_comfyui`), so a Host restart does not lose
   the graph. Storage failures degrade to memory without blocking the bridge.
-- Optionally supervises the ComfyUI process: adopt an already-running server,
-  or start one and restart it after a crash.
+- Manages the ComfyUI process from the panel. The **Server** section starts,
+  stops, and restarts ComfyUI, remembers the checkout directory, and can start
+  it together with DSH. It adopts an already-running server instead of
+  launching a duplicate. No profile configuration is required.
 
 ## Configuration
 
@@ -59,7 +61,16 @@ panel, a workflow the model can read and edit, and runs the model can start.
 `prefix` is the same-origin path the panel is served from; `upstream` is the
 ComfyUI server. Both must agree with the panel's hard-coded `/comfyui/`.
 
-To let the Host own the ComfyUI process, add a `supervise` block:
+Process management needs no configuration: open the panel's **Server** section,
+point it at the ComfyUI directory (the folder with `main.py`; a common location
+is detected automatically), and press **Start**. The command is derived from
+that directory (`<dir>/.venv/bin/python`, else `python3`) and the arguments from
+the configured upstream port, so the panel cannot run arbitrary commands. The
+directory and the **Start with DSH** flag are stored in the plugin's own
+`dsh_comfyui` domain, not in the DSH profile.
+
+For advanced setups, the plugin row still accepts a `supervise` block that
+takes precedence at start-up:
 
 ```yaml
         supervise:
@@ -74,8 +85,8 @@ To let the Host own the ComfyUI process, add a `supervise` block:
           logPath: /var/log/comfyui/comfyui.log
 ```
 
-`cwd` is required when supervision is enabled; a missing value fails the
-plugin load instead of silently never starting ComfyUI. `command` defaults to
+`cwd` is required when that block is enabled; a missing value fails the plugin
+load instead of silently never starting ComfyUI. `command` defaults to
 `python3`, `args` to `main.py --listen 127.0.0.1`. An upstream that already
 answers `/system_stats` is adopted (`state: external`) rather than duplicated.
 Stopping the plugin stops only a process it started.
@@ -113,8 +124,9 @@ node test/host-smoke.mjs
 
 They cover the proxy, redirect, asset caching, the workflow and event bridges,
 session-scoped tools and digest, the projection fallback, persistence across
-two Host instances, the edit round-trip, and a real supervised child process.
-The test prints `host smoke test passed`.
+two Host instances, the edit round-trip, the panel-managed start/stop/restart of
+a real child process, and the supervisor's adoption path. The test prints
+`host smoke test passed`.
 
 ## Current limits
 
@@ -131,9 +143,11 @@ The test prints `host smoke test passed`.
   deliberate exception for UI-workflow fidelity and third-party node UIs.
 - Execution events arrive over the panel's own ComfyUI WebSocket, so progress
   and errors exist only while the panel is mounted.
-- The supervisor cannot distinguish a hung ComfyUI from one doing a long
+- The process manager cannot distinguish a hung ComfyUI from one doing a long
   generation that stops answering `/system_stats`; health restarts should be
   tuned per workload.
+- A process started outside the plugin is adopted but never stopped by it: the
+  panel hides Stop/Restart for that case.
 
 ## Design notes
 

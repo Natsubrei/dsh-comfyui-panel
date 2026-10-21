@@ -13,6 +13,8 @@
  */
 
 const TABLE = 'sessions'
+const SETTINGS_TABLE = 'settings'
+const SETTINGS_KEY = 'service'
 const DOMAIN = 'dsh_comfyui'
 const MAX_RECORDS = 20
 const MAX_PENDING = 20
@@ -41,11 +43,23 @@ function parseRecord(value) {
   return value
 }
 
+/** Validate the panel-managed service settings record. */
+function parseSettings(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) invalid('service settings must be an object')
+  if (typeof value.cwd !== 'string' || value.cwd.length === 0) invalid('service settings need a cwd')
+  if (typeof value.autoStart !== 'boolean') invalid('service settings need an autoStart flag')
+  if (!Number.isSafeInteger(value.updatedAt) || value.updatedAt <= 0) invalid('service settings need an updatedAt')
+  return value
+}
+
 /** The domain declaration; `parse` is the only schema method the domain layer uses at open. */
 export const WORKFLOW_DOMAIN = {
   name: DOMAIN,
   version: 1,
-  tables: { [TABLE]: { valueSchema: { parse: parseRecord } } },
+  tables: {
+    [TABLE]: { valueSchema: { parse: parseRecord } },
+    [SETTINGS_TABLE]: { valueSchema: { parse: parseSettings } },
+  },
 }
 
 /**
@@ -80,12 +94,14 @@ function resolveFacility(ctx) {
 export function createWorkflowStore(ctx, logger) {
   /** sessionId -> record written before the domain finished opening. */
   const pending = new Map()
+  /** Service settings written before the domain finished opening. */
+  let pendingSettings = null
   let domain = null
   let backend = 'memory'
   let reason = 'storageDomain is not mounted'
 
   const ready = resolveFacility(ctx).then(async facility => {
-    if (facility === undefined || facility === null) return []
+    if (facility === undefined || facility === null) return { sessions: [], settings: null }
     try {
       const opened = await facility.open(WORKFLOW_DOMAIN)
       domain = opened
@@ -97,11 +113,20 @@ export function createWorkflowStore(ctx, logger) {
         })
       }
       pending.clear()
-      return [...opened.table(TABLE).entries()].map(([, record]) => record)
+      if (pendingSettings !== null) {
+        await opened.table(SETTINGS_TABLE).put(SETTINGS_KEY, pendingSettings).catch(error => {
+          logger?.warn(`dsh-comfyui: could not persist service settings: ${String(error)}`)
+        })
+        pendingSettings = null
+      }
+      return {
+        sessions: [...opened.table(TABLE).entries()].map(([, record]) => record),
+        settings: opened.table(SETTINGS_TABLE).get(SETTINGS_KEY) ?? null,
+      }
     } catch (error) {
       reason = error instanceof Error ? error.message : String(error)
       logger?.warn(`dsh-comfyui: workflow persistence is off (${reason}); keeping workflows in memory`)
-      return []
+      return { sessions: [], settings: null }
     }
   })
 
@@ -135,6 +160,14 @@ export function createWorkflowStore(ctx, logger) {
         if (oldestKey === null) break
         await table.delete(oldestKey)
       }
+    },
+    /** Store the panel-managed service settings; buffered like workflow writes. */
+    async saveSettings(record) {
+      if (domain === null) {
+        pendingSettings = record
+        return
+      }
+      await domain.table(SETTINGS_TABLE).put(SETTINGS_KEY, record)
     },
     /** Close the domain handle; further saves fall back to memory. */
     async close() {
