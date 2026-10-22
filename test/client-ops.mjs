@@ -249,27 +249,37 @@ const stopped = { health: false, owned: false, state: 'stopped', pid: null }
   assert.equal(projection.linkCount, 1)
 }
 
-// A fresh panel has to frame the graph itself: node geometry arrives as
-// Float64Array, and a canvas that reports zero size must stay retryable
-// instead of latching "already fitted".
+// Framing goes through ComfyUI's own FitView command, because that is the
+// code path behind the editor's zoom-to-fit button; the bounding-box fallback
+// must at least center the node under the real camera semantics
+// (`screen = (graph + offset) * scale`).
 {
-  const { fitCanvas } = mod.__ops
+  const { fitCanvas, viewShowsAll } = mod.__ops
   const makeApp = (ds, size = { clientWidth: 719, clientHeight: 869 }) => ({
     canvas: { ds, canvas: size, setDirty() {} },
-    rootGraph: { _nodes: [{ pos: Float64Array.from([1000, 200]), size: Float64Array.from([300, 400]) }] },
+    rootGraph: { _nodes: [{ pos: Float64Array.from([1000, 1200]), size: Float64Array.from([300, 400]) }] },
   })
-  const ds = { scale: 0.9, offset: Float64Array.from([416, 110]), min_scale: 0.1, max_scale: 10 }
-  assert.equal(fitCanvas(makeApp(ds)), true)
-  assert.ok(Math.abs(ds.scale - 0.9) > 1e-6, 'the camera changes to frame the node')
-  assert.ok(ds.scale >= 0.1 && ds.scale <= 10)
-  assert.ok(Number.isFinite(ds.offset[0]) && Number.isFinite(ds.offset[1]))
 
-  const framed = { scale: 0.5, offset: Float64Array.from([-400, -50]), min_scale: 0.1, max_scale: 10 }
-  assert.equal(fitCanvas(makeApp(framed)), true)
-  assert.equal(framed.scale, 0.5, 'a view that already shows the node is left alone')
+  let executed = null
+  const commandApp = makeApp({ scale: 1, offset: Float64Array.from([0, 0]), min_scale: 0.1, max_scale: 10 })
+  commandApp.extensionManager = { command: { execute: async id => { executed = id } } }
+  assert.equal(await fitCanvas(commandApp), true)
+  assert.equal(executed, 'Comfy.Canvas.FitView', 'the official command is preferred')
 
-  const unlaid = { scale: 0.9, offset: Float64Array.from([416, 110]), min_scale: 0.1, max_scale: 10 }
-  assert.equal(fitCanvas(makeApp(unlaid, { clientWidth: 0, clientHeight: 0 })), false, 'retry until laid out')
+  const ds = { scale: 1, offset: Float64Array.from([0, 0]), min_scale: 0.1, max_scale: 10 }
+  const app = makeApp(ds)
+  assert.equal(await fitCanvas(app), true)
+  const screenX = (1000 + ds.offset[0]) * ds.scale
+  const screenY = (1200 + ds.offset[1]) * ds.scale
+  assert.ok(screenX > 0 && screenX < 719, 'node lands inside the viewport horizontally')
+  assert.ok(screenY > 0 && screenY < 869, 'and vertically')
+  assert.equal(viewShowsAll(app), true, 'after fitting, the view contains every node')
+
+  commandApp.extensionManager.command.execute = async () => { throw new Error('command unavailable') }
+  assert.equal(await fitCanvas(commandApp), true, 'a failing command falls back instead of throwing')
+
+  const unlaid = { scale: 1, offset: Float64Array.from([0, 0]), min_scale: 0.1, max_scale: 10 }
+  assert.equal(await fitCanvas(makeApp(unlaid, { clientWidth: 0, clientHeight: 0 })), false, 'retry until laid out')
 }
 
 // The edit toast is the only place a user learns what the model changed, so

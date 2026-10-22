@@ -526,22 +526,34 @@ window.__ModuleLoader__.load({
       return String(value)
     }
 
-    /**
-     * Frame the graph in the embedded canvas, so a fresh panel does not open
-     * with half the workflow outside the visible area. LiteGraph keeps the
-     * camera in `canvas.ds` (scale plus canvas-space offset) and stores node
-     * geometry as Float64Array, not plain arrays. A view that already frames
-     * every node is left alone, so a workflow's saved camera survives.
-     */
-    function fitCanvas(app) {
-      const canvas = app.canvas
-      const graph = app.rootGraph ?? app.graph
-      const nodes = Array.isArray(graph?._nodes) ? graph._nodes : []
+    /** The command ComfyUI's own "zoom to fit" button runs. */
+    const FIT_COMMAND = 'Comfy.Canvas.FitView'
+
+    /** Visible graph rect for the live camera; `screen = (graph + offset) * scale`. */
+    function visibleRect(canvas) {
       const ds = canvas?.ds
       const element = canvas?.canvas
       const width = element?.clientWidth ?? 0
       const height = element?.clientHeight ?? 0
-      if (ds === undefined || ds === null || width <= 0 || height <= 0) return false
+      if (ds === null || ds === undefined || width <= 0 || height <= 0) return null
+      const scale = Number(ds.scale) > 0 ? Number(ds.scale) : 1
+      const offsetX = Number(ds.offset?.[0])
+      const offsetY = Number(ds.offset?.[1])
+      if (!Number.isFinite(offsetX) || !Number.isFinite(offsetY)) return null
+      return {
+        width,
+        height,
+        scale,
+        left: -offsetX,
+        top: -offsetY,
+        right: width / scale - offsetX,
+        bottom: height / scale - offsetY,
+      }
+    }
+
+    /** Graph-space bounds of every node, ignoring anything without geometry. */
+    function nodeBounds(graph) {
+      const nodes = Array.isArray(graph?._nodes) ? graph._nodes : []
       const at = (pair, index) => (pair !== null && pair !== undefined ? Number(pair[index]) : Number.NaN)
       let minX = Infinity
       let minY = Infinity
@@ -558,28 +570,56 @@ window.__ModuleLoader__.load({
         maxX = Math.max(maxX, x + w)
         maxY = Math.max(maxY, y + h)
       }
-      if (!Number.isFinite(minX) || maxX <= minX || maxY <= minY) return false
-      // Visible rect in graph coordinates: offset is canvas-space, so divide.
-      const scaleNow = Number(ds.scale) > 0 ? Number(ds.scale) : 1
-      const offsetX = at(ds.offset, 0)
-      const offsetY = at(ds.offset, 1)
-      if (Number.isFinite(offsetX) && Number.isFinite(offsetY)) {
-        const left = -offsetX / scaleNow
-        const top = -offsetY / scaleNow
-        const right = left + width / scaleNow
-        const bottom = top + height / scaleNow
-        const margin = (right - left) * 0.02
-        if (minX >= left + margin && maxX <= right - margin && minY >= top + margin && maxY <= bottom - margin) {
+      if (!Number.isFinite(minX) || maxX <= minX || maxY <= minY) return null
+      return { minX, minY, maxX, maxY }
+    }
+
+    /** Whether the current camera already shows every node. */
+    function viewShowsAll(app) {
+      const view = visibleRect(app?.canvas)
+      const bounds = nodeBounds(app?.rootGraph ?? app?.graph)
+      if (view === null || bounds === null) return false
+      const margin = (view.right - view.left) * 0.02
+      return bounds.minX >= view.left + margin && bounds.maxX <= view.right - margin
+        && bounds.minY >= view.top + margin && bounds.maxY <= view.bottom - margin
+    }
+
+    /**
+     * Frame the graph the way ComfyUI itself does: run its `FitView` command,
+     * which is the exact code path behind the editor's own zoom-to-fit button
+     * and therefore respects its margins, sidebars, and selection rules. The
+     * bounding-box fallback uses the same camera semantics
+     * (`screen = (graph + offset) * scale`) for frontends without commands.
+     */
+    async function fitCanvas(app) {
+      const command = app?.extensionManager?.command
+      if (typeof command?.execute === 'function') {
+        try {
+          await command.execute(FIT_COMMAND)
           return true
+        } catch {
+          // Fall through to the local fit.
         }
       }
-      const graphWidth = Math.max(maxX - minX, 1)
-      const graphHeight = Math.max(maxY - minY, 1)
-      const scale = Math.min(width / graphWidth, height / graphHeight) * 0.86
+      return fitCanvasByBounds(app)
+    }
+
+    /** Local fallback: fit the nodes' bounding box into the visible area. */
+    function fitCanvasByBounds(app) {
+      const canvas = app?.canvas
+      const ds = canvas?.ds
+      const view = visibleRect(canvas)
+      const bounds = nodeBounds(app?.rootGraph ?? app?.graph)
+      if (ds === null || ds === undefined || view === null || bounds === null) return false
+      const graphWidth = bounds.maxX - bounds.minX
+      const graphHeight = bounds.maxY - bounds.minY
+      const scale = Math.min(view.width / graphWidth, view.height / graphHeight) * 0.9
       ds.scale = Math.max(ds.min_scale ?? 0.1, Math.min(ds.max_scale ?? 10, scale))
+      const centerX = (bounds.minX + bounds.maxX) / 2
+      const centerY = (bounds.minY + bounds.maxY) / 2
       ds.offset = [
-        width / 2 - (minX + graphWidth / 2) * ds.scale,
-        height / 2 - (minY + graphHeight / 2) * ds.scale,
+        view.width / (2 * ds.scale) - centerX,
+        view.height / (2 * ds.scale) - centerY,
       ]
       canvas.setDirty?.(true, true)
       return true
@@ -897,16 +937,25 @@ window.__ModuleLoader__.load({
         // A fresh editor opens at ComfyUI's default camera, which leaves parts
         // of the graph off-screen; frame it once, unless the current view
         // already shows every node.
-        if (!fittedRef.current) {
-          try {
-            // A canvas that has not been laid out yet reports zero size; leave
-            // `fittedRef` false so a later sync tries again.
-            fittedRef.current = fitCanvas(app) !== false
-          } catch {
-            // A node without a usable pos/size must not fail the sync.
-          }
-        }
         setStatus('ready')
+        if (!fittedRef.current && visibleRect(app.canvas) !== null
+          && nodeBounds(app.rootGraph ?? app.graph) !== null) {
+          // Run the same fit ComfyUI's own zoom-to-fit button runs, only when
+          // the current camera does not already contain every node. The
+          // frontend restores the workflow camera shortly after the graph
+          // loads and can land on top of the first fit, so check twice.
+          fittedRef.current = true
+          void (async () => {
+            try {
+              for (let attempt = 0; attempt < 2 && !viewShowsAll(app); attempt += 1) {
+                await fitCanvas(app)
+                await new Promise(resolve => setTimeout(resolve, 700))
+              }
+            } catch {
+              // A node without a usable pos/size must not fail the sync.
+            }
+          })()
+        }
       }, [sessionId, t])
 
       const syncNow = useCallback(async (force = true) => {
@@ -1270,11 +1319,7 @@ window.__ModuleLoader__.load({
           onReload: reload,
           onFit: () => {
             const app = readApp()
-            if (app !== null) {
-              try {
-                fitCanvas(app)
-              } catch {}
-            }
+            if (app !== null) void fitCanvas(app).catch(() => {})
           },
           onOpen: open,
           onService: () => setServiceOpen(current => !current),
@@ -1346,7 +1391,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale', 'sidebarRightTabs', 'sidebarRight'],
       // Pure editor operations, dictionaries and the top-bar rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, findNode, coerceWidgetValue, frontendClientId, barPlan, projectGraph, fitCanvas, describeOperation, en, zh },
+      __ops: { applyOperation, findNode, coerceWidgetValue, frontendClientId, barPlan, projectGraph, fitCanvas, fitCanvasByBounds, viewShowsAll, describeOperation, en, zh },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')
