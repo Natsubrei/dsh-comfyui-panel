@@ -425,7 +425,11 @@ window.__ModuleLoader__.load({
 
     function findNode(graph, id) {
       if (typeof graph.getNodeById === 'function') return graph.getNodeById(id)
-      return graph._nodes_by_id?.[id] ?? (Array.isArray(graph._nodes) ? graph._nodes.find(node => node.id === id) : undefined)
+      // Node ids may be strings (see projectGraph); compare numerically.
+      const wanted = Number(id)
+      return graph._nodes_by_id?.[id]
+        ?? graph._nodes_by_id?.[wanted]
+        ?? (Array.isArray(graph._nodes) ? graph._nodes.find(node => Number(node.id) === wanted) : undefined)
     }
 
     function coerceWidgetValue(widget, value) {
@@ -473,7 +477,11 @@ window.__ModuleLoader__.load({
       const projected = []
       for (const node of nodes) {
         if (node === null || typeof node !== 'object') continue
-        if (!Number.isInteger(node.id) || typeof node.type !== 'string') continue
+        // LiteGraph 0.4x keeps node ids and link endpoints as strings while
+        // the serialized workflow writes numbers; the Host contract is
+        // numeric, so normalize here instead of dropping every node.
+        const id = Number(node.id)
+        if (!Number.isSafeInteger(id) || typeof node.type !== 'string') continue
         const widgets = Object.create(null)
         for (const widget of Array.isArray(node.widgets) ? node.widgets : []) {
           if (widget === null || typeof widget !== 'object' || widget.value === undefined) continue
@@ -487,10 +495,12 @@ window.__ModuleLoader__.load({
           if (input.link === null || input.link === undefined) continue
           const link = linkOf(input.link)
           if (link === null || typeof link !== 'object') continue
-          if (!Number.isInteger(link.origin_id) || !Number.isInteger(link.origin_slot)) continue
-          inputs[String(input.name)] = `${link.origin_id}:${link.origin_slot}`
+          const originId = Number(link.origin_id)
+          const originSlot = Number(link.origin_slot)
+          if (!Number.isSafeInteger(originId) || !Number.isSafeInteger(originSlot)) continue
+          inputs[String(input.name)] = `${originId}:${originSlot}`
         }
-        const entry = { id: node.id, type: node.type, widgets, inputs }
+        const entry = { id, type: node.type, widgets, inputs }
         if (typeof node.title === 'string' && node.title.length > 0 && node.title !== node.type) entry.title = node.title
         if (node.mode === 2) entry.mode = 'mute'
         else if (node.mode === 4) entry.mode = 'bypass'
@@ -1087,7 +1097,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale', 'sidebarRightTabs', 'sidebarRight'],
       // Pure editor operations, dictionaries and the top-bar rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, findNode, coerceWidgetValue, frontendClientId, barPlan, en, zh },
+      __ops: { applyOperation, findNode, coerceWidgetValue, frontendClientId, barPlan, projectGraph, en, zh },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')

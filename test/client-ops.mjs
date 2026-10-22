@@ -227,4 +227,26 @@ const stopped = { health: false, owned: false, state: 'stopped', pid: null }
   )
 }
 
+// LiteGraph 0.4x keeps live node ids and link origins as strings. If the
+// projection keeps them, the Host rejects every node and the model falls back
+// to positional widgets, so the ids must be normalized to numbers.
+{
+  const { projectGraph } = mod.__ops
+  const app = {
+    rootGraph: {
+      _nodes: [
+        { id: '9', type: 'SaveImage', widgets: [{ name: 'filename_prefix', value: 'ComfyUI' }], inputs: [{ name: 'images', link: 7 }] },
+        { id: '65', type: 'VAEDecode', widgets: [], inputs: [] },
+      ],
+      links: new Map([[7, { origin_id: '65', origin_slot: 0 }]]),
+    },
+    canvas: { selected_nodes: { 9: {} } },
+  }
+  const projection = projectGraph(app)
+  assert.deepEqual(projection.nodes.map(node => node.id), [9, 65])
+  assert.equal(projection.nodes[0].inputs.images, '65:0')
+  assert.deepEqual(projection.selection, [9])
+  assert.equal(projection.linkCount, 1)
+}
+
 console.log('client ops test passed')

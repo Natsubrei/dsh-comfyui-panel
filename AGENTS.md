@@ -83,6 +83,10 @@ available, screenshot and click through the checklist instead.
   state sync and `comfyui_run` queues as that id; drop it and runs happen with
   no queue entry, no node progress, no preview, and nothing in the history —
   the image exists on disk and nowhere in the UI.
+- The embedded frontend keeps live LiteGraph node ids and link origin ids as
+  strings (`'9'`), while serialized workflows write numbers. `projectGraph`
+  normalizes them with `Number()`; without that the Host rejects every node
+  and the model silently falls back to positional widget values.
 - `/tmp` can be a small tmpfs (a few GB) on some machines. Multi-GB model
   downloads belong in the workspace (`.dl_parts/`) or `~/workspace/.tmp`; check
   `df` first.
