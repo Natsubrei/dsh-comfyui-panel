@@ -54,9 +54,11 @@ for the version.
 
 1. Hard-refresh the GUI, open the **ComfyUI** tab, wait for **Connected**.
 2. The header digest should read `ComfyUI: rev … · N nodes · … · panel open.`
-3. The bar shows one status label (`Running` / `Stopped` / `External` /
-   `Starting…`) and the lifecycle buttons that fit it — Start when stopped,
-   Stop + Restart when running and owned. The gear opens settings only.
+3. The bar reads left to right: status label (`Running` / `Stopped` /
+   `External` / `Starting…`), the lifecycle buttons that fit it (Start when
+   stopped, Stop + Restart when running and owned), the counters, then the
+   panel tools (`Sync`, `Reload`, open, gear). The gear opens settings only,
+   and settings hold configuration, not lifecycle buttons.
 4. Zoom, pan, and resize the panel; `rev` must not change. Edit a widget; it
    must go up by exactly one.
 5. Queue one run; `comfyui_progress` should go `queued` → `running` → success.

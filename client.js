@@ -37,7 +37,9 @@ window.__ModuleLoader__.load({
       stats: '{{nodes}} nodes · {{links}} links · rev {{revision}}',
       bridgeUnavailable: 'ComfyUI did not expose its editor API. Check that the panel is served from /comfyui/.',
       syncFailed: 'Could not send the workflow to the Host.',
-      running: 'Running {{value}}/{{max}}',
+      // Not "Running": the server state already says that, and two "Running"
+      // labels in one bar read as one contradictory sentence.
+      running: 'Progress {{value}}/{{max}}',
       queued: 'Queued',
       runFailed: 'Run failed',
       runInterrupted: 'Run interrupted',
@@ -81,7 +83,7 @@ window.__ModuleLoader__.load({
       stats: '{{nodes}} 个节点 · {{links}} 条连线 · rev {{revision}}',
       bridgeUnavailable: 'ComfyUI 没有暴露编辑器 API。请确认面板是通过 /comfyui/ 同源加载的。',
       syncFailed: '工作流未能发送到 Host。',
-      running: '运行中 {{value}}/{{max}}',
+      running: '进度 {{value}}/{{max}}',
       queued: '排队中',
       runFailed: '运行失败',
       runInterrupted: '运行已中断',
@@ -149,13 +151,17 @@ window.__ModuleLoader__.load({
         color: var(--dsw-alias-label-secondary);
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       }
-      /* Tools and lifecycle controls are separate groups: the divider keeps
-         "sync/reload" from reading as a server command, and the auto margin
-         re-right-aligns the group when the bar wraps onto a second line. */
-      .dsh-comfyui-tools, .dsh-comfyui-actions {
+      /* The lifecycle controls sit next to the state they act on, so the bar
+         reads "Running [Stop] [Restart]   counters │ sync reload open gear".
+         Order inside a bar is not decoration: the most-clicked control stays
+         on the first line even when the bar wraps, and the panel utilities
+         keep the corner because they are the least-used and the least
+         dangerous to hit by accident. */
+      .dsh-comfyui-actions, .dsh-comfyui-tools {
         display: flex; align-items: center; gap: 4px; flex: 0 0 auto;
       }
-      .dsh-comfyui-actions {
+      .dsh-comfyui-actions { margin-left: 2px; }
+      .dsh-comfyui-tools {
         margin-left: auto; padding-left: 8px;
         border-left: 1px solid var(--dsw-alias-border-l1);
       }
@@ -317,6 +323,20 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'dsh-comfyui-bar' },
         h('span', { className: 'dsh-comfyui-dot', 'data-status': plan.tone, title: plan.chipTitle }),
         h('span', { className: 'dsh-comfyui-state', 'data-tone': plan.tone, title: plan.chipTitle }, plan.label),
+        // State first, its controls second, counters after: the server switch
+        // is the click this bar exists for, and putting it here keeps it on
+        // the first line when a narrow panel makes the bar wrap.
+        h('div', { className: 'dsh-comfyui-actions' },
+          plan.actions.map(action => h('button', {
+            key: action.action,
+            className: 'dsh-comfyui-button',
+            'data-variant': action.variant,
+            type: 'button',
+            disabled: action.disabled,
+            title: action.title,
+            onClick: () => onAction(action.action),
+          }, action.label)),
+        ),
         runText === '' ? null : h('span', { className: 'dsh-comfyui-run' }, runText),
         h('span', { className: 'dsh-comfyui-stats', title: statText }, statText),
         h('div', { className: 'dsh-comfyui-tools' },
@@ -329,17 +349,6 @@ window.__ModuleLoader__.load({
             'aria-label': t('open'),
             onClick: onOpen,
           }, '\u2197'),
-        ),
-        h('div', { className: 'dsh-comfyui-actions' },
-          plan.actions.map(action => h('button', {
-            key: action.action,
-            className: 'dsh-comfyui-button',
-            'data-variant': action.variant,
-            type: 'button',
-            disabled: action.disabled,
-            title: action.title,
-            onClick: () => onAction(action.action),
-          }, action.label)),
           h('button', {
             className: 'dsh-comfyui-button dsh-comfyui-icon',
             'data-active': serviceOpen ? 'true' : 'false',
