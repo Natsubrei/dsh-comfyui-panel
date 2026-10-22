@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-comfyui",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "private": true,
   "type": "module",
   "description": "ComfyUI workflow editor inside the DeepSeek Harness Web UI",
@@ -23,9 +23,10 @@
     "scripts/dsh-web.sh"
   ],
   "scripts": {
-    "check": "node --check index.js && node --check client.js && node --check projection.js && node --check storage.js && node --check supervisor.js && node --check service.js && node --check test/host-smoke.mjs && node --check test/dsh-contract.mjs && node --check test/client-ops.mjs",
-    "test": "npm run check && node test/host-smoke.mjs && node test/client-ops.mjs",
-    "contract": "node test/dsh-contract.mjs"
+    "check": "node --check index.js && node --check client.js && node --check projection.js && node --check storage.js && node --check supervisor.js && node --check service.js && node --check test/host-smoke.mjs && node --check test/dsh-contract.mjs && node --check test/client-ops.mjs && node --check test/repo-hygiene.mjs && node --check test/ui/browser.mjs && node --check test/ui/panel.mjs",
+    "test": "npm run check && node test/host-smoke.mjs && node test/client-ops.mjs && node test/repo-hygiene.mjs",
+    "contract": "node test/dsh-contract.mjs",
+    "ui": "node test/ui/panel.mjs"
   },
   "dsh": {
     "bundle": {

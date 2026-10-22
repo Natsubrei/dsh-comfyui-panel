@@ -101,7 +101,10 @@ Stopping the plugin stops only a process it started.
 - The panel relies on the same-origin iframe and on
   `window.comfyAPI.app.app`, a legacy compatibility shim exposed by the
   ComfyUI frontend, not a stable public API. Pin the ComfyUI frontend version
-  for anything beyond this milestone.
+  for anything beyond this milestone. What the plugin actually uses — and how
+  to re-derive it after an upgrade — is in
+  [docs/comfyui-bridge.md](docs/comfyui-bridge.md); the panel was last verified
+  against frontend 1.57.1.
 
 ## Try it without ComfyUI
 
@@ -119,8 +122,9 @@ the mock before starting a real ComfyUI on port 8188.
 Run the checks with:
 
 ```bash
-npm test          # syntax checks + host smoke test
+npm test          # checks, host smoke, editor ops, repository hygiene
 npm run contract  # real DSH runtime, needs ../deepseek-harness
+npm run ui        # live panel in a headless browser, needs a running dsh web
 ```
 
 `npm test` covers the proxy, redirect, asset caching, the workflow and event
@@ -132,6 +136,15 @@ the real Cordis context, `ToolRuntime`, `SystemPrompt`, and
 `HostConnectionService`, so an invalid Fetch path or a tool schema the registry
 rejects fails locally instead of at install time. Both are run by the
 pre-commit hook; see [AGENTS.md](AGENTS.md) for reload and logging steps.
+
+`npm run ui` is the browser check: it opens the GUI in a headless Chromium, puts
+the panel in a throwaway session, and asserts that the editor boots, the
+counters match the graph, zooming is not counted as an edit, a widget edit bumps
+the revision once, and Fit frames the graph. It needs an installed
+Chromium-family browser but installs nothing; see
+[test/ui/README.md](test/ui/README.md). `npm test` also scans the tree and the
+whole history for machine-specific paths, so a stray home directory fails
+before it ships.
 
 ## Current limits
 

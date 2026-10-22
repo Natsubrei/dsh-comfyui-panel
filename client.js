@@ -364,7 +364,7 @@ window.__ModuleLoader__.load({
       return { tone, label, chipTitle, actions, healthy, owned }
     }
 
-    function TopBar({ stats, synced, runText, plan, serviceOpen, onSync, onReload, onFit, onOpen, onService, onAction, t }) {
+    function TopBar({ stats, synced, syncAt, runText, plan, serviceOpen, onSync, onReload, onFit, onOpen, onService, onAction, t }) {
       const counts = t('stats')
         .replace('{{nodes}}', String(stats.nodes))
         .replace('{{links}}', String(stats.links))
@@ -393,27 +393,40 @@ window.__ModuleLoader__.load({
           }, action.label)),
         ),
         runText === '' ? null : h('span', { className: 'dsh-comfyui-run' }, runText),
-        h('span', { className: 'dsh-comfyui-stats', title: statTitle }, statText),
+        // The counters are also the only machine-readable state the panel
+        // publishes, so the headless UI check reads them instead of parsing
+        // localized bar text.
+        h('span', {
+          className: 'dsh-comfyui-stats',
+          title: statTitle,
+          'data-nodes': String(stats.nodes),
+          'data-links': String(stats.links),
+          'data-revision': String(stats.revision),
+          'data-synced': String(syncAt),
+        }, statText),
         h('div', { className: 'dsh-comfyui-tools' },
           h('button', {
             className: 'dsh-comfyui-button dsh-comfyui-icon',
             type: 'button',
             title: t('fitView'),
             'aria-label': t('fitView'),
+            'data-tool': 'fit',
             onClick: onFit,
           }, '\u2922'),
-          h('button', { className: 'dsh-comfyui-button', type: 'button', title: t('syncHint'), onClick: onSync }, t('sync')),
-          h('button', { className: 'dsh-comfyui-button', type: 'button', title: t('reloadHint'), onClick: onReload }, t('reload')),
+          h('button', { className: 'dsh-comfyui-button', type: 'button', title: t('syncHint'), 'data-tool': 'sync', onClick: onSync }, t('sync')),
+          h('button', { className: 'dsh-comfyui-button', type: 'button', title: t('reloadHint'), 'data-tool': 'reload', onClick: onReload }, t('reload')),
           h('button', {
             className: 'dsh-comfyui-button dsh-comfyui-icon',
             type: 'button',
             title: t('open'),
             'aria-label': t('open'),
+            'data-tool': 'open',
             onClick: onOpen,
           }, '\u2197'),
           h('button', {
             className: 'dsh-comfyui-button dsh-comfyui-icon',
             'data-active': serviceOpen ? 'true' : 'false',
+            'data-tool': 'server',
             type: 'button',
             title: t('serverPanel'),
             'aria-label': t('serverPanel'),
@@ -1311,6 +1324,7 @@ window.__ModuleLoader__.load({
         h(TopBar, {
           stats,
           synced: syncLabel,
+          syncAt: lastSyncAt,
           runText,
           plan,
           serviceOpen,

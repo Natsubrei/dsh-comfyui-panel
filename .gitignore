@@ -2,3 +2,5 @@ node_modules/
 .dl_parts/
 *.log
 .DS_Store
+# Screenshots and the report written by `npm run ui`.
+.ui-out/

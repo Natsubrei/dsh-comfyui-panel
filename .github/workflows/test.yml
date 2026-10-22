@@ -1,0 +1,37 @@
+name: test
+
+# The plugin ships without dependencies, so there is nothing to install: the
+# checks are plain `node` scripts. The real-runtime contract (`npm run
+# contract`) needs a DeepSeek Harness checkout next to this one and stays a
+# local check; see AGENTS.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The hygiene check scans every commit, so a shallow clone would
+          # hide exactly the history leak it exists to catch.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Checks, host smoke, editor ops, repository hygiene
+        run: npm test

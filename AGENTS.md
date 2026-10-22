@@ -17,23 +17,36 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
   a table is compatible; changing a record field needs a version bump and a
   migration (the domain layer has no migrations).
 - `service.js` / `supervisor.js` — panel-managed ComfyUI process control.
+- `docs/comfyui-bridge.md` — the frontend surface the panel depends on
+  (`comfyAPI`, string ids, `extra.ds`, the camera, command ids,
+  `server.client_id`) and how to re-derive it after a ComfyUI upgrade.
 - `test/host-smoke.mjs` — self-contained executable contract for every route
   and tool.
 - `test/dsh-contract.mjs` — the same routes and tools against the **real**
   Cordis/`ToolRuntime`/`SystemPrompt`/`HostConnectionService`, which catches
   invalid Fetch paths and schema/scope mistakes the mocks cannot.
+- `test/ui/` — `npm run ui`: a headless browser check of the live panel, one
+  dependency-free DevTools-protocol driver plus the DSH/ComfyUI-specific
+  checklist. See `test/ui/README.md`.
+- `test/repo-hygiene.mjs` — fails when this machine's paths, account, or
+  hostname appear in the tree or in any commit.
+- `.github/workflows/test.yml` — CI: `npm test` on Node 22 and 24, nothing to
+  install.
 
 ## Verify
 
 ```bash
-npm test          # syntax checks + host smoke + client editor ops
+npm test          # syntax checks + host smoke + client editor ops + hygiene
 npm run contract  # real DSH runtime; needs checkout at ../deepseek-harness
+npm run ui        # live panel in a headless browser; needs a running dsh web
 ```
 
 A new route or tool needs a case in `host-smoke.mjs`; a new integration point
 (path, service, scope, tool schema) additionally needs a case in
 `dsh-contract.mjs`. The pre-commit hook runs `npm test`; it is enabled with
-`git config core.hooksPath .githooks` (already set in this checkout).
+`git config core.hooksPath .githooks` (already set in this checkout, and not
+inherited by a fresh clone). `npm run contract` needs the sibling checkout, so
+CI runs only `npm test`.
 
 ## Reload the live plugin
 
@@ -50,29 +63,45 @@ changes still need a full page refresh (hard reload); `pnpm run dev:web` does
 not rebuild profile bundles by default. `package.json` is the source of truth
 for the version.
 
-## Panel check (manual, after client changes)
+## Panel check (after client changes)
 
-1. Hard-refresh the GUI, open the **ComfyUI** tab, wait for **Connected**.
-2. The header digest should read `ComfyUI: rev … · N nodes · … · panel open.`
-3. The bar reads left to right: status label (`Running` / `Stopped` /
+`npm run ui` does this in a headless browser and is the first thing to run; it
+covers the checks marked ✔ below. It needs a running `dsh web` and an installed
+Chromium; see `test/ui/README.md` for the address/cookie it wants. It opens the
+panel in a **new draft session**, so it never touches the conversation you are
+working in.
+
+1. ✔ Hard-refresh the GUI, open the **ComfyUI** tab, wait for **Connected**.
+2. ✔ The header digest should read `ComfyUI: rev … · N nodes · … · panel open.`
+3. ✔ The bar reads left to right: status label (`Running` / `Stopped` /
    `External` / `Starting…`), the lifecycle buttons that fit it (Start when
    stopped, Stop + Restart when running and owned), the counters with the
    last sync time, then the panel tools (fit, `Sync`, `Reload`, open, gear).
    The gear opens settings only; settings hold configuration, not lifecycle
    buttons.
-4. On first open the graph is framed in the canvas and the counter shows
+4. ✔ On first open the graph is framed in the canvas and the counter shows
    `synced HH:MM`; while ComfyUI is stopped the canvas is replaced by
-   `ComfyUI is not running` and a Start button.
-5. Zoom, pan, and resize the panel; `rev` must not change. Edit a widget in the
-   editor or let the model do it; the revision goes up by exactly one and a
+   `ComfyUI is not running` and a Start button. (The stopped state needs a
+   manual run: stop the server from the bar and look.)
+5. ✔ Zoom, pan, and resize the panel; `rev` must not change. Edit a widget in
+   the editor or let the model do it; the revision goes up by exactly one and a
    short toast names what changed.
 6. Queue one run; `comfyui_progress` should go `queued` → `running` → success.
+   This one needs the model: the check does not queue runs.
 7. If the tab says "panel is not connected", the Host↔panel WebSocket did not
    re-admit. Reload the page before investigating plugin code.
 
-There is no browser tool in this profile, so ask the user to confirm the panel
-or supply a screenshot when a change is UI-only. When a browser tool is
-available, screenshot and click through the checklist instead.
+When no browser can run (no `dsh web`, no Chromium), ask the user for a
+confirmation or a screenshot instead of guessing; say which of the steps above
+you could not run.
+
+## Publishing
+
+This repository is meant to be published; `npm test` scans both the working tree
+and every commit for home directories, the local account name, and the hostname
+(`test/repo-hygiene.mjs`). A hit in history means a history rewrite, not a new
+commit: fix the file, then rewrite the affected commits before publishing, and
+re-run `npm test` until the hygiene test is quiet.
 
 ## Logs
 
@@ -92,6 +121,11 @@ available, screenshot and click through the checklist instead.
   strings (`'9'`), while serialized workflows write numbers. `projectGraph`
   normalizes them with `Number()`; without that the Host rejects every node
   and the model silently falls back to positional widget values.
+- The panel is stateful across browsers: opening the tab in a second browser
+  profile means that editor's (possibly empty) workflow is what the session
+  syncs. Run the UI check in a draft session, not in a conversation whose
+  graph you care about, and expect a briefly stale `rev` if the owner's panel
+  pushes afterwards.
 - `/tmp` can be a small tmpfs (a few GB) on some machines. Multi-GB model
   downloads belong in the workspace (`.dl_parts/`) or `~/workspace/.tmp`; check
   `df` first.
