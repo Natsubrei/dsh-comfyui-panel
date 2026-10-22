@@ -1,0 +1,87 @@
+{
+  "format": 1,
+  "title": {
+    "en": "Natsubrei DSH plugins",
+    "zh": "Natsubrei 的 DSH 插件"
+  },
+  "description": {
+    "en": "Bundles published by Natsubrei for the DeepSeek Harness.",
+    "zh": "Natsubrei 为 DeepSeek Harness 发布的插件。"
+  },
+  "metadata": {
+    "categories": {
+      "ui": {
+        "title": {
+          "en": "Interface",
+          "zh": "界面"
+        }
+      }
+    },
+    "labels": {
+      "comfyui": {
+        "title": {
+          "en": "ComfyUI",
+          "zh": "ComfyUI"
+        }
+      },
+      "image-generation": {
+        "title": {
+          "en": "Image generation",
+          "zh": "图像生成"
+        }
+      }
+    },
+    "sortKeys": {}
+  },
+  "plugins": [
+    {
+      "name": "dsh-comfyui-panel",
+      "title": {
+        "en": "ComfyUI Panel",
+        "zh": "ComfyUI 面板"
+      },
+      "description": {
+        "en": "The real ComfyUI editor in the DSH right sidebar, with per-session workflow tools and panel-managed ComfyUI.",
+        "zh": "在 DSH 右侧边栏里运行真正的 ComfyUI 编辑器，按会话向模型暴露工作流工具，并可在面板中管理 ComfyUI 进程。"
+      },
+      "icon": "https://raw.githubusercontent.com/Natsubrei/dsh-comfyui-panel/main/icon.svg",
+      "author": "Natsubrei",
+      "homepage": "https://github.com/Natsubrei/dsh-comfyui-panel#readme",
+      "repository": {
+        "url": "https://github.com/Natsubrei/dsh-comfyui-panel"
+      },
+      "metadata": {
+        "category": "ui",
+        "labels": [
+          "comfyui",
+          "image-generation"
+        ],
+        "keywords": [
+          "dsh",
+          "deepseek",
+          "deepseek-harness",
+          "harness",
+          "comfyui",
+          "workflow",
+          "image-generation",
+          "stable-diffusion",
+          "ui"
+        ]
+      },
+      "versions": [
+        {
+          "version": "0.6.6",
+          "publishTimestamp": 1792651016,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/Natsubrei/dsh-comfyui-panel",
+            "commit": "319eaef7db1f74c3c4ec5088d5e0a8d275572f64"
+          },
+          "engines": {
+            "dsh": ">=0.1.2-alpha.4 <0.3.0-0"
+          }
+        }
+      ]
+    }
+  ]
+}
