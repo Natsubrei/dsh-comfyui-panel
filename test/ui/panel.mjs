@@ -123,10 +123,12 @@ async function clickButtonText(browser, pattern, label) {
  * @returns {Promise<{sessionId: string | null, bootMs: number}>} what was opened.
  */
 export async function openPanel(browser, { timeout = 90_000, scratch = true } = {}) {
-  await browser.waitFor(
-    `document.querySelector('${DOM.session}') !== null || document.querySelector('button') !== null`,
-    { label: 'the DSH shell', timeout: 60_000 },
-  )
+  // Wait for the shell to settle on a session before recording which one it
+  // is: comparing against a not-yet-rendered `null` would let a "new session"
+  // click that never happened pass as a fresh draft.
+  await browser.waitFor(`document.querySelector('${DOM.session}') !== null`, {
+    label: 'the DSH shell to open a session', timeout: 60_000,
+  })
   const before = await browser.evaluate(`document.querySelector('${DOM.session}')?.getAttribute('data-conversation-session') ?? null`)
   if (scratch) {
     // A click on "New session" may reopen the blank draft the GUI was already
@@ -477,7 +479,13 @@ export async function main(argv) {
     console.error(`authentication: ${String(error.message)}`)
     return 2
   }
-  const browser = await Browser.launch({ chrome: options.chrome, width: options.width, height: options.height })
+  let browser
+  try {
+    browser = await Browser.launch({ chrome: options.chrome, width: options.width, height: options.height })
+  } catch (error) {
+    console.error(`browser: ${error instanceof Error ? error.message : String(error)}`)
+    return 2
+  }
   try {
     await browser.setCookie({ name: cookie.name, value: cookie.value, url })
     await browser.goto(url)
