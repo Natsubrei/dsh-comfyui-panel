@@ -754,7 +754,7 @@ export function apply(ctx, rawConfig = {}) {
   function runTool(sessionId) {
     return {
       name: 'comfyui_run',
-      description: 'Queue the workflow synced in this session. Returns the prompt id; set wait=true to poll /history until it settles.',
+      description: 'Queue the workflow synced in this session, honouring each seed widget\'s control-after-generate (randomize/increment/decrement). Returns the prompt id; set wait=true to poll /history until it settles.',
       parameters: {
         type: 'object',
         properties: {
@@ -768,11 +768,12 @@ export function apply(ctx, rawConfig = {}) {
         const state = sessions.get(sessionId)
         if (state === undefined) throw new Error('No ComfyUI workflow has synced in this session. Open the ComfyUI tab in this session first.')
         if (state.prompt === null) throw new Error('The synced workflow has no API prompt yet. Wait for the ComfyUI panel to finish syncing.')
+        const { prompt, seeds } = applySeedControls(state.workflow, state.prompt)
         const response = await fetchJson('/prompt', 15000, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            prompt: state.prompt,
+            prompt,
             client_id: clientId,
             extra_data: { dsh_session_id: sessionId, dsh_workflow_revision: state.revision },
           }),
@@ -783,16 +784,16 @@ export function apply(ctx, rawConfig = {}) {
         const promptId = response.data?.prompt_id
         if (typeof promptId !== 'string') throw new Error(`ComfyUI returned no prompt_id: ${JSON.stringify(response.data)}`)
         if (args?.wait !== true) {
-          return { text: JSON.stringify({ prompt_id: promptId, queued: true, sessionId, revision: state.revision }, null, 2) }
+          return { text: JSON.stringify({ prompt_id: promptId, queued: true, sessionId, revision: state.revision, seeds }, null, 2) }
         }
         const timeout = clamp(args?.timeoutMs ?? 120000, 1000, 300000)
         const deadline = Date.now() + timeout
         for (;;) {
-          if (Date.now() > deadline) return { text: JSON.stringify({ prompt_id: promptId, timedOut: true }, null, 2) }
+          if (Date.now() > deadline) return { text: JSON.stringify({ prompt_id: promptId, timedOut: true, seeds }, null, 2) }
           await delay(1000)
           const history = await fetchJson(`/history/${encodeURIComponent(promptId)}`, 5000).catch(() => undefined)
           if (history?.ok === true && isObject(history.data) && isObject(history.data[promptId])) {
-            return { text: JSON.stringify({ prompt_id: promptId, history: history.data[promptId] }, null, 2) }
+            return { text: JSON.stringify({ prompt_id: promptId, seeds, history: history.data[promptId] }, null, 2) }
           }
           if (exec.signal.aborted) throw new Error('comfyui_run was cancelled')
         }
@@ -1094,6 +1095,53 @@ function queryOf(requestUrl) {
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+const SEED_CONTROLS = new Set(['fixed', 'randomize', 'increment', 'decrement'])
+
+/**
+ * Honour a node's "control after generate" when the Host queues the prompt.
+ *
+ * The control is a frontend behaviour: the editor rewrites the seed *after*
+ * queueing, so the API prompt the panel hands us still carries one fixed seed.
+ * Without this, a run driven by `comfyui_run` would quietly reproduce the last
+ * image even though the workflow says "randomize".
+ *
+ * Returns a fresh prompt (the stored state is shared) plus the seeds used, so
+ * the run result stays reproducible.
+ */
+export function applySeedControls(workflow, prompt, random = Math.random) {
+  const nodes = Array.isArray(workflow?.nodes) ? workflow.nodes : []
+  const controlOf = new Map()
+  for (const node of nodes) {
+    if (!isObject(node) || !Array.isArray(node.widgets_values)) continue
+    const control = node.widgets_values.find(value => typeof value === 'string' && SEED_CONTROLS.has(value))
+    if (control !== undefined) controlOf.set(String(node.id), control)
+  }
+  if (controlOf.size === 0) return { prompt, seeds: {} }
+
+  const next = {}
+  const seeds = {}
+  for (const [id, node] of Object.entries(isObject(prompt) ? prompt : {})) {
+    const control = controlOf.get(id)
+    if (control === undefined || control === 'fixed' || !isObject(node) || !isObject(node.inputs)) {
+      next[id] = node
+      continue
+    }
+    const field = ['noise_seed', 'seed'].find(name => Number.isInteger(node.inputs[name]))
+    if (field === undefined) {
+      next[id] = node
+      continue
+    }
+    const current = node.inputs[field]
+    let value
+    if (control === 'randomize') value = Math.floor(random() * 2 ** 48)
+    else if (control === 'increment') value = current + 1
+    else value = Math.max(0, current - 1)
+    next[id] = { ...node, inputs: { ...node.inputs, [field]: value } }
+    seeds[id] = { field, value }
+  }
+  return { prompt: next, seeds }
 }
 
 function json(value, status = 200) {

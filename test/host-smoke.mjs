@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { apply } from '../index.js'
+import { apply, applySeedControls } from '../index.js'
 import { createSupervisor } from '../supervisor.js'
 
 const UPSTREAM_PORT = 18188
@@ -697,6 +697,38 @@ assert.throws(
   () => apply(createHost(createStorage()), { upstream: 'http://127.0.0.1:8188', supervise: { enabled: true } }),
   /supervise\.cwd is required/,
 )
+
+// "Control after generate" is a frontend behaviour, so a Host-queued run has
+// to apply it itself — otherwise every tool-driven run repeats the last image.
+{
+  const workflow = {
+    nodes: [
+      { id: 7, type: 'KSampler', widgets_values: [42, 'randomize', 8, 1, 'euler', 'simple', 1] },
+      { id: 8, type: 'RandomNoise', widgets_values: [5, 'increment'] },
+      { id: 9, type: 'KSamplerAdvanced', widgets_values: ['enable', 10, 'decrement', 8] },
+      { id: 10, type: 'KSampler', widgets_values: [11, 'fixed', 8, 1, 'euler', 'simple', 1] },
+      { id: 11, type: 'EmptyLatentImage', widgets_values: [1024, 1024, 1] },
+    ],
+  }
+  const stored = {
+    7: { class_type: 'KSampler', inputs: { seed: 42, steps: 8 } },
+    8: { class_type: 'RandomNoise', inputs: { noise_seed: 5 } },
+    9: { class_type: 'KSamplerAdvanced', inputs: { noise_seed: 10 } },
+    10: { class_type: 'KSampler', inputs: { seed: 11 } },
+    11: { class_type: 'EmptyLatentImage', inputs: { width: 1024 } },
+  }
+  const { prompt: queued, seeds } = applySeedControls(workflow, stored, () => 0.5)
+  const random = Math.floor(0.5 * 2 ** 48)
+  assert.equal(queued[7].inputs.seed, random)
+  assert.equal(queued[8].inputs.noise_seed, 6, 'increment adds one')
+  assert.equal(queued[9].inputs.noise_seed, 9, 'decrement subtracts one')
+  assert.equal(queued[10].inputs.seed, 11, 'fixed leaves the seed alone')
+  assert.deepEqual(queued[11], stored[11], 'a node without a seed input is untouched')
+  assert.deepEqual(seeds, { 7: { field: 'seed', value: random }, 8: { field: 'noise_seed', value: 6 }, 9: { field: 'noise_seed', value: 9 } })
+  assert.equal(stored[7].inputs.seed, 42, 'the stored prompt must not be mutated')
+  // Nothing to do when no node asks for a control.
+  assert.equal(applySeedControls({ nodes: [{ id: 7, widgets_values: [1, 2] }] }, stored).prompt, stored)
+}
 
 host.dispose()
 host2.dispose()
