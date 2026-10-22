@@ -26,7 +26,7 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
 ## Verify
 
 ```bash
-npm test          # syntax checks + host smoke test
+npm test          # syntax checks + host smoke + client editor ops
 npm run contract  # real DSH runtime; needs checkout at ../deepseek-harness
 ```
 
@@ -54,10 +54,13 @@ for the version.
 
 1. Hard-refresh the GUI, open the **ComfyUI** tab, wait for **Connected**.
 2. The header digest should read `ComfyUI: rev … · N nodes · … · panel open.`
-3. Zoom, pan, and resize the panel; `rev` must not change. Edit a widget; it
+3. The bar shows one status label (`Running` / `Stopped` / `External` /
+   `Starting…`) and the lifecycle buttons that fit it — Start when stopped,
+   Stop + Restart when running and owned. The gear opens settings only.
+4. Zoom, pan, and resize the panel; `rev` must not change. Edit a widget; it
    must go up by exactly one.
-4. Queue one run; `comfyui_progress` should go `queued` → `running` → success.
-5. If the tab says "panel is not connected", the Host↔panel WebSocket did not
+5. Queue one run; `comfyui_progress` should go `queued` → `running` → success.
+6. If the tab says "panel is not connected", the Host↔panel WebSocket did not
    re-admit. Reload the page before investigating plugin code.
 
 There is no browser tool in this profile, so ask the user to confirm the panel

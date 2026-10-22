@@ -41,7 +41,6 @@ window.__ModuleLoader__.load({
       queued: 'Queued',
       runFailed: 'Run failed',
       runInterrupted: 'Run interrupted',
-      server: 'Server',
       serverRunning: 'ComfyUI running (pid {{pid}})',
       serverExternal: 'ComfyUI running (started outside the plugin)',
       serverStopped: 'ComfyUI is not running',
@@ -54,7 +53,19 @@ window.__ModuleLoader__.load({
       serverRestart: 'Restart',
       serverSave: 'Save settings',
       serverFailed: 'Could not control ComfyUI',
+      serverStartFailed: 'ComfyUI did not start',
+      serverExternalHint: 'This ComfyUI was not started by the plugin, so Stop and Restart are unavailable. Restart it where it was launched.',
+      serverNotOwned: 'Not managed by this plugin',
       serverPick: 'Pick the ComfyUI folder, then start it here.',
+      serverPanel: 'Server settings',
+      close: 'Close',
+      barRunning: 'Running',
+      barExternal: 'External',
+      barStopped: 'Stopped',
+      barStarting: 'Starting…',
+      barFailed: 'Start failed',
+      barUnknown: 'Checking…',
+      barConnecting: 'connecting…',
     }
     const zh = {
       title: 'ComfyUI',
@@ -74,7 +85,6 @@ window.__ModuleLoader__.load({
       queued: '排队中',
       runFailed: '运行失败',
       runInterrupted: '运行已中断',
-      server: '服务',
       serverRunning: 'ComfyUI 运行中（pid {{pid}}）',
       serverExternal: 'ComfyUI 在运行（外部启动）',
       serverStopped: 'ComfyUI 未运行',
@@ -87,7 +97,19 @@ window.__ModuleLoader__.load({
       serverRestart: '重启',
       serverSave: '保存设置',
       serverFailed: '无法控制 ComfyUI',
+      serverStartFailed: '启动失败',
+      serverExternalHint: '这个 ComfyUI 不是插件启动的，停止和重启不可用；请到启动它的地方重启。',
+      serverNotOwned: '不归本插件管理',
       serverPick: '选好 ComfyUI 目录后，在这里启动它。',
+      serverPanel: '服务设置',
+      close: '关闭',
+      barRunning: '运行中',
+      barExternal: '外部运行',
+      barStopped: '未启动',
+      barStarting: '启动中…',
+      barFailed: '启动失败',
+      barUnknown: '检查中…',
+      barConnecting: '连接中…',
     }
 
     const CSS = `
@@ -98,37 +120,72 @@ window.__ModuleLoader__.load({
         font: 12px/1.4 var(--dsw-font-family, system-ui, sans-serif);
       }
       .dsh-comfyui-bar {
-        display: flex; align-items: center; gap: 8px;
-        min-height: 34px; padding: 0 10px;
+        display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+        min-height: 34px; padding: 4px 10px;
         border-bottom: 1px solid var(--dsw-alias-border-l1);
         background: var(--dsw-alias-bg-layer-1);
         flex: 0 0 auto;
       }
-      .dsh-comfyui-title { font-weight: 600; letter-spacing: .01em; }
       .dsh-comfyui-dot {
         width: 8px; height: 8px; border-radius: 50%;
         background: var(--dsw-alias-state-idle-primary);
         flex: 0 0 auto;
       }
-      .dsh-comfyui-dot[data-status="ready"] { background: var(--dsw-alias-state-success-primary); }
-      .dsh-comfyui-dot[data-status="syncing"] { background: var(--dsw-alias-state-warn-primary); }
+      .dsh-comfyui-dot[data-status="ok"] { background: var(--dsw-alias-state-success-primary); }
+      .dsh-comfyui-dot[data-status="warn"] { background: var(--dsw-alias-state-warn-primary); }
       .dsh-comfyui-dot[data-status="error"] { background: var(--dsw-alias-state-error-primary); }
-      .dsh-comfyui-status { color: var(--dsw-alias-label-secondary); }
+      .dsh-comfyui-state { color: var(--dsw-alias-label-secondary); white-space: nowrap; }
+      .dsh-comfyui-state[data-tone="ok"] { color: var(--dsw-alias-label-primary); }
+      .dsh-comfyui-state[data-tone="warn"] { color: var(--dsw-alias-state-warn-primary); }
+      .dsh-comfyui-state[data-tone="error"] { color: var(--dsw-alias-state-error-primary); }
       .dsh-comfyui-run {
         color: var(--dsw-alias-state-warn-primary);
         white-space: nowrap;
       }
       .dsh-comfyui-stats {
+        /* basis 0, not auto: the line only wraps when the buttons themselves
+           stop fitting, otherwise the counters truncate instead. */
+        flex: 1 1 0; min-width: 0; text-align: right;
         color: var(--dsw-alias-label-secondary);
-        margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      /* Tools and lifecycle controls are separate groups: the divider keeps
+         "sync/reload" from reading as a server command, and the auto margin
+         re-right-aligns the group when the bar wraps onto a second line. */
+      .dsh-comfyui-tools, .dsh-comfyui-actions {
+        display: flex; align-items: center; gap: 4px; flex: 0 0 auto;
+      }
+      .dsh-comfyui-actions {
+        margin-left: auto; padding-left: 8px;
+        border-left: 1px solid var(--dsw-alias-border-l1);
       }
       .dsh-comfyui-button {
         height: 24px; padding: 0 8px; border-radius: 6px; cursor: pointer;
+        flex: 0 0 auto;
         border: 1px solid var(--dsw-alias-border-l1);
         background: transparent; color: var(--dsw-alias-label-secondary);
         font: inherit;
       }
-      .dsh-comfyui-button:hover { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
+      .dsh-comfyui-button:hover:not(:disabled) {
+        background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary);
+      }
+      .dsh-comfyui-button:disabled { opacity: .45; cursor: default; }
+      .dsh-comfyui-button[data-variant="primary"] {
+        border-color: transparent;
+        background: var(--dsw-alias-button-primary-fill);
+        color: var(--dsw-alias-label-primary-foreground);
+      }
+      .dsh-comfyui-button[data-variant="primary"]:hover:not(:disabled) {
+        background: var(--dsw-alias-button-primary-hover);
+        color: var(--dsw-alias-label-primary-foreground);
+      }
+      .dsh-comfyui-icon {
+        width: 26px; padding: 0;
+        display: inline-flex; align-items: center; justify-content: center;
+      }
+      .dsh-comfyui-icon[data-active="true"] {
+        background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary);
+      }
       .dsh-comfyui-button:focus-visible {
         outline: 1px solid var(--dsw-alias-brand-primary);
         outline-offset: 2px;
@@ -179,23 +236,120 @@ window.__ModuleLoader__.load({
       .dsh-comfyui-service-hint { color: var(--dsw-alias-label-secondary); }
     `
 
-    function StatBar({ status, stats, message, runText, bootSeconds, onSync, onReload, onOpen, onService, t }) {
+    /**
+     * Turn the bridge status plus the service snapshot into what the top bar
+     * shows: one status label, one tone, and the lifecycle buttons that fit it.
+     *
+     * Start/Stop/Restart live here because they are the clicks this panel
+     * exists for; the Server form is configuration only. Keeping the rule in a
+     * pure function means the interesting part (which button, enabled or not,
+     * and why) is covered by test/client-ops.mjs instead of only by eye.
+     */
+    function barPlan({ status, service, busy = false, dir = '', bootSeconds = 0, t }) {
+      const known = service !== null && service !== undefined
+      const healthy = known && service.health === true
+      const owned = known && service.owned === true
+      const state = known ? service.state : null
+      const pid = known && service.pid !== null && service.pid !== undefined ? String(service.pid) : ''
+      const starting = state === 'starting' || state === 'restarting'
+      const failed = state === 'failed'
+      const canWrite = known && busy !== true
+      const needDir = String(dir).trim() === ''
+
+      // A dead ComfyUI keeps its last bridge state until the iframe reloads, so
+      // the backend leads: the bridge is only appended when the two disagree.
+      let tone = 'idle'
+      let label = t('barUnknown')
+      let chipTitle = ''
+      if (known && starting) {
+        tone = 'warn'
+        label = t('barStarting')
+        chipTitle = t('serverStarting')
+      } else if (known && failed) {
+        tone = 'error'
+        label = t('barFailed')
+        chipTitle = t('serverStartFailed')
+      } else if (healthy) {
+        tone = status === 'ready' ? 'ok' : status === 'error' ? 'error' : 'warn'
+        label = owned ? t('barRunning') : t('barExternal')
+        chipTitle = owned
+          ? t('serverRunning').replace('{{pid}}', pid === '' ? '?' : pid)
+          : t('serverExternal')
+        if (status !== 'ready') {
+          const bridge = status === 'error'
+            ? t('error')
+            : bootSeconds > 0 ? `${t('barConnecting')} ${bootSeconds}s` : t('barConnecting')
+          label = `${label} · ${bridge}`
+        }
+      } else if (known) {
+        label = t('barStopped')
+        chipTitle = needDir ? t('serverPick') : t('serverStopped')
+      }
+
+      const actions = []
+      const add = (action, text, variant, disabled, title) => {
+        actions.push({ action, label: text, variant, disabled, title })
+      }
+      if (!known) {
+        add('start', t('serverStart'), 'primary', true, '')
+      } else if (starting) {
+        add('start', t('barStarting'), 'primary', true, t('serverStarting'))
+      } else if (!healthy) {
+        add('start', t('serverStart'), 'primary', !canWrite || needDir,
+          needDir ? t('serverPick') : failed ? t('serverStartFailed') : t('serverStart'))
+      } else if (owned) {
+        add('stop', t('serverStop'), 'quiet', !canWrite, t('serverStop'))
+        add('restart', t('serverRestart'), 'quiet', !canWrite, t('serverRestart'))
+      } else {
+        // An external server is healthy but untouchable; say so on hover
+        // instead of hiding the control and leaving the state unexplained.
+        add('restart', t('serverRestart'), 'quiet', true, t('serverExternalHint') || t('serverNotOwned'))
+      }
+
+      return { tone, label, chipTitle, actions, healthy, owned }
+    }
+
+    function TopBar({ stats, runText, plan, serviceOpen, onSync, onReload, onOpen, onService, onAction, t }) {
       const statText = t('stats')
         .replace('{{nodes}}', String(stats.nodes))
         .replace('{{links}}', String(stats.links))
         .replace('{{revision}}', String(stats.revision))
-      const statusText = status === 'loading' && bootSeconds > 0 ? `${t('loading')} ${bootSeconds}s` : t(status)
       return h('div', { className: 'dsh-comfyui-bar' },
-        h('span', { className: 'dsh-comfyui-dot', 'data-status': status }),
-        h('span', { className: 'dsh-comfyui-title' }, t('title')),
-        h('span', { className: 'dsh-comfyui-status' }, statusText),
+        h('span', { className: 'dsh-comfyui-dot', 'data-status': plan.tone, title: plan.chipTitle }),
+        h('span', { className: 'dsh-comfyui-state', 'data-tone': plan.tone, title: plan.chipTitle }, plan.label),
         runText === '' ? null : h('span', { className: 'dsh-comfyui-run' }, runText),
         h('span', { className: 'dsh-comfyui-stats', title: statText }, statText),
-        h('button', { className: 'dsh-comfyui-button', type: 'button', onClick: onService }, t('server')),
-        h('button', { className: 'dsh-comfyui-button', type: 'button', onClick: onSync }, t('sync')),
-        h('button', { className: 'dsh-comfyui-button', type: 'button', onClick: onReload }, t('reload')),
-        h('button', { className: 'dsh-comfyui-button', type: 'button', onClick: onOpen }, t('open')),
-        message === '' ? null : h('span', { className: 'dsh-comfyui-status', title: message }, ''),
+        h('div', { className: 'dsh-comfyui-tools' },
+          h('button', { className: 'dsh-comfyui-button', type: 'button', onClick: onSync }, t('sync')),
+          h('button', { className: 'dsh-comfyui-button', type: 'button', onClick: onReload }, t('reload')),
+          h('button', {
+            className: 'dsh-comfyui-button dsh-comfyui-icon',
+            type: 'button',
+            title: t('open'),
+            'aria-label': t('open'),
+            onClick: onOpen,
+          }, '\u2197'),
+        ),
+        h('div', { className: 'dsh-comfyui-actions' },
+          plan.actions.map(action => h('button', {
+            key: action.action,
+            className: 'dsh-comfyui-button',
+            'data-variant': action.variant,
+            type: 'button',
+            disabled: action.disabled,
+            title: action.title,
+            onClick: () => onAction(action.action),
+          }, action.label)),
+          h('button', {
+            className: 'dsh-comfyui-button dsh-comfyui-icon',
+            'data-active': serviceOpen ? 'true' : 'false',
+            type: 'button',
+            title: t('serverPanel'),
+            'aria-label': t('serverPanel'),
+            'aria-expanded': serviceOpen,
+            onClick: onService,
+          }, '\u2699\uFE0E'),
+        ),
       )
     }
 
@@ -339,8 +493,17 @@ window.__ModuleLoader__.load({
         graph.setDirtyCanvas?.(true, true)
         return { op, id: node.id, type: node.type }
       }
-      const node = findNode(graph, operation.id)
-      if (node === undefined || node === null) throw new Error(`Node ${operation.id} not found`)
+      // connect/disconnect name their target either as `id` or as `to.id`; both
+      // spellings reach the same node, so a caller that only reads the shape of
+      // `to` still lands on the right slot.
+      const linking = op === 'connect' || op === 'disconnect'
+      const targetId = linking && !Number.isInteger(operation.id) ? operation.to?.id : operation.id
+      const node = findNode(graph, targetId)
+      if (node === undefined || node === null) {
+        throw new Error(linking
+          ? `Target node ${targetId ?? '(missing)'} not found; ${op} needs "id" or "to.id"`
+          : `Node ${operation.id} not found`)
+      }
       if (op === 'remove_node') {
         graph.remove(node)
         graph.setDirtyCanvas?.(true, true)
@@ -493,7 +656,13 @@ window.__ModuleLoader__.load({
           body: JSON.stringify({ sessionId, workflow, prompt, semantic, revision }),
         })
         if (!response.ok) throw new Error(`${t('syncFailed')} HTTP ${response.status}`)
-        setStats({ nodes, links, revision })
+        // The Host keeps the revision monotonic across page reloads, so adopt
+        // its number: showing the page-local counter made the panel say rev 14
+        // while the same workflow read rev 49 from the model side.
+        const saved = await response.json().catch(() => null)
+        const persisted = Number.isSafeInteger(saved?.revision) ? saved.revision : revision
+        revisionRef.current = Math.max(revisionRef.current, persisted)
+        setStats({ nodes, links, revision: revisionRef.current })
         setStatus('ready')
       }, [sessionId, t])
 
@@ -766,37 +935,25 @@ window.__ModuleLoader__.load({
         )
       }
 
-      let serviceText = t('serverStopped')
-      if (service !== null && service.health === true) {
-        serviceText = service.state === 'external'
-          ? t('serverExternal')
-          : t('serverRunning').replace('{{pid}}', String(service.pid ?? '?'))
-      } else if (service !== null && (service.state === 'starting' || service.state === 'restarting')) {
-        serviceText = t('serverStarting')
-      }
+      // Lifecycle controls live in the bar; this form is configuration only, so
+      // there is exactly one place that decides whether Start is clickable.
+      const plan = barPlan({ status, service, busy: serviceBusy, dir: serviceCwd, bootSeconds, t })
+      const dir = serviceCwd.trim()
+      const notOwnedHint = plan.healthy && !plan.owned ? t('serverExternalHint') : ''
+      const dirHint = !plan.healthy && dir === '' ? t('serverPick') : ''
       const severity = service !== null && service.controllerError !== null && service.controllerError !== undefined
       const servicePanel = h('div', { className: 'dsh-comfyui-service' },
         h('div', { className: 'dsh-comfyui-service-head' },
-          h('span', { className: 'dsh-comfyui-service-state' }, serviceText),
+          h('span', { className: 'dsh-comfyui-service-state' }, t('serverPanel')),
           h('button', {
-            className: 'dsh-comfyui-button',
+            className: 'dsh-comfyui-button dsh-comfyui-icon',
             type: 'button',
-            disabled: serviceBusy || serviceCwd.trim() === '' || service?.health === true,
-            onClick: () => { void serviceAction('start') },
-          }, t('serverStart')),
-          h('button', {
-            className: 'dsh-comfyui-button',
-            type: 'button',
-            disabled: serviceBusy || service?.health !== true || service?.owned === false,
-            onClick: () => { void serviceAction('stop') },
-          }, t('serverStop')),
-          h('button', {
-            className: 'dsh-comfyui-button',
-            type: 'button',
-            disabled: serviceBusy || service?.owned === false,
-            onClick: () => { void serviceAction('restart') },
-          }, t('serverRestart')),
+            title: t('close'),
+            'aria-label': t('close'),
+            onClick: () => setServiceOpen(false),
+          }, '\u00d7'),
         ),
+        notOwnedHint === '' ? null : h('div', { className: 'dsh-comfyui-service-hint' }, notOwnedHint),
         h('label', { className: 'dsh-comfyui-service-field' },
           h('span', null, t('serverDir')),
           h('input', {
@@ -821,12 +978,10 @@ window.__ModuleLoader__.load({
           h('button', {
             className: 'dsh-comfyui-button',
             type: 'button',
-            disabled: serviceBusy || serviceCwd.trim() === '',
+            disabled: serviceBusy || dir === '',
             onClick: () => { void serviceAction('save') },
           }, t('serverSave')),
-          service !== null && service.health === false
-            ? h('span', { className: 'dsh-comfyui-service-hint' }, t('serverPick'))
-            : null,
+          dirHint === '' ? null : h('span', { className: 'dsh-comfyui-service-hint' }, dirHint),
         ),
         serviceMessage === '' ? null : h('div', { className: 'dsh-comfyui-service-message' }, serviceMessage),
         severity ? h('div', { className: 'dsh-comfyui-service-message' }, String(service.controllerError)) : null,
@@ -837,21 +992,22 @@ window.__ModuleLoader__.load({
 
       return h('div', { className: 'dsh-comfyui-panel' },
         h('style', null, CSS),
-        h(StatBar, {
-          status,
+        h(TopBar, {
           stats,
-          message,
           runText,
-          bootSeconds,
+          plan,
+          serviceOpen,
           t,
           onSync: () => { void syncRef.current?.(true) },
           onReload: reload,
           onOpen: open,
           onService: () => setServiceOpen(current => !current),
+          onAction: action => { void serviceAction(action) },
         }),
         message === '' ? null : h('div', { className: 'dsh-comfyui-notice', 'data-tone': status === 'error' ? 'error' : 'info' }, message),
         // Explicit-only: an unhealthy upstream must not force this form open
-        // and resize the panel; the Server button carries that affordance.
+        // and resize the panel; the gear button in the bar carries that
+        // affordance.
         serviceOpen ? servicePanel : null,
         h('iframe', {
           ref: iframeRef,
@@ -888,6 +1044,9 @@ window.__ModuleLoader__.load({
 
     return {
       inject: ['slots', 'locale', 'sidebarRightTabs', 'sidebarRight'],
+      // Pure editor operations, dictionaries and the top-bar rules, exposed for
+      // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
+      __ops: { applyOperation, findNode, coerceWidgetValue, barPlan, en, zh },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')
