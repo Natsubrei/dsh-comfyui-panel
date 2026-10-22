@@ -31,10 +31,14 @@ window.__ModuleLoader__.load({
       syncing: 'Syncing…',
       error: 'Bridge error',
       sync: 'Sync',
+      syncHint: 'Push the current graph to the model now',
       reload: 'Reload',
+      reloadHint: 'Reload the embedded editor',
       open: 'Open in new tab',
       noSession: 'No session',
-      stats: '{{nodes}} nodes · {{links}} links · rev {{revision}}',
+      stats: '{{nodes}} nodes · {{links}} links',
+      statsTitle: '{{nodes}} nodes · {{links}} links · rev {{revision}}',
+      editorLoading: 'Loading the editor…',
       bridgeUnavailable: 'ComfyUI did not expose its editor API. Check that the panel is served from /comfyui/.',
       syncFailed: 'Could not send the workflow to the Host.',
       // Not "Running": the server state already says that, and two "Running"
@@ -77,10 +81,14 @@ window.__ModuleLoader__.load({
       syncing: '同步中…',
       error: '桥接错误',
       sync: '同步',
+      syncHint: '立即把当前工作流推给模型',
       reload: '重载',
+      reloadHint: '重新加载内嵌编辑器',
       open: '新标签打开',
       noSession: '无会话',
-      stats: '{{nodes}} 个节点 · {{links}} 条连线 · rev {{revision}}',
+      stats: '{{nodes}} 个节点 · {{links}} 条连线',
+      statsTitle: '{{nodes}} 个节点 · {{links}} 条连线 · rev {{revision}}',
+      editorLoading: '正在加载编辑器…',
       bridgeUnavailable: 'ComfyUI 没有暴露编辑器 API。请确认面板是通过 /comfyui/ 同源加载的。',
       syncFailed: '工作流未能发送到 Host。',
       running: '进度 {{value}}/{{max}}',
@@ -196,7 +204,22 @@ window.__ModuleLoader__.load({
         outline: 1px solid var(--dsw-alias-brand-primary);
         outline-offset: 2px;
       }
-      .dsh-comfyui-frame { flex: 1 1 auto; width: 100%; min-height: 0; border: 0; background: #111; }
+      .dsh-comfyui-stage { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
+      .dsh-comfyui-frame { flex: 1 1 auto; width: 100%; height: 100%; min-height: 0; border: 0; background: #111; }
+      .dsh-comfyui-overlay {
+        position: absolute; inset: 0; z-index: 1;
+        display: flex; align-items: center; justify-content: center; gap: 10px;
+        color: var(--dsw-alias-label-secondary);
+        background: var(--dsw-alias-bg-base);
+        font-size: 13px;
+      }
+      .dsh-comfyui-spinner {
+        width: 14px; height: 14px; border-radius: 50%;
+        border: 2px solid var(--dsw-alias-border-l1);
+        border-top-color: var(--dsw-alias-brand-primary);
+        animation: dsh-comfyui-spin .8s linear infinite;
+      }
+      @keyframes dsh-comfyui-spin { to { transform: rotate(360deg); } }
       .dsh-comfyui-notice {
         margin: 8px 10px; padding: 8px 10px; border-radius: 8px;
         border: 1px solid var(--dsw-alias-border-l1);
@@ -319,6 +342,11 @@ window.__ModuleLoader__.load({
       const statText = t('stats')
         .replace('{{nodes}}', String(stats.nodes))
         .replace('{{links}}', String(stats.links))
+      // The revision is bookkeeping for the Host and the model, not a number
+      // a ComfyUI user can act on; keep it in the tooltip instead of the bar.
+      const statTitle = t('statsTitle')
+        .replace('{{nodes}}', String(stats.nodes))
+        .replace('{{links}}', String(stats.links))
         .replace('{{revision}}', String(stats.revision))
       return h('div', { className: 'dsh-comfyui-bar' },
         h('span', { className: 'dsh-comfyui-dot', 'data-status': plan.tone, title: plan.chipTitle }),
@@ -338,10 +366,10 @@ window.__ModuleLoader__.load({
           }, action.label)),
         ),
         runText === '' ? null : h('span', { className: 'dsh-comfyui-run' }, runText),
-        h('span', { className: 'dsh-comfyui-stats', title: statText }, statText),
+        h('span', { className: 'dsh-comfyui-stats', title: statTitle }, statText),
         h('div', { className: 'dsh-comfyui-tools' },
-          h('button', { className: 'dsh-comfyui-button', type: 'button', onClick: onSync }, t('sync')),
-          h('button', { className: 'dsh-comfyui-button', type: 'button', onClick: onReload }, t('reload')),
+          h('button', { className: 'dsh-comfyui-button', type: 'button', title: t('syncHint'), onClick: onSync }, t('sync')),
+          h('button', { className: 'dsh-comfyui-button', type: 'button', title: t('reloadHint'), onClick: onReload }, t('reload')),
           h('button', {
             className: 'dsh-comfyui-button dsh-comfyui-icon',
             type: 'button',
@@ -465,6 +493,65 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Frame the graph in the embedded canvas, so a fresh panel does not open
+     * with half the workflow outside the visible area. LiteGraph keeps the
+     * camera in `canvas.ds` (scale plus canvas-space offset) and stores node
+     * geometry as Float64Array, not plain arrays. A view that already frames
+     * every node is left alone, so a workflow's saved camera survives.
+     */
+    function fitCanvas(app) {
+      const canvas = app.canvas
+      const graph = app.rootGraph ?? app.graph
+      const nodes = Array.isArray(graph?._nodes) ? graph._nodes : []
+      const ds = canvas?.ds
+      const element = canvas?.canvas
+      const width = element?.clientWidth ?? 0
+      const height = element?.clientHeight ?? 0
+      if (ds === undefined || ds === null || width <= 0 || height <= 0) return false
+      const at = (pair, index) => (pair !== null && pair !== undefined ? Number(pair[index]) : Number.NaN)
+      let minX = Infinity
+      let minY = Infinity
+      let maxX = -Infinity
+      let maxY = -Infinity
+      for (const node of nodes) {
+        const x = at(node?.pos, 0)
+        const y = at(node?.pos, 1)
+        const w = at(node?.size, 0)
+        const h = at(node?.size, 1)
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)) continue
+        minX = Math.min(minX, x)
+        minY = Math.min(minY, y)
+        maxX = Math.max(maxX, x + w)
+        maxY = Math.max(maxY, y + h)
+      }
+      if (!Number.isFinite(minX) || maxX <= minX || maxY <= minY) return false
+      // Visible rect in graph coordinates: offset is canvas-space, so divide.
+      const scaleNow = Number(ds.scale) > 0 ? Number(ds.scale) : 1
+      const offsetX = at(ds.offset, 0)
+      const offsetY = at(ds.offset, 1)
+      if (Number.isFinite(offsetX) && Number.isFinite(offsetY)) {
+        const left = -offsetX / scaleNow
+        const top = -offsetY / scaleNow
+        const right = left + width / scaleNow
+        const bottom = top + height / scaleNow
+        const margin = (right - left) * 0.02
+        if (minX >= left + margin && maxX <= right - margin && minY >= top + margin && maxY <= bottom - margin) {
+          return true
+        }
+      }
+      const graphWidth = Math.max(maxX - minX, 1)
+      const graphHeight = Math.max(maxY - minY, 1)
+      const scale = Math.min(width / graphWidth, height / graphHeight) * 0.86
+      ds.scale = Math.max(ds.min_scale ?? 0.1, Math.min(ds.max_scale ?? 10, scale))
+      ds.offset = [
+        width / 2 - (minX + graphWidth / 2) * ds.scale,
+        height / 2 - (minY + graphHeight / 2) * ds.scale,
+      ]
+      canvas.setDirty?.(true, true)
+      return true
+    }
+
+    /**
      * Build the semantic projection from the live LiteGraph nodes, where widget
      * and input names are known. An input becomes `"<sourceNodeId>:<slot>"`,
      * matching what comfyui_edit's connect.from expects.
@@ -583,6 +670,7 @@ window.__ModuleLoader__.load({
       const lastForcedAtRef = useRef(0)
       const revisionRef = useRef(0)
       const lastClientIdRef = useRef(null)
+      const fittedRef = useRef(false)
       const [status, setStatus] = useState('loading')
       const [bootSeconds, setBootSeconds] = useState(0)
       const [stats, setStats] = useState({ nodes: 0, links: 0, revision: 0 })
@@ -714,6 +802,18 @@ window.__ModuleLoader__.load({
         const persisted = Number.isSafeInteger(saved?.revision) ? saved.revision : revision
         revisionRef.current = Math.max(revisionRef.current, persisted)
         setStats({ nodes, links, revision: revisionRef.current })
+        // A fresh editor opens at ComfyUI's default camera, which leaves parts
+        // of the graph off-screen; frame it once, unless the current view
+        // already shows every node.
+        if (!fittedRef.current) {
+          try {
+            // A canvas that has not been laid out yet reports zero size; leave
+            // `fittedRef` false so a later sync tries again.
+            fittedRef.current = fitCanvas(app) !== false
+          } catch {
+            // A node without a usable pos/size must not fail the sync.
+          }
+        }
         setStatus('ready')
       }, [sessionId, t])
 
@@ -938,6 +1038,7 @@ window.__ModuleLoader__.load({
         if (frame === null) return
         lastJsonRef.current = ''
         appRef.current = null
+        fittedRef.current = false
         setRun(null)
         setStatus('loading')
         setMessage('')
@@ -1060,18 +1161,29 @@ window.__ModuleLoader__.load({
         // and resize the panel; the gear button in the bar carries that
         // affordance.
         serviceOpen ? servicePanel : null,
-        h('iframe', {
-          ref: iframeRef,
-          className: 'dsh-comfyui-frame',
-          title: t('title'),
-          src: PANEL_URL,
-          allow: 'clipboard-read; clipboard-write; fullscreen',
-          onLoad: () => {
-            lastJsonRef.current = ''
-            appRef.current = null
-            setStatus('loading')
-          },
-        }),
+        h('div', { className: 'dsh-comfyui-stage' },
+          h('iframe', {
+            ref: iframeRef,
+            className: 'dsh-comfyui-frame',
+            title: t('title'),
+            src: PANEL_URL,
+            allow: 'clipboard-read; clipboard-write; fullscreen',
+            onLoad: () => {
+              lastJsonRef.current = ''
+              appRef.current = null
+              fittedRef.current = false
+              setStatus('loading')
+            },
+          }),
+          // The iframe paints ComfyUI's own splash first; without this the
+          // panel looks stuck on a white rectangle while the frontend boots.
+          status === 'loading'
+            ? h('div', { className: 'dsh-comfyui-overlay' },
+              h('span', { className: 'dsh-comfyui-spinner' }),
+              h('span', null, bootSeconds > 0 ? `${t('editorLoading')} ${bootSeconds}s` : t('editorLoading')),
+            )
+            : null,
+        ),
       )
     }
 
@@ -1097,7 +1209,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale', 'sidebarRightTabs', 'sidebarRight'],
       // Pure editor operations, dictionaries and the top-bar rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, findNode, coerceWidgetValue, frontendClientId, barPlan, projectGraph, en, zh },
+      __ops: { applyOperation, findNode, coerceWidgetValue, frontendClientId, barPlan, projectGraph, fitCanvas, en, zh },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')

@@ -249,4 +249,27 @@ const stopped = { health: false, owned: false, state: 'stopped', pid: null }
   assert.equal(projection.linkCount, 1)
 }
 
+// A fresh panel has to frame the graph itself: node geometry arrives as
+// Float64Array, and a canvas that reports zero size must stay retryable
+// instead of latching "already fitted".
+{
+  const { fitCanvas } = mod.__ops
+  const makeApp = (ds, size = { clientWidth: 719, clientHeight: 869 }) => ({
+    canvas: { ds, canvas: size, setDirty() {} },
+    rootGraph: { _nodes: [{ pos: Float64Array.from([1000, 200]), size: Float64Array.from([300, 400]) }] },
+  })
+  const ds = { scale: 0.9, offset: Float64Array.from([416, 110]), min_scale: 0.1, max_scale: 10 }
+  assert.equal(fitCanvas(makeApp(ds)), true)
+  assert.ok(Math.abs(ds.scale - 0.9) > 1e-6, 'the camera changes to frame the node')
+  assert.ok(ds.scale >= 0.1 && ds.scale <= 10)
+  assert.ok(Number.isFinite(ds.offset[0]) && Number.isFinite(ds.offset[1]))
+
+  const framed = { scale: 0.5, offset: Float64Array.from([-400, -50]), min_scale: 0.1, max_scale: 10 }
+  assert.equal(fitCanvas(makeApp(framed)), true)
+  assert.equal(framed.scale, 0.5, 'a view that already shows the node is left alone')
+
+  const unlaid = { scale: 0.9, offset: Float64Array.from([416, 110]), min_scale: 0.1, max_scale: 10 }
+  assert.equal(fitCanvas(makeApp(unlaid, { clientWidth: 0, clientHeight: 0 })), false, 'retry until laid out')
+}
+
 console.log('client ops test passed')
