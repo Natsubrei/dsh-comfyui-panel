@@ -7,14 +7,14 @@
  * workflow, ask the editor for its API prompt, and POST both to the Host.
  */
 window.__ModuleLoader__.load({
-  id: '@local/dsh-comfyui',
+  id: 'dsh-comfyui-panel',
   factory(require) {
     const React = require('react')
     const h = React.createElement
     const { useCallback, useEffect, useRef, useState } = React
 
     const NS = 'dshComfyUI'
-    const TAB_ID = '@local/dsh-comfyui/workflow'
+    const TAB_ID = 'dsh-comfyui-panel/workflow'
     const TAB_KIND = 'comfyui'
     const PANEL_URL = '/comfyui/'
     const STATE_URL = '/api/comfyui/state'

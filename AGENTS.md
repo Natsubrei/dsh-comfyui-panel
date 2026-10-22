@@ -1,4 +1,4 @@
-# dsh-comfyui
+# dsh-comfyui-panel
 
 A zero-intrusion ComfyUI panel for the DSH Web UI. The ComfyUI **UI workflow is
 canonical**; plugin state lives in the Host's `dsh_comfyui` storage domain, never
@@ -32,11 +32,16 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
   hostname appear in the tree or in any commit.
 - `.github/workflows/test.yml` — CI: `npm test` on Node 22 and 24, nothing to
   install.
+- `market/index.json` — the plugin market index this repository hosts, the URL
+  users add in Settings → Plugins → Discover. `scripts/market-index.mjs`
+  regenerates it; `test/market-index.mjs` validates it with the real
+  `@deepseek-ai/dsh-plugin-market-index` validator when a Harness checkout is
+  next to this one.
 
 ## Verify
 
 ```bash
-npm test          # syntax checks + host smoke + client editor ops + hygiene
+npm test          # checks, host smoke, editor ops, hygiene, market index
 npm run contract  # real DSH runtime; needs checkout at ../deepseek-harness
 npm run ui        # live panel in a headless browser; needs a running dsh web
 ```
@@ -54,8 +59,8 @@ Host code reloads without restarting DSH: toggle the bundle off and on. HMR
 reconciles the profile and re-imports the changed module.
 
 ```text
-plugin_manager set_bundle @local/dsh-comfyui enabled:false
-plugin_manager set_bundle @local/dsh-comfyui enabled:true
+plugin_manager set_bundle dsh-comfyui-panel enabled:false
+plugin_manager set_bundle dsh-comfyui-panel enabled:true
 ```
 
 Then check `plugin_manager list_plugins` for `enabled` and the version. Client
@@ -102,6 +107,21 @@ and every commit for home directories, the local account name, and the hostname
 (`test/repo-hygiene.mjs`). A hit in history means a history rewrite, not a new
 commit: fix the file, then rewrite the affected commits before publishing, and
 re-run `npm test` until the hygiene test is quiet.
+
+A release is a commit plus an index entry that pins it:
+
+1. Bump `package.json` and add the CHANGELOG section.
+2. Commit, then tag: `git tag v<version> && git push origin main --tags`.
+3. `npm run market` — writes `market/index.json` with `version` pinned to that
+   commit and its commit time as `publishTimestamp`, keeping older versions.
+4. `npm test` (validates the index against the real validator), then commit
+   `market/index.json` and push.
+
+Do not edit `market/index.json` by hand: the commit SHA, the timestamp, and
+`engines.dsh` must agree with the commit and the package, and the test says so.
+Publishing to npm is optional and separate (`npm publish`); npm-based community
+indexes discover packages through the `keywords: ["dsh-plugin"]` keyword and the
+`dsh.bundle` field, so a publish there needs no index change here.
 
 ## Logs
 

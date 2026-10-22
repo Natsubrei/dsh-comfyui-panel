@@ -1,7 +1,61 @@
-# dsh-comfyui
+# dsh-comfyui-panel
+
+[![test](https://github.com/Natsubrei/dsh-comfyui-panel/actions/workflows/test.yml/badge.svg)](https://github.com/Natsubrei/dsh-comfyui-panel/actions/workflows/test.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ComfyUI inside the DeepSeek Harness Web UI: the real editor in a right-side
 panel, a workflow the model can read and edit, and runs the model can start.
+
+## Install
+
+**From the plugin market** (recommended). In DSH, open **Settings → Plugins →
+Discover → Add index source** and paste:
+
+```text
+https://raw.githubusercontent.com/Natsubrei/dsh-comfyui-panel/main/market/index.json
+```
+
+The **ComfyUI Panel** card installs the bundle; the index pins one exact commit
+per version, so an install always matches a tested release. The same index is
+what the `plugin_market` tool reads, so an agent can list it, show versions, and
+install without a browser.
+
+**With the agent or the CLI.** The market hands `install_bundle` an install spec
+of the form `git+https://github.com/Natsubrei/dsh-comfyui-panel.git#<commit>`;
+that is also the spec to paste yourself:
+
+```sh
+dsh plugin --profile <name> add 'git+https://github.com/Natsubrei/dsh-comfyui-panel.git'
+```
+
+`dsh plugin` links or installs the package and appends it to the profile's
+bundle list. Restart DSH if the profile was already running; clients need a hard
+refresh after a bundle change.
+
+**From npm** once the package is published:
+
+```sh
+dsh plugin --profile <name> add dsh-comfyui-panel
+```
+
+Then [configure](#configuration) the upstream if it is not `127.0.0.1:8188`, and
+read on for the panel itself.
+
+## 中文快速开始
+
+在 DSH 里打开**设置 → 插件 → 发现 → 添加索引源**，粘贴：
+
+```text
+https://raw.githubusercontent.com/Natsubrei/dsh-comfyui-panel/main/market/index.json
+```
+
+安装 **ComfyUI 面板** 后，在会话右侧边栏的引导页点 **ComfyUI**，编辑器就会在同一
+个页面里启动。面板顶部一行是服务器状态（运行/停止）和启停按钮，中间是节点/连线
+计数与最近同步时间，右边是缩放适应、同步、重载、新标签打开和服务器设置。
+
+插件会把当前工作流投影给模型：模型能读节点和连线、改控件值、增删节点、发起
+生成，并通过 `comfyui_progress` 看到进度。ComfyUI 进程可以在面板里启动、停止和
+重启，工作流保存在插件自己的存储域里，重启 DSH 不会丢。
 
 ## What it does
 
@@ -47,16 +101,20 @@ panel, a workflow the model can read and edit, and runs the model can start.
 
 ## Configuration
 
-`cordis.patch.yml`:
+The bundle's own patch, `cordis.patch.yml`:
 
 ```yaml
 - insert:
-    - id: dsh-comfyui
-      name: '@local/dsh-comfyui'
+    - id: dsh-comfyui-panel
+      name: dsh-comfyui-panel
       config:
         upstream: http://127.0.0.1:8188
         prefix: /comfyui
 ```
+
+Override the row in your profile's `cordis.patch.yml` by the same `id` to change
+`upstream` or `prefix`; a patch replaces the row's whole `config`, so repeat
+every key you keep.
 
 `prefix` is the same-origin path the panel is served from; `upstream` is the
 ComfyUI server. Both must agree with the panel's hard-coded `/comfyui/`.

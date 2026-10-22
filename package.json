@@ -1,9 +1,34 @@
 {
-  "name": "@local/dsh-comfyui",
+  "name": "dsh-comfyui-panel",
   "version": "0.6.6",
-  "private": true,
+  "description": "The real ComfyUI editor inside the DeepSeek Harness Web UI, with per-session workflow tools and panel-managed ComfyUI. / 在 DeepSeek Harness Web UI 里嵌入真正的 ComfyUI 编辑器，按会话向模型暴露工作流工具，并可在面板中管理 ComfyUI 进程。",
   "type": "module",
-  "description": "ComfyUI workflow editor inside the DeepSeek Harness Web UI",
+  "license": "MIT",
+  "author": "Natsubrei",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Natsubrei/dsh-comfyui-panel.git"
+  },
+  "homepage": "https://github.com/Natsubrei/dsh-comfyui-panel#readme",
+  "bugs": {
+    "url": "https://github.com/Natsubrei/dsh-comfyui-panel/issues"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "dsh",
+    "deepseek",
+    "deepseek-harness",
+    "harness",
+    "comfyui",
+    "workflow",
+    "image-generation",
+    "stable-diffusion",
+    "ui"
+  ],
+  "engines": {
+    "dsh": ">=0.1.2-alpha.4 <0.3.0-0",
+    "node": ">=22"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -19,14 +44,16 @@
     "cordis.patch.yml",
     "icon.svg",
     "README.md",
-    "AGENTS.md",
-    "scripts/dsh-web.sh"
+    "scripts/dsh-web.sh",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "scripts": {
-    "check": "node --check index.js && node --check client.js && node --check projection.js && node --check storage.js && node --check supervisor.js && node --check service.js && node --check test/host-smoke.mjs && node --check test/dsh-contract.mjs && node --check test/client-ops.mjs && node --check test/repo-hygiene.mjs && node --check test/ui/browser.mjs && node --check test/ui/panel.mjs",
-    "test": "npm run check && node test/host-smoke.mjs && node test/client-ops.mjs && node test/repo-hygiene.mjs",
+    "check": "node --check index.js && node --check client.js && node --check projection.js && node --check storage.js && node --check supervisor.js && node --check service.js && node --check test/host-smoke.mjs && node --check test/dsh-contract.mjs && node --check test/client-ops.mjs && node --check test/repo-hygiene.mjs && node --check test/ui/browser.mjs && node --check test/ui/panel.mjs && node --check scripts/market-index.mjs && node --check test/market-index.mjs",
+    "test": "npm run check && node test/host-smoke.mjs && node test/client-ops.mjs && node test/repo-hygiene.mjs && node test/market-index.mjs",
     "contract": "node test/dsh-contract.mjs",
-    "ui": "node test/ui/panel.mjs"
+    "ui": "node test/ui/panel.mjs",
+    "market": "node scripts/market-index.mjs"
   },
   "dsh": {
     "bundle": {

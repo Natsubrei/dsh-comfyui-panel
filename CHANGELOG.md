@@ -1,11 +1,14 @@
 # Changelog
 
 Notable changes to the plugin. The version in `package.json` is the source of
-truth; there is no published package yet, so a version marks a milestone in this
-checkout's own history.
+truth, and every release is pinned by a commit in `market/index.json`.
 
 ## 0.6.6
 
+- Publish as **`dsh-comfyui-panel`** (MIT). The package was `@local/dsh-comfyui`,
+  a local-only name; every id that names the plugin moved with it.
+- Host a plugin market index at `market/index.json` (`npm run market`) and
+  document installation through Settings → Plugins → Discover.
 - Add `npm run ui`: a dependency-free headless check of the panel in a real
   browser. It starts a scratch session, mounts the tab, and asserts that the
   editor boots, counters match the graph, zooming does not count as an edit, a
@@ -19,6 +22,8 @@ checkout's own history.
   `server.client_id`.
 - Publish counters, revision, and sync time as `data-*` attributes so the UI
   check does not parse localized bar text.
+- Add `test/market-index.mjs`: validates the index with the real DSH
+  validator and pins every version to a commit that exists here.
 - Drop a machine-specific path from the client-ops test fixtures.
 
 ## 0.6.5

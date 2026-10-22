@@ -1,8 +1,8 @@
 # The bundle patch inserts one Loader row. The plugin serves the ComfyUI frontend
 # under /comfyui (same origin as the DSH page) and exposes a small bridge API.
 - insert:
-    - id: dsh-comfyui
-      name: '@local/dsh-comfyui'
+    - id: dsh-comfyui-panel
+      name: 'dsh-comfyui-panel'
       config:
         upstream: http://127.0.0.1:8188
         prefix: /comfyui

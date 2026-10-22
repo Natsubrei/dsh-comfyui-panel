@@ -13,7 +13,7 @@ import assert from 'node:assert/strict'
 let registered = null
 globalThis.window = { __ModuleLoader__: { load: module => { registered = module } } }
 await import('../client.js')
-assert.equal(registered.id, '@local/dsh-comfyui')
+assert.equal(registered.id, 'dsh-comfyui-panel')
 
 const fakeReact = {
   createElement: () => null,
