@@ -11,7 +11,8 @@
  * `supervise` config block; that config, when enabled, takes precedence at
  * start-up and is adopted rather than duplicated.
  */
-import { existsSync, statSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { createSupervisor, defaultLogPath } from './supervisor.js'
@@ -88,6 +89,37 @@ export function planFromSettings(settings, upstream) {
 }
 
 /**
+ * The pid listening on `port`, or null when the platform will not name it.
+ * `ss` is Linux's; `lsof` covers macOS and everything else.
+ */
+function listenerPid(port) {
+  try {
+    const listing = execFileSync('ss', ['-ltnpH', `sport = :${port}`], { encoding: 'utf8', timeout: 2000 })
+    const match = /pid=(\d+)/.exec(listing)
+    if (match !== null) return Number(match[1])
+  } catch {
+    // No ss on this machine.
+  }
+  try {
+    const listing = execFileSync('lsof', ['-tiTCP:' + port, '-sTCP:LISTEN'], { encoding: 'utf8', timeout: 2000 })
+    const first = listing.trim().split('\n')[0]
+    if (/^\d+$/.test(first)) return Number(first)
+  } catch {
+    // Neither tool could name the listener.
+  }
+  return null
+}
+
+/** Whether `pid` runs with `directory` as its working directory. */
+function servesDirectory(pid, directory) {
+  try {
+    return realpathSync(`/proc/${pid}/cwd`) === realpathSync(directory)
+  } catch {
+    return false
+  }
+}
+
+/**
  * Create the panel-facing service controller.
  * @param options.upstream - the ComfyUI upstream URL.
  * @param options.config - normalized `supervise` config from the plugin row.
@@ -148,6 +180,33 @@ export function createServiceController({ upstream, config, probe, logger }) {
     },
     /** Status without an extra health probe (tools that already probed). */
     snapshot,
+    /**
+     * Adopt a ComfyUI that is already listening on the upstream port. A plugin
+     * reload drops the child handle while the ComfyUI process keeps running;
+     * adopting it back by pid keeps Stop and Restart working instead of
+     * leaving a server no button can touch. Only a process running the
+     * configured checkout is adopted — anything else stays external.
+     */
+    async adopt() {
+      if (supervisor !== null) return snapshot()
+      const healthy = await probe().catch(() => false)
+      if (!healthy) return snapshot()
+      let plan
+      try {
+        plan = configuredPlan ?? planFromSettings(settings, upstream)
+      } catch {
+        return snapshot()
+      }
+      const port = new URL(upstream).port || '8188'
+      const pid = listenerPid(port)
+      if (pid === null || !servesDirectory(pid, plan.cwd)) {
+        logger?.info(`dsh-comfyui: ComfyUI is listening upstream but was not started from ${plan.cwd}; leaving it external`)
+        return snapshot()
+      }
+      const target = ensureSupervisor()
+      if (typeof target.attach === 'function') target.attach(pid)
+      return snapshot()
+    },
     /** Save panel settings; does not start anything. */
     save(raw) {
       const clean = sanitizeServiceSettings(raw)

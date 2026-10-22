@@ -87,6 +87,10 @@ export function apply(ctx, rawConfig = {}) {
           void service.start().catch(error => ctx.logger?.warn(`dsh-comfyui: could not auto-start ComfyUI: ${String(error)}`))
         }
       }
+      // A ComfyUI left running by a previous Host (or started by hand in the
+      // configured checkout) is taken back by pid, so Stop and Restart keep
+      // working instead of pointing at a server no button can reach.
+      void service.adopt().catch(error => ctx.logger?.warn(`dsh-comfyui: could not adopt ComfyUI: ${String(error)}`))
     }).catch(error => ctx.logger?.warn(`dsh-comfyui: could not restore workflows: ${String(error)}`))
     return () => {
       disposed = true
@@ -683,11 +687,12 @@ export function apply(ctx, rawConfig = {}) {
   function graphReadTool(sessionId) {
     return {
       name: 'comfyui_graph_read',
-      description: 'Read the ComfyUI workflow synced in this session: each node\'s id, class type, widget values, and inputs. An input maps to "<sourceNodeId>:<outputSlot>". Pass full=true for the raw UI workflow and API prompt.',
+      description: 'Read the ComfyUI workflow synced in this session: each node\'s id, class type, widget values, and inputs. An input maps to "<sourceNodeId>:<outputSlot>". Pass layout=true for node ids and canvas boxes only, or full=true for the raw UI workflow and API prompt.',
       parameters: {
         type: 'object',
         properties: {
           full: { type: 'boolean', description: 'Return the raw UI workflow and API prompt instead of the projection.' },
+          layout: { type: 'boolean', description: 'Return only node ids, types, and canvas pos/size — the cheap read before placing a node.' },
         },
         additionalProperties: false,
       },
@@ -696,6 +701,21 @@ export function apply(ctx, rawConfig = {}) {
         const state = sessions.get(sessionId)
         if (state === undefined) {
           throw new Error('No ComfyUI workflow has synced in this session. Open the ComfyUI tab in this session and wait for Connected.')
+        }
+        if (args?.layout === true) {
+          const nodes = Array.isArray(state.workflow?.nodes) ? state.workflow.nodes : []
+          return {
+            text: JSON.stringify({
+              sessionId,
+              revision: state.revision,
+              nodes: nodes.map(node => ({
+                id: node?.id,
+                type: node?.type,
+                pos: node?.pos,
+                size: node?.size,
+              })),
+            }),
+          }
         }
         if (args?.full === true) {
           return {
@@ -837,7 +857,7 @@ export function apply(ctx, rawConfig = {}) {
               properties: {
                 op: { type: 'string', enum: ['add_node', 'remove_node', 'set_widget', 'connect', 'disconnect'] },
                 type: { type: 'string', description: 'Node class for add_node, e.g. KSampler.' },
-                id: { type: 'integer', description: 'Node id for add_node (optional), remove_node and set_widget.' },
+                id: { type: 'integer', description: 'Node id: the target of remove_node, set_widget, connect and disconnect (connect/disconnect also accept to.id), and the id to assign on add_node.' },
                 pos: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Canvas position for add_node.' },
                 widgets: { type: 'object', additionalProperties: { description: 'Initial widget value.' }, description: 'Widget values for add_node, keyed by widget name.' },
                 name: { type: 'string', description: 'Widget name for set_widget.' },

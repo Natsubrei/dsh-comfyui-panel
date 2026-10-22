@@ -14,6 +14,17 @@
 import { spawn } from 'node:child_process'
 import { closeSync, mkdirSync, openSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
+
+/** Whether a pid is still running, without signaling it. */
+function alive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
 
 /** Default log file: inside the DSH home so it survives plugin reinstalls. */
 export function defaultLogPath() {
@@ -34,6 +45,7 @@ export function createSupervisor({ config, probe, logger }) {
     enabled: true,
     state: 'idle',
     pid: null,
+    attached: false,
     restarts: 0,
     lastExit: null,
     lastError: null,
@@ -74,7 +86,8 @@ export function createSupervisor({ config, probe, logger }) {
     if (stopping) return
     if (status.restarts >= config.maxRestarts) {
       status.state = 'failed'
-      logger?.warn(`dsh-comfyui: ComfyUI exited ${status.restarts} times; not restarting again (see ${logPath})`)
+      status.lastError = `ComfyUI exited ${status.restarts} times (last code ${status.lastExit?.code ?? 'null'}); see ${logPath}`
+      logger?.warn(`dsh-comfyui: ${status.lastError}`)
       return
     }
     status.restarts += 1
@@ -217,6 +230,28 @@ export function createSupervisor({ config, probe, logger }) {
     waitForHealthy()
   }
 
+  /** Terminate an adopted pid, escalating to SIGKILL when it outlives the grace. */
+  const stopAttached = async pid => {
+    try {
+      process.kill(pid, 'SIGTERM')
+    } catch {
+      // Gone between adoption and now.
+    }
+    const deadline = Date.now() + 5000
+    while (Date.now() < deadline && alive(pid)) await delay(100)
+    if (alive(pid)) {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        // Exited while the SIGKILL was in flight.
+      }
+    }
+    status.pid = null
+    status.startedAt = null
+    status.attached = false
+    status.state = 'stopped'
+  }
+
   return {
     /**
      * Begin supervising. Adopts a healthy external upstream, otherwise starts
@@ -233,12 +268,30 @@ export function createSupervisor({ config, probe, logger }) {
       }
       await launch()
     },
-    /** Stop the owned child and every timer. Idempotent. */
+    /**
+     * Adopt a ComfyUI that is already listening but was not spawned here — a
+     * reloaded plugin finding its own surviving child, or a checkout the user
+     * started by hand. The caller is responsible for checking that the pid
+     * really serves this checkout before attaching; from then on Stop and
+     * Restart control it like any spawned child.
+     */
+    attach(pid) {
+      if (child !== null || status.state === 'running') return { ...status }
+      status.pid = pid
+      status.attached = true
+      status.startedAt = Date.now()
+      status.state = 'running'
+      logger?.info(`dsh-comfyui: adopted running ComfyUI pid ${pid}`)
+      monitor()
+      return { ...status }
+    },
+    /** Stop the owned child, or the adopted pid, and every timer. Idempotent. */
     async stop() {
       stopping = true
       clearTimers()
       if (child === null) {
-        status.state = status.state === 'failed' ? 'failed' : 'stopped'
+        if (status.pid !== null) await stopAttached(status.pid)
+        else status.state = status.state === 'failed' ? 'failed' : 'stopped'
         return
       }
       const proc = child

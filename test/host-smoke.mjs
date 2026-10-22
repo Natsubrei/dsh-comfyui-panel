@@ -5,6 +5,7 @@
  */
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import { spawn } from 'node:child_process'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -580,6 +581,50 @@ assert.equal(adopter.snapshot().state, 'external')
 assert.equal(adopter.snapshot().pid, null)
 await adopter.stop()
 assert.equal(adopter.snapshot().state, 'stopped')
+
+// A server that was started elsewhere can be adopted by pid: a reloaded plugin
+// finds its surviving child again, and Stop keeps working on it.
+const ATTACHED_PORT = 18192
+const attachedChild = spawn(process.execPath, [
+  '-e',
+  `require('node:http').createServer((req,res)=>{res.writeHead(200);res.end('{"ok":true}')}).listen(${ATTACHED_PORT},'127.0.0.1')`,
+], { stdio: 'ignore' })
+const attachedProbe = async () => {
+  const response = await fetch(`http://127.0.0.1:${ATTACHED_PORT}/`, { signal: AbortSignal.timeout(1000) }).catch(() => null)
+  return response?.ok === true
+}
+const attacher = createSupervisor({
+  config: {
+    enabled: true,
+    command: process.execPath,
+    args: ['-e', 'process.exit(1)'],
+    cwd: process.cwd(),
+    env: {},
+    restartDelayMs: 200,
+    maxRestarts: 0,
+    probeIntervalMs: 5000,
+    startTimeoutMs: 5000,
+    logPath: supervisorLog,
+  },
+  probe: attachedProbe,
+  logger: { info() {}, warn() {}, error() {} },
+})
+try {
+  const attachDeadline = Date.now() + 10000
+  while (!(await attachedProbe()) && Date.now() < attachDeadline) await delay(100)
+  const attached = attacher.attach(attachedChild.pid)
+  assert.equal(attached.state, 'running')
+  assert.equal(attached.attached, true)
+  assert.equal(attached.pid, attachedChild.pid)
+  const exited = new Promise(resolve => attachedChild.once('exit', resolve))
+  await attacher.stop()
+  await exited
+  assert.equal(attacher.snapshot().state, 'stopped')
+  assert.equal(attacher.snapshot().pid, null)
+  assert.equal(await attachedProbe(), false)
+} finally {
+  attachedChild.kill('SIGKILL')
+}
 
 // ── Panel-managed start/stop against a throwaway "ComfyUI" ─────────────────
 
