@@ -327,6 +327,11 @@ export function apply(ctx, rawConfig = {}) {
       prompt,
       semantic,
       signature,
+      // Which socket the embedded frontend is listening on. Execution events
+      // only reach the client that queued the prompt, so a run the model
+      // starts has to use the panel's id or it never shows up in the UI.
+      // Kept in memory only: it changes with the page, not with the workflow.
+      clientId: sanitizeClientId(body.clientId) ?? previous?.clientId ?? null,
       // The panel's counter restarts with the page while the Host may hold a
       // higher persisted revision; keep the descriptive revision monotonic.
       revision: changed
@@ -774,7 +779,10 @@ export function apply(ctx, rawConfig = {}) {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             prompt,
-            client_id: clientId,
+            // Queue as the panel's socket when it reported one: ComfyUI sends
+            // execution events only to that client, and without it the run
+            // never appears in the queue, preview, or history of the UI.
+            client_id: state.clientId ?? clientId,
             extra_data: { dsh_session_id: sessionId, dsh_workflow_revision: state.revision },
           }),
         })
@@ -1095,6 +1103,11 @@ function queryOf(requestUrl) {
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/** A ComfyUI socket id (hex uuid, or the panel's own), when it looks like one. */
+function sanitizeClientId(value) {
+  return typeof value === 'string' && /^[0-9a-z]{8,64}$/i.test(value) ? value : null
 }
 
 const SEED_CONTROLS = new Set(['fixed', 'randomize', 'increment', 'decrement'])

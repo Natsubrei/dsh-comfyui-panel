@@ -78,6 +78,11 @@ available, screenshot and click through the checklist instead.
 
 ## Gotchas
 
+- ComfyUI sends execution events only to the client that queued the prompt
+  (`server.client_id`). The panel reports the iframe's socket id with every
+  state sync and `comfyui_run` queues as that id; drop it and runs happen with
+  no queue entry, no node progress, no preview, and nothing in the history —
+  the image exists on disk and nowhere in the UI.
 - `/tmp` can be a small tmpfs (a few GB) on some machines. Multi-GB model
   downloads belong in the workspace (`.dl_parts/`) or `~/workspace/.tmp`; check
   `df` first.

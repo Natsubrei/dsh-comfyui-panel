@@ -141,6 +141,9 @@ const parse = value => JSON.parse(value.text)
 
 // ── Mock ComfyUI upstream ─────────────────────────────────────────────────
 
+/** Bodies the proxy forwarded to /prompt, newest last. */
+const queuedBodies = []
+
 const upstream = http.createServer((req, res) => {
   if (req.url === '/system_stats') {
     res.writeHead(200, { 'content-type': 'application/json' })
@@ -148,8 +151,14 @@ const upstream = http.createServer((req, res) => {
     return
   }
   if (req.url === '/prompt' && req.method === 'POST') {
-    req.resume()
+    const chunks = []
+    req.on('data', chunk => chunks.push(chunk))
     req.on('end', () => {
+      try {
+        queuedBodies.push(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+      } catch {
+        queuedBodies.push(null)
+      }
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ prompt_id: 'p1', number: 1, node_errors: {} }))
     })
@@ -270,6 +279,7 @@ const post = await host.fetches.get('/api/comfyui/state').fetch(new Request(
       workflow,
       prompt: { 7: { class_type: 'KSampler', inputs: {} }, 4: { class_type: 'UNETLoader', inputs: {} } },
       semantic,
+      clientId: '0f3c2b1a9d8e7f60',
     }),
   },
 ))
@@ -351,6 +361,25 @@ assert.equal('ds' in (readRaw.workflow.extra ?? {}), false, 'view state is strip
 
 const run = parse(await s1.tools.get('comfyui_run').execute({}, exec))
 assert.equal(run.prompt_id, 'p1')
+// Execution events only reach the client that queued the prompt, so a run the
+// model starts has to use the panel's socket or it is invisible in the UI.
+assert.equal(queuedBodies.at(-1)?.client_id, '0f3c2b1a9d8e7f60')
+
+// Without a reported socket the Host falls back to its own client id.
+{
+  const s3 = addAgent(host, 's3')
+  const posted = await host.fetches.get('/api/comfyui/state').fetch(new Request(
+    'http://127.0.0.1/api/comfyui/state?sessionId=s3',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 's3', revision: 1, workflow, prompt: {}, semantic }),
+    },
+  ))
+  assert.equal(posted.status, 200)
+  await s3.tools.get('comfyui_run').execute({}, execOf('s3'))
+  assert.match(queuedBodies.at(-1)?.client_id ?? '', /^dsh-comfyui-/)
+}
 const waited = parse(await s1.tools.get('comfyui_run').execute({ wait: true, timeoutMs: 3000 }, exec))
 assert.equal(waited.history.status.status_str, 'success')
 

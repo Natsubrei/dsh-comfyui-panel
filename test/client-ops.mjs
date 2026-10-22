@@ -208,4 +208,23 @@ const stopped = { health: false, owned: false, state: 'stopped', pid: null }
   assert.equal(failedBridge.label, `${en.barRunning} · ${en.error}`)
 }
 
+// The Host has to queue as the iframe's socket, or ComfyUI sends the run's
+// events to nobody the UI is listening to.
+{
+  const { frontendClientId } = mod.__ops
+  assert.equal(frontendClientId({ name: '0f3c2b1a9d8e7f60' }), '0f3c2b1a9d8e7f60')
+  assert.equal(
+    frontendClientId({ name: '', sessionStorage: { getItem: () => 'abcdef0123456789' } }),
+    'abcdef0123456789',
+    "falls back to the id ComfyUI's api kept in sessionStorage",
+  )
+  assert.equal(frontendClientId({ name: 'not a socket id' }), null)
+  assert.equal(frontendClientId(null), null)
+  assert.equal(
+    frontendClientId({ name: '', sessionStorage: { getItem() { throw new Error('blocked') } } }),
+    null,
+    'a blocked storage must not throw into the sync loop',
+  )
+}
+
 console.log('client ops test passed')

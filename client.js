@@ -400,6 +400,29 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * The client id the embedded ComfyUI frontend is connected with.
+     *
+     * ComfyUI addresses execution events to the client that queued the prompt
+     * (`server.send_sync(..., server.client_id)`), and its API stores the id
+     * the server assigned in `window.name` and `sessionStorage`. A Host-queued
+     * prompt has to carry the same id, or the run happens with no queue entry,
+     * no node progress, no preview, and nothing in the panel's history.
+     */
+    function frontendClientId(win) {
+      const usable = value => typeof value === 'string' && /^[0-9a-z]{8,64}$/i.test(value)
+      if (win === null || win === undefined) return null
+      try {
+        if (usable(win.name)) return win.name
+        const stored = win.sessionStorage?.getItem('clientId')
+        if (usable(stored)) return stored
+      } catch {
+        // Cross-origin iframe or blocked storage: the Host falls back to its
+        // own client id, and the run stays invisible to the UI.
+      }
+      return null
+    }
+
     function findNode(graph, id) {
       if (typeof graph.getNodeById === 'function') return graph.getNodeById(id)
       return graph._nodes_by_id?.[id] ?? (Array.isArray(graph._nodes) ? graph._nodes.find(node => node.id === id) : undefined)
@@ -549,6 +572,7 @@ window.__ModuleLoader__.load({
       const lastJsonRef = useRef('')
       const lastForcedAtRef = useRef(0)
       const revisionRef = useRef(0)
+      const lastClientIdRef = useRef(null)
       const [status, setStatus] = useState('loading')
       const [bootSeconds, setBootSeconds] = useState(0)
       const [stats, setStats] = useState({ nodes: 0, links: 0, revision: 0 })
@@ -625,6 +649,14 @@ window.__ModuleLoader__.load({
         if (graph === undefined || graph === null || typeof graph.serialize !== 'function') {
           throw new Error(t('bridgeUnavailable'))
         }
+        // ComfyUI addresses execution events to the client that queued the
+        // prompt, so the Host has to queue as this iframe or the run never
+        // appears in the panel's own queue, previews, or history.
+        const frameClient = frontendClientId()
+        if (frameClient !== lastClientIdRef.current) {
+          lastClientIdRef.current = frameClient
+          force = true
+        }
         const workflow = JSON.parse(JSON.stringify(graph.serialize()))
         // The frontend stamps `extra.ds` (zoom and pan) on every serialization,
         // so scrolling, zooming, or resizing the panel would otherwise look
@@ -662,7 +694,7 @@ window.__ModuleLoader__.load({
         const response = await fetch(`${STATE_URL}?sessionId=${encodeURIComponent(sessionId)}`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ sessionId, workflow, prompt, semantic, revision }),
+          body: JSON.stringify({ sessionId, workflow, prompt, semantic, revision, clientId: frameClient }),
         })
         if (!response.ok) throw new Error(`${t('syncFailed')} HTTP ${response.status}`)
         // The Host keeps the revision monotonic across page reloads, so adopt
@@ -1055,7 +1087,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale', 'sidebarRightTabs', 'sidebarRight'],
       // Pure editor operations, dictionaries and the top-bar rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, findNode, coerceWidgetValue, barPlan, en, zh },
+      __ops: { applyOperation, findNode, coerceWidgetValue, frontendClientId, barPlan, en, zh },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')
