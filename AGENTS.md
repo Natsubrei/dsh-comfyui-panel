@@ -56,13 +56,18 @@ for the version.
 2. The header digest should read `ComfyUI: rev … · N nodes · … · panel open.`
 3. The bar reads left to right: status label (`Running` / `Stopped` /
    `External` / `Starting…`), the lifecycle buttons that fit it (Start when
-   stopped, Stop + Restart when running and owned), the counters, then the
-   panel tools (`Sync`, `Reload`, open, gear). The gear opens settings only,
-   and settings hold configuration, not lifecycle buttons.
-4. Zoom, pan, and resize the panel; `rev` must not change. Edit a widget; it
-   must go up by exactly one.
-5. Queue one run; `comfyui_progress` should go `queued` → `running` → success.
-6. If the tab says "panel is not connected", the Host↔panel WebSocket did not
+   stopped, Stop + Restart when running and owned), the counters with the
+   last sync time, then the panel tools (fit, `Sync`, `Reload`, open, gear).
+   The gear opens settings only; settings hold configuration, not lifecycle
+   buttons.
+4. On first open the graph is framed in the canvas and the counter shows
+   `synced HH:MM`; while ComfyUI is stopped the canvas is replaced by
+   `ComfyUI is not running` and a Start button.
+5. Zoom, pan, and resize the panel; `rev` must not change. Edit a widget in the
+   editor or let the model do it; the revision goes up by exactly one and a
+   short toast names what changed.
+6. Queue one run; `comfyui_progress` should go `queued` → `running` → success.
+7. If the tab says "panel is not connected", the Host↔panel WebSocket did not
    re-admit. Reload the page before investigating plugin code.
 
 There is no browser tool in this profile, so ask the user to confirm the panel

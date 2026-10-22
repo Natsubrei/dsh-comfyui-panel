@@ -34,6 +34,11 @@ window.__ModuleLoader__.load({
       syncHint: 'Push the current graph to the model now',
       reload: 'Reload',
       reloadHint: 'Reload the embedded editor',
+      fitView: 'Fit the graph in view',
+      modelEdited: 'Model edit',
+      syncedAt: 'synced {{time}}',
+      syncPending: 'syncing…',
+      notRunning: 'ComfyUI is not running',
       open: 'Open in new tab',
       noSession: 'No session',
       stats: '{{nodes}} nodes · {{links}} links',
@@ -84,6 +89,11 @@ window.__ModuleLoader__.load({
       syncHint: '立即把当前工作流推给模型',
       reload: '重载',
       reloadHint: '重新加载内嵌编辑器',
+      fitView: '让整张图入画',
+      modelEdited: '模型修改',
+      syncedAt: '已同步 {{time}}',
+      syncPending: '同步中…',
+      notRunning: 'ComfyUI 未运行',
       open: '新标签打开',
       noSession: '无会话',
       stats: '{{nodes}} 个节点 · {{links}} 条连线',
@@ -213,6 +223,17 @@ window.__ModuleLoader__.load({
         background: var(--dsw-alias-bg-base);
         font-size: 13px;
       }
+      .dsh-comfyui-toast {
+        position: absolute; left: 50%; top: 10px; transform: translateX(-50%);
+        z-index: 2; max-width: calc(100% - 24px);
+        padding: 6px 12px; border-radius: 999px;
+        background: rgba(37, 99, 235, .94); color: #fff;
+        font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, .28);
+        pointer-events: none;
+      }
+      .dsh-comfyui-empty { flex-direction: column; gap: 10px; }
+      .dsh-comfyui-empty-title { color: var(--dsw-alias-label-primary); font-size: 13px; }
       .dsh-comfyui-spinner {
         width: 14px; height: 14px; border-radius: 50%;
         border: 2px solid var(--dsw-alias-border-l1);
@@ -338,10 +359,11 @@ window.__ModuleLoader__.load({
       return { tone, label, chipTitle, actions, healthy, owned }
     }
 
-    function TopBar({ stats, runText, plan, serviceOpen, onSync, onReload, onOpen, onService, onAction, t }) {
-      const statText = t('stats')
+    function TopBar({ stats, synced, runText, plan, serviceOpen, onSync, onReload, onFit, onOpen, onService, onAction, t }) {
+      const counts = t('stats')
         .replace('{{nodes}}', String(stats.nodes))
         .replace('{{links}}', String(stats.links))
+      const statText = [counts, synced].filter(part => part.length > 0).join(' · ')
       // The revision is bookkeeping for the Host and the model, not a number
       // a ComfyUI user can act on; keep it in the tooltip instead of the bar.
       const statTitle = t('statsTitle')
@@ -368,6 +390,13 @@ window.__ModuleLoader__.load({
         runText === '' ? null : h('span', { className: 'dsh-comfyui-run' }, runText),
         h('span', { className: 'dsh-comfyui-stats', title: statTitle }, statText),
         h('div', { className: 'dsh-comfyui-tools' },
+          h('button', {
+            className: 'dsh-comfyui-button dsh-comfyui-icon',
+            type: 'button',
+            title: t('fitView'),
+            'aria-label': t('fitView'),
+            onClick: onFit,
+          }, '\u2922'),
           h('button', { className: 'dsh-comfyui-button', type: 'button', title: t('syncHint'), onClick: onSync }, t('sync')),
           h('button', { className: 'dsh-comfyui-button', type: 'button', title: t('reloadHint'), onClick: onReload }, t('reload')),
           h('button', {
@@ -552,6 +581,61 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Outline the nodes a model edit touched for a moment. The highlight is a
+     * canvas overlay, not `node.color`, because node colors serialize and
+     * would turn a cosmetic flash into a workflow revision.
+     */
+    function flashNodes(app, ids) {
+      if (ids === undefined || ids.size === 0) return
+      const canvas = app.canvas
+      if (canvas === null || canvas === undefined || typeof canvas.setDirty !== 'function') return
+      const previous = canvas.onDrawForeground
+      const until = Date.now() + 1600
+      canvas.onDrawForeground = function drawEditHighlight(ctx, graph) {
+        if (typeof previous === 'function') previous.call(this, ctx, graph)
+        if (Date.now() > until) {
+          canvas.onDrawForeground = previous
+          return
+        }
+        const scale = this.ds?.scale ?? 1
+        ctx.save()
+        ctx.strokeStyle = 'rgba(96, 165, 250, .95)'
+        ctx.lineWidth = 3 / scale
+        for (const node of Array.isArray(graph?._nodes) ? graph._nodes : []) {
+          if (!ids.has(Number(node.id))) continue
+          const x = Number(node.pos?.[0])
+          const y = Number(node.pos?.[1])
+          const w = Number(node.size?.[0])
+          const h = Number(node.size?.[1])
+          if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)) continue
+          const pad = 5 / scale
+          ctx.strokeRect(x - pad, y - pad, w + pad * 2, h + pad * 2)
+        }
+        ctx.restore()
+        this.setDirty(true, false)
+      }
+      canvas.setDirty(true, true)
+    }
+
+    /** One short, human-readable line per model edit, for the panel toast. */
+    function describeOperation(operation, result) {
+      switch (operation?.op) {
+        case 'add_node':
+          return `+${result?.type ?? operation.type ?? '?'} #${result?.id ?? '?'}`
+        case 'remove_node':
+          return `-${operation.id}`
+        case 'set_widget':
+          return `#${operation.id}.${operation.name}=${JSON.stringify(operation.value)}`
+        case 'connect':
+          return `#${operation.from?.id}:${operation.from?.output}→#${operation.to?.id}.${operation.to?.input}`
+        case 'disconnect':
+          return `#${operation.to?.id}.${operation.to?.input} ×`
+        default:
+          return String(operation?.op ?? '?')
+      }
+    }
+
+    /**
      * Build the semantic projection from the live LiteGraph nodes, where widget
      * and input names are known. An input becomes `"<sourceNodeId>:<slot>"`,
      * matching what comfyui_edit's connect.from expects.
@@ -676,6 +760,8 @@ window.__ModuleLoader__.load({
       const [stats, setStats] = useState({ nodes: 0, links: 0, revision: 0 })
       const [message, setMessage] = useState('')
       const [run, setRun] = useState(null)
+      const [lastSyncAt, setLastSyncAt] = useState(0)
+      const [notice, setNotice] = useState(null)
       const eventRef = useRef({ pending: null, timer: null, sentAt: 0 })
       const syncRef = useRef(null)
       const reloadRef = useRef(null)
@@ -802,6 +888,7 @@ window.__ModuleLoader__.load({
         const persisted = Number.isSafeInteger(saved?.revision) ? saved.revision : revision
         revisionRef.current = Math.max(revisionRef.current, persisted)
         setStats({ nodes, links, revision: revisionRef.current })
+        setLastSyncAt(Date.now())
         // A fresh editor opens at ComfyUI's default camera, which leaves parts
         // of the graph off-screen; frame it once, unless the current view
         // already shows every node.
@@ -840,13 +927,21 @@ window.__ModuleLoader__.load({
         const graph = app.rootGraph ?? app.graph
         if (graph === undefined || graph === null || LiteGraph === undefined) throw new Error('ComfyUI graph is not ready')
         const applied = []
+        const touched = new Set()
+        const parts = []
         for (const operation of operations) {
-          applied.push(applyOperation({ graph, LiteGraph, app, operation }))
+          const result = applyOperation({ graph, LiteGraph, app, operation })
+          applied.push(result)
+          const ids = [operation?.id, result?.id, operation?.to?.id, operation?.from?.id]
+          for (const id of ids) if (Number.isSafeInteger(Number(id))) touched.add(Number(id))
+          parts.push(describeOperation(operation, result))
         }
         graph.setDirtyCanvas?.(true, true)
+        setNotice({ text: `${t('modelEdited')}: ${parts.join(' · ')}`, at: Date.now() })
+        flashNodes(app, touched)
         await syncNow(true)
         return { applied: applied.length, operations: applied }
-      }, [syncNow])
+      }, [syncNow, t])
 
       const commandRef = useRef(null)
       commandRef.current = applyOperations
@@ -1071,6 +1166,18 @@ window.__ModuleLoader__.load({
         return () => clearInterval(timer)
       }, [status])
 
+      // A model edit is announced once and fades; it is a glance, not a log.
+      useEffect(() => {
+        if (notice === null) return undefined
+        const timer = setTimeout(() => setNotice(null), 4500)
+        return () => clearTimeout(timer)
+      }, [notice])
+
+      const syncLabel = status === 'syncing'
+        ? t('syncPending')
+        : (lastSyncAt > 0
+            ? t('syncedAt').replace('{{time}}', new Date(lastSyncAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+            : '')
       let runText = ''
       if (run !== null) {
         if (run.status === 'queued') runText = t('queued')
@@ -1090,6 +1197,7 @@ window.__ModuleLoader__.load({
       // Lifecycle controls live in the bar; this form is configuration only, so
       // there is exactly one place that decides whether Start is clickable.
       const plan = barPlan({ status, service, busy: serviceBusy, dir: serviceCwd, bootSeconds, t })
+      const serviceStopped = service !== null && service.health === false && service.state !== 'starting'
       const dir = serviceCwd.trim()
       const notOwnedHint = plan.healthy && !plan.owned ? t('serverExternalHint') : ''
       const dirHint = !plan.healthy && dir === '' ? t('serverPick') : ''
@@ -1146,12 +1254,21 @@ window.__ModuleLoader__.load({
         h('style', null, CSS),
         h(TopBar, {
           stats,
+          synced: syncLabel,
           runText,
           plan,
           serviceOpen,
           t,
           onSync: () => { void syncRef.current?.(true) },
           onReload: reload,
+          onFit: () => {
+            const app = readApp()
+            if (app !== null) {
+              try {
+                fitCanvas(app)
+              } catch {}
+            }
+          },
           onOpen: open,
           onService: () => setServiceOpen(current => !current),
           onAction: action => { void serviceAction(action) },
@@ -1182,7 +1299,20 @@ window.__ModuleLoader__.load({
               h('span', { className: 'dsh-comfyui-spinner' }),
               h('span', null, bootSeconds > 0 ? `${t('editorLoading')} ${bootSeconds}s` : t('editorLoading')),
             )
-            : null,
+            : serviceStopped
+              ? h('div', { className: 'dsh-comfyui-overlay dsh-comfyui-empty' },
+                h('span', { className: 'dsh-comfyui-empty-title' }, t('notRunning')),
+                h('button', {
+                  className: 'dsh-comfyui-button',
+                  'data-variant': 'primary',
+                  type: 'button',
+                  disabled: serviceBusy || serviceCwd.trim() === '',
+                  title: serviceCwd.trim() === '' ? t('serverPick') : t('serverStart'),
+                  onClick: () => { void serviceAction('start') },
+                }, t('serverStart')),
+              )
+              : null,
+          notice === null ? null : h('div', { className: 'dsh-comfyui-toast' }, notice.text),
         ),
       )
     }
@@ -1209,7 +1339,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale', 'sidebarRightTabs', 'sidebarRight'],
       // Pure editor operations, dictionaries and the top-bar rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, findNode, coerceWidgetValue, frontendClientId, barPlan, projectGraph, fitCanvas, en, zh },
+      __ops: { applyOperation, findNode, coerceWidgetValue, frontendClientId, barPlan, projectGraph, fitCanvas, describeOperation, en, zh },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')

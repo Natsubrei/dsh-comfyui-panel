@@ -272,4 +272,18 @@ const stopped = { health: false, owned: false, state: 'stopped', pid: null }
   assert.equal(fitCanvas(makeApp(unlaid, { clientWidth: 0, clientHeight: 0 })), false, 'retry until laid out')
 }
 
+// The edit toast is the only place a user learns what the model changed, so
+// each operation has to render as a concrete, short sentence.
+{
+  const { describeOperation } = mod.__ops
+  assert.equal(describeOperation({ op: 'set_widget', id: 7, name: 'steps', value: 6 }), '#7.steps=6')
+  assert.equal(describeOperation({ op: 'add_node', type: 'KSampler' }, { id: 13, type: 'KSampler' }), '+KSampler #13')
+  assert.equal(describeOperation({ op: 'remove_node', id: 9 }), '-9')
+  assert.equal(
+    describeOperation({ op: 'connect', from: { id: 4, output: 0 }, to: { id: 7, input: 'model' } }),
+    '#4:0→#7.model',
+  )
+  assert.equal(describeOperation({ op: 'disconnect', to: { id: 7, input: 'model' } }), '#7.model ×')
+}
+
 console.log('client ops test passed')
