@@ -3,6 +3,13 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
+## Unreleased
+
+- Drop the session-header `ComfyUI` shortcut. The panel stays reachable from
+  the right sidebar: its guide lists every registered tab type, and the tab
+  is restored once opened. The header row keeps only DSH's own controls, so
+  the plugin no longer injects a button into a conversation's title bar.
+
 ## 0.6.6
 
 - Publish as **`dsh-comfyui-panel`** (MIT). The package was `@local/dsh-comfyui`,

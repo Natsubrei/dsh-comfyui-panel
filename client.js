@@ -1383,26 +1383,8 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function OpenButton({ open, t }) {
-      return h('button', {
-        type: 'button',
-        onClick: open,
-        title: t('description'),
-        style: {
-          height: '24px',
-          padding: '0 8px',
-          border: '1px solid var(--dsw-alias-border-l1)',
-          borderRadius: '6px',
-          background: 'transparent',
-          color: 'var(--dsw-alias-label-secondary)',
-          font: 'inherit',
-          cursor: 'pointer',
-        },
-      }, t('title'))
-    }
-
     return {
-      inject: ['slots', 'locale', 'sidebarRightTabs', 'sidebarRight'],
+      inject: ['slots', 'locale', 'sidebarRightTabs'],
       // Pure editor operations, dictionaries and the top-bar rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
       __ops: { applyOperation, findNode, coerceWidgetValue, frontendClientId, barPlan, projectGraph, fitCanvas, fitCanvasByBounds, viewShowsAll, describeOperation, en, zh },
@@ -1427,13 +1409,6 @@ window.__ModuleLoader__.load({
           locale: NS,
           inject: sessionId => ({ sessionId }),
         }, ComfyPanel)), 'dsh-comfyui: tab body')
-        ctx.effect(() => ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
-          name: 'conversation.session.header.actions',
-          id: 'dsh-comfyui-open',
-          order: 25,
-          locale: NS,
-          inject: () => ({ open: () => ctx.sidebarRight.openTab(TAB_KIND) }),
-        }, OpenButton)), 'dsh-comfyui: header action')
       },
     }
   },
