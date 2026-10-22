@@ -25,7 +25,7 @@ window.__ModuleLoader__.load({
 
     const en = {
       title: 'ComfyUI',
-      description: 'Open the real ComfyUI editor in a DSH panel. Edits sync to the Host and are available to the model.',
+      description: 'Open the real ComfyUI editor in the right sidebar. Edits sync to the Host and are available to the model.',
       loading: 'Starting ComfyUI…',
       ready: 'Connected',
       syncing: 'Syncing…',
@@ -80,7 +80,7 @@ window.__ModuleLoader__.load({
     }
     const zh = {
       title: 'ComfyUI',
-      description: '在 DSH 面板中打开真实的 ComfyUI 编辑器；改动会同步到 Host，模型可以直接读取和修改。',
+      description: '在右侧栏打开真实的 ComfyUI 编辑器；改动会同步到 Host，模型可以直接读取和修改。',
       loading: '正在启动 ComfyUI…',
       ready: '已连接',
       syncing: '同步中…',
@@ -140,14 +140,19 @@ window.__ModuleLoader__.load({
         font: 12px/1.4 var(--dsw-font-family, system-ui, sans-serif);
       }
       .dsh-comfyui-bar {
-        display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-        min-height: 34px; padding: 4px 10px;
+        /* The ComfyUI editor brings its own 40 px toolbar right below this
+           one; keeping ours to one 26 px line leaves the graph the space. */
+        display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+        min-height: 26px; padding: 1px 8px;
+        font-size: 11px; line-height: 18px;
         border-bottom: 1px solid var(--dsw-alias-border-l1);
         background: var(--dsw-alias-bg-layer-1);
         flex: 0 0 auto;
       }
+      .dsh-comfyui-bar .dsh-comfyui-button { height: 20px; padding: 0 6px; }
+      .dsh-comfyui-bar .dsh-comfyui-icon { width: 22px; }
       .dsh-comfyui-dot {
-        width: 8px; height: 8px; border-radius: 50%;
+        width: 7px; height: 7px; border-radius: 50%;
         background: var(--dsw-alias-state-idle-primary);
         flex: 0 0 auto;
       }
@@ -184,7 +189,7 @@ window.__ModuleLoader__.load({
         border-left: 1px solid var(--dsw-alias-border-l1);
       }
       .dsh-comfyui-button {
-        height: 24px; padding: 0 8px; border-radius: 6px; cursor: pointer;
+        height: 22px; padding: 0 7px; border-radius: 5px; cursor: pointer;
         flex: 0 0 auto;
         border: 1px solid var(--dsw-alias-border-l1);
         background: transparent; color: var(--dsw-alias-label-secondary);
@@ -204,7 +209,7 @@ window.__ModuleLoader__.load({
         color: var(--dsw-alias-label-primary-foreground);
       }
       .dsh-comfyui-icon {
-        width: 26px; padding: 0;
+        width: 24px; padding: 0;
         display: inline-flex; align-items: center; justify-content: center;
       }
       .dsh-comfyui-icon[data-active="true"] {
