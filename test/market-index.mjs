@@ -71,9 +71,18 @@ if (!existsSync(join(ROOT, 'market/index.json'))) {
   }
 
   if (failures.length === 0 && existsSync(DSH_VALIDATOR)) {
-    const { parseMarketIndex } = await import(pathToFileURL(DSH_VALIDATOR).href)
+    const { parseMarketIndex, marketInstallTarget } = await import(pathToFileURL(DSH_VALIDATOR).href)
     try {
-      parseMarketIndex(index, INDEX_URL)
+      const parsed = parseMarketIndex(index, INDEX_URL)
+      // The spec the market hands the installer, not just the JSON: a version
+      // whose entry cannot be turned into an install spec is not installable.
+      const target = marketInstallTarget(parsed.plugins[0].name, parsed.plugins[0].versions[0])
+      if (!target.spec.startsWith('git+https://github.com/')) {
+        fail(`market install spec is not a git URL: ${target.spec}`)
+      }
+      if (!target.spec.includes(`#${String(parsed.plugins[0].versions[0].source.commit)}`)) {
+        fail(`market install spec does not pin the commit: ${target.spec}`)
+      }
     } catch (error) {
       fail(`DSH validator: ${error instanceof Error ? error.message : String(error)}`)
     }
