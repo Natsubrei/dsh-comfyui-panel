@@ -26,10 +26,10 @@ function fail(message) {
   failures.push(message)
 }
 
-/** @param {string} args - one git command. @returns {string} trimmed stdout, or `''` when git cannot answer. */
+/** @param {string[]} args - one git command. @returns {string} trimmed stdout, or `''` when git cannot answer. */
 function git(args) {
   try {
-    return execFileSync('git', args.split(' '), { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
   } catch {
     return ''
   }
