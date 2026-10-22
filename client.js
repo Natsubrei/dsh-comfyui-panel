@@ -1173,11 +1173,13 @@ window.__ModuleLoader__.load({
         return () => clearTimeout(timer)
       }, [notice])
 
+      // Fixed 24-hour HH:MM: `toLocaleTimeString` can grow "12:59 PM" or a
+      // localized 上午/下午 marker and wrap a narrow bar.
+      const syncTime = new Date(lastSyncAt)
+      const syncClock = `${String(syncTime.getHours()).padStart(2, '0')}:${String(syncTime.getMinutes()).padStart(2, '0')}`
       const syncLabel = status === 'syncing'
         ? t('syncPending')
-        : (lastSyncAt > 0
-            ? t('syncedAt').replace('{{time}}', new Date(lastSyncAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
-            : '')
+        : (lastSyncAt > 0 ? t('syncedAt').replace('{{time}}', syncClock) : '')
       let runText = ''
       if (run !== null) {
         if (run.status === 'queued') runText = t('queued')
