@@ -38,6 +38,27 @@ export const DOM = {
 const TAB_TITLE = 'ComfyUI'
 
 /**
+ * Poll an expression until it answers with a point.
+ *
+ * `Browser.waitFor` turns any object into `true` on purpose: a live object
+ * cannot cross the DevTools protocol. A freshly built `{ x, y }` can, and the
+ * click needs the numbers, so coordinate waits go through here instead.
+ * @param browser - the driver.
+ * @param expression - an expression evaluating to `{x, y}`, or null while there is nothing to click.
+ * @param options - `label` for the timeout message, `timeout` in milliseconds.
+ * @returns the point that was found.
+ */
+async function waitForPoint(browser, expression, { label, timeout = 15_000 }) {
+  const deadline = Date.now() + timeout
+  for (;;) {
+    const point = await browser.evaluate(expression)
+    if (point !== null && point !== undefined) return point
+    if (Date.now() > deadline) throw new Error(`timed out after ${String(timeout)} ms waiting for ${label}`)
+    await sleep(150)
+  }
+}
+
+/**
  * JavaScript that resolves to the embedded editor's `app`, or `null` while the
  * ComfyUI frontend is still booting.
  */
@@ -157,7 +178,7 @@ export async function openPanel(browser, { timeout = 90_000, scratch = true } = 
   if (await browser.evaluate(`document.querySelector('${DOM.expand}') !== null`)) {
     await browser.click(DOM.expand)
   }
-  const entry = await browser.waitFor(`(() => {
+  const entry = await waitForPoint(browser, `(() => {
     const found = [...document.querySelectorAll('${DOM.guide}, ${DOM.tab}')]
       .find(element => element.textContent.includes(${JSON.stringify(TAB_TITLE)}))
     if (!found) return null
@@ -347,6 +368,22 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
       `${edit.name || 'widget'} on #${edit.id} ${String(edit.from)} → ${String(edit.from + 1)}, rev ${String(afterZoom.revision)} → ${String(afterEdit.revision)}`)
     await shoot('04-edited.png')
   }
+
+  // The panel reads execution events from the editor's own event bus, not from
+  // a socket of its own, and nothing else exercises that relay: a real run
+  // needs a prompt and a GPU. Dispatching on the editor's api is exactly what
+  // its socket handler does with a message from ComfyUI.
+  const dispatched = await browser.evaluate(`(() => {
+    const win = document.querySelector('${DOM.frame}')?.contentWindow
+    const api = win?.comfyAPI?.app?.app?.api
+    if (typeof api?.dispatchCustomEvent !== 'function') return false
+    api.dispatchCustomEvent('progress', { prompt_id: 'ui-check-probe', node: '1', value: 3, max: 7 })
+    return true
+  })()`)
+  await sleep(700)
+  const runText = await browser.evaluate(`document.querySelector('.dsh-comfyui-run')?.textContent ?? ''`)
+  record('editor events reach the bar', dispatched && runText.includes('3/7'),
+    runText === '' ? 'the bar never showed the dispatched run' : runText)
 
   // Fit goes through ComfyUI's own command, which frames the selection when
   // one exists and the whole graph otherwise; either way the camera changes.

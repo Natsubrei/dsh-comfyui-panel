@@ -34,6 +34,7 @@ check says so when it sees a URL without `?token=…`.
 | counters match the editor | the projection describes the graph on screen |
 | zooming does not count as an edit | the viewport must not bump the revision |
 | a widget edit bumps the revision once | real edits still do, exactly once |
+| editor events reach the bar | execution events relayed from the editor's bus actually arrive |
 | Fit frames the graph | the Fit button goes through ComfyUI's own command |
 | no errors from the panel | no exception or unnamed console error during the run |
 
