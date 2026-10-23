@@ -3,6 +3,19 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
+## Unreleased
+
+- An edit whose tool call timed out is no longer replayed: `comfyui_edit`
+  removes it from the queue when it gives up, and a poll discards any command
+  older than 60 s. A panel that reconnected later used to apply the edit with
+  no tool call left to own the result.
+- `increment` and `decrement` now continue from the seed the previous run used.
+  The panel keeps showing its own seed, so every tool-driven run started from
+  the same number and quietly reproduced the image.
+- A sync that a newer one has superseded is dropped before it is posted, so two
+  overlapping pushes cannot leave the Host holding the older graph under the
+  higher revision until the next forced sync 30 s later.
+
 ## 0.6.7
 
 - Fix `comfyui_run` queueing with a client id no socket owned, which put a

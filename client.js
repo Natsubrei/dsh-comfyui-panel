@@ -968,6 +968,8 @@ window.__ModuleLoader__.load({
       const revisionRef = useRef(0)
       const lastClientIdRef = useRef(null)
       const fittedRef = useRef(false)
+      /** Bumped by every push; a slower one must not overtake a newer snapshot. */
+      const pushGenRef = useRef(0)
       const [status, setStatus] = useState('loading')
       const [bootSeconds, setBootSeconds] = useState(0)
       const [stats, setStats] = useState({ nodes: 0, links: 0, revision: 0 })
@@ -1047,6 +1049,7 @@ window.__ModuleLoader__.load({
 
       const push = useCallback(async (app, force = false) => {
         if (sessionId === undefined || sessionId === null) return
+        const generation = ++pushGenRef.current
         const graph = app.rootGraph ?? app.graph
         if (graph === undefined || graph === null || typeof graph.serialize !== 'function') {
           throw new Error(t('bridgeUnavailable'))
@@ -1091,6 +1094,12 @@ window.__ModuleLoader__.load({
           // A graph that cannot be converted yet (missing links, empty graph)
           // still syncs; the run tool will report the missing prompt.
         }
+        // A newer push started while this one was converting the graph. Its
+        // snapshot is later than ours, so posting this one would make the Host
+        // store an older workflow under a higher revision — and nothing would
+        // correct it, because `lastJsonRef` already holds the newer json and the
+        // next tick sees no change.
+        if (generation !== pushGenRef.current) return
         revisionRef.current += 1
         const revision = revisionRef.current
         const nodes = Array.isArray(workflow.nodes) ? workflow.nodes.length : 0

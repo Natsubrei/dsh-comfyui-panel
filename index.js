@@ -43,6 +43,8 @@ export function apply(ctx, rawConfig = {}) {
   const progress = new Map()
   /** sessionId -> { queue: command[], waiters: waiter[], lastPollAt } */
   const commandQueues = new Map()
+  /** sessionId -> Map<nodeId, { from, used }>: how far increment/decrement walked past the seed the editor shows */
+  const seedCursors = new Map()
   /** command id -> { resolve, timer } while comfyui_edit waits for the panel */
   const pendingCommands = new Map()
   /** sessionId -> disposer of the tools + digest registered on that session's Agent */
@@ -528,6 +530,22 @@ export function apply(ctx, rawConfig = {}) {
     else state.queue.push(command)
   }
 
+  /**
+   * Drop a command the panel never picked up.
+   *
+   * A tool that has already failed must not reach the editor later: the panel
+   * can reconnect minutes after `comfyui_edit` reported that it never answered,
+   * and applying the edit then would change a graph the model no longer
+   * believes it touched — with the result discarded, because the waiter is
+   * gone. The queue and the tool call have to expire together.
+   */
+  function dropCommand(sessionId, id) {
+    const state = commandQueues.get(sessionId)
+    if (state === undefined) return
+    const index = state.queue.findIndex(command => command.id === id)
+    if (index !== -1) state.queue.splice(index, 1)
+  }
+
   async function bridgeCommandPoll(request) {
     let body
     try {
@@ -540,7 +558,10 @@ export function apply(ctx, rawConfig = {}) {
     const timeoutMs = clamp(Number.isFinite(body?.timeoutMs) ? body.timeoutMs : 20000, 1000, 25000)
     const state = commandState(sessionId)
     state.lastPollAt = Date.now()
-    if (state.queue.length > 0) return json({ ok: true, command: state.queue.shift() })
+    // `takeCommand` skips anything the tool has given up on, so a panel that
+    // polls after a timeout gets nothing instead of a stale edit.
+    const live = takeCommand(state.queue)
+    if (live !== null) return json({ ok: true, command: live })
     return new Promise(resolve => {
       let settled = false
       const finish = value => {
@@ -770,7 +791,7 @@ export function apply(ctx, rawConfig = {}) {
   function runTool(sessionId) {
     return {
       name: 'comfyui_run',
-      description: 'Queue the workflow synced in this session, honouring each seed widget\'s control-after-generate (randomize/increment/decrement). Returns the prompt id; set wait=true to poll /history until it settles.',
+      description: 'Queue the workflow synced in this session, honouring each seed widget\'s control-after-generate (randomize/increment/decrement). Returns the prompt id and the seed values used; increment and decrement continue from the previous run even though the editor keeps showing its own seed. Set wait=true to poll /history until it settles.',
       parameters: {
         type: 'object',
         properties: {
@@ -784,7 +805,12 @@ export function apply(ctx, rawConfig = {}) {
         const state = sessions.get(sessionId)
         if (state === undefined) throw new Error('No ComfyUI workflow has synced in this session. Open the ComfyUI tab in this session first.')
         if (state.prompt === null) throw new Error('The synced workflow has no API prompt yet. Wait for the ComfyUI panel to finish syncing.')
-        const { prompt, seeds } = applySeedControls(state.workflow, state.prompt)
+        // The panel keeps showing the seed it had, so an `increment` would walk
+        // from the same number on every run and reproduce the image. The cursor
+        // carries where the previous runs left off; compute on a copy so a
+        // prompt ComfyUI rejects does not advance it.
+        const cursor = new Map(seedCursors.get(sessionId) ?? [])
+        const { prompt, seeds } = applySeedControls(state.workflow, state.prompt, Math.random, cursor)
         const response = await fetchJson('/prompt', 15000, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -802,6 +828,8 @@ export function apply(ctx, rawConfig = {}) {
         }
         const promptId = response.data?.prompt_id
         if (typeof promptId !== 'string') throw new Error(`ComfyUI returned no prompt_id: ${JSON.stringify(response.data)}`)
+        // Only a queued prompt moves the seed walk forward.
+        if (cursor.size > 0) seedCursors.set(sessionId, cursor)
         if (args?.wait !== true) {
           return { text: JSON.stringify({ prompt_id: promptId, queued: true, sessionId, revision: state.revision, seeds }, null, 2) }
         }
@@ -920,6 +948,8 @@ export function apply(ctx, rawConfig = {}) {
         const answer = await new Promise((resolve, reject) => {
           const timer = setTimeout(() => {
             pendingCommands.delete(id)
+            // The tool call is over; the command must not outlive it.
+            dropCommand(sessionId, id)
             reject(new Error('The ComfyUI panel did not answer the edit in time. It may be reloading.'))
           }, 45000)
           pendingCommands.set(id, { resolve, timer })
@@ -970,6 +1000,7 @@ export function apply(ctx, rawConfig = {}) {
         const answer = await new Promise((resolve, reject) => {
           const timer = setTimeout(() => {
             pendingCommands.delete(id)
+            dropCommand(sessionId, id)
             reject(new Error('The ComfyUI panel did not answer the screenshot in time. It may be reloading.'))
           }, 30000)
           pendingCommands.set(id, { resolve, timer })
@@ -1127,6 +1158,30 @@ export function apply(ctx, rawConfig = {}) {
   }
 }
 
+/** How long a queued command may wait for a panel before it is dropped. */
+const COMMAND_TTL_MS = 60_000
+
+/**
+ * Take the next command a panel can still act on.
+ *
+ * The queue is read through this rather than shifted directly because a command
+ * whose tool call has already failed must not be applied later: a panel that
+ * reconnects minutes afterwards would change the user's graph for an edit the
+ * model reported as never delivered, and the result would be discarded.
+ *
+ * @param queue - commands in arrival order, each stamped with `at`.
+ * @param now - current time; injectable so the expiry is testable.
+ * @returns the oldest live command, or `null` when every one has expired.
+ */
+export function takeCommand(queue, now = Date.now()) {
+  while (queue.length > 0) {
+    const command = queue.shift()
+    const at = Number.isFinite(command?.at) ? command.at : now
+    if (now - at <= COMMAND_TTL_MS) return command
+  }
+  return null
+}
+
 function normalizeConfig(raw) {
   const upstream = new URL(raw?.upstream ?? 'http://127.0.0.1:8188')
   if (upstream.protocol !== 'http:' && upstream.protocol !== 'https:') {
@@ -1194,10 +1249,18 @@ const SEED_CONTROLS = new Set(['fixed', 'randomize', 'increment', 'decrement'])
  * Without this, a run driven by `comfyui_run` would quietly reproduce the last
  * image even though the workflow says "randomize".
  *
+ * `increment` and `decrement` need one more thing the editor cannot give us:
+ * after its own run the frontend advances the widget, so the next value is one
+ * past the last seed *used*. The panel is canonical and keeps showing the old
+ * number, so `cursor` remembers how far this session has walked past it; a seed
+ * the user has edited since (the widget no longer matches what the walk started
+ * from) becomes the new base.
+ *
  * Returns a fresh prompt (the stored state is shared) plus the seeds used, so
- * the run result stays reproducible.
+ * the run result stays reproducible. A `cursor` is updated in place: pass a
+ * copy when the run may still be rejected.
  */
-export function applySeedControls(workflow, prompt, random = Math.random) {
+export function applySeedControls(workflow, prompt, random = Math.random, cursor = null) {
   const nodes = Array.isArray(workflow?.nodes) ? workflow.nodes : []
   const controlOf = new Map()
   for (const node of nodes) {
@@ -1223,8 +1286,12 @@ export function applySeedControls(workflow, prompt, random = Math.random) {
     const current = node.inputs[field]
     let value
     if (control === 'randomize') value = Math.floor(random() * 2 ** 48)
-    else if (control === 'increment') value = current + 1
-    else value = Math.max(0, current - 1)
+    else {
+      const previous = cursor?.get(id)
+      const base = previous !== undefined && previous.from === current ? previous.used : current
+      value = control === 'increment' ? base + 1 : Math.max(0, base - 1)
+    }
+    cursor?.set(id, { from: current, used: value })
     next[id] = { ...node, inputs: { ...node.inputs, [field]: value } }
     seeds[id] = { field, value }
   }

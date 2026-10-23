@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { apply, applySeedControls } from '../index.js'
+import { apply, applySeedControls, takeCommand } from '../index.js'
 import { createSupervisor } from '../supervisor.js'
 
 const UPSTREAM_PORT = 18188
@@ -525,6 +525,17 @@ assert.equal(edited.links, 1)
   await assert.rejects(badPromise, /did not return a PNG/)
 }
 
+// A command whose tool call has already failed must not be replayed when the
+// panel comes back later: the graph would change and no tool call would own it.
+{
+  const now = Date.now()
+  const queue = [{ id: 'stale', at: now - 120_000 }, { id: 'fresh', at: now - 5_000 }]
+  assert.equal(takeCommand(queue, now).id, 'fresh', 'the expired command is skipped, not returned after it')
+  assert.equal(queue.length, 0, 'skipping discards it: a later poll must not revive it')
+  assert.equal(takeCommand([{ id: 'stale', at: now - 61_000 }], now), null)
+  assert.equal(takeCommand([], now), null)
+}
+
 // An older panel (or a record persisted before projections) still reads:
 // widgets are positional, but links resolve to their source.
 const legacyPost = await host.fetches.get('/api/comfyui/state').fetch(new Request(
@@ -849,6 +860,17 @@ assert.throws(
   assert.equal(stored[7].inputs.seed, 42, 'the stored prompt must not be mutated')
   // Nothing to do when no node asks for a control.
   assert.equal(applySeedControls({ nodes: [{ id: 7, widgets_values: [1, 2] }] }, stored).prompt, stored)
+
+  // The editor keeps showing its own seed, so increment/decrement have to walk
+  // from what the previous run used, or every run starts from the same number.
+  const cursor = new Map()
+  assert.equal(applySeedControls(workflow, stored, () => 0.5, cursor).seeds[8].value, 6)
+  assert.equal(applySeedControls(workflow, stored, () => 0.5, cursor).seeds[8].value, 7, 'a second increment continues past the first')
+  assert.equal(applySeedControls(workflow, stored, () => 0.5, cursor).seeds[8].value, 8)
+  assert.equal(applySeedControls(workflow, stored, () => 0.5, cursor).seeds[9].value, 6, 'decrement walks down the same way')
+  // A seed the user edited since is the new base, not the remembered one.
+  const edited = { ...stored, 8: { ...stored[8], inputs: { noise_seed: 100 } } }
+  assert.equal(applySeedControls(workflow, edited, () => 0.5, cursor).seeds[8].value, 101)
 }
 
 host.dispose()
