@@ -3,7 +3,7 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
-## Unreleased
+## 0.6.9
 
 - The state summary — and with it `comfyui_status` — now says whether the panel
   has reported the editor's socket id (`clientIdKnown`). That id is what a run
@@ -28,6 +28,11 @@ truth, and every release is pinned by a commit in `market/index.json`.
   over neither the launch address nor a working browser, and `AGENTS.md` lost
   the one paragraph the tools already enforce and gained the client-bundle
   caveat a directory rename runs into.
+- The docs describe the plugin that exists: the README no longer claims a
+  ComfyUI WebSocket of the panel's own, the pre-commit hook is not credited with
+  `npm run contract`, `AGENTS.md` marks only what `npm run ui` actually asserts,
+  and `test/ui/README.md` stops promising that the panel starts a stopped
+  ComfyUI by itself.
 
 ## 0.6.8
 
