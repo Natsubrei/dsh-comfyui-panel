@@ -3,6 +3,18 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
+## 0.6.10
+
+- Unloading the plugin no longer stops a ComfyUI it *adopted* — a server that
+  was already running when the plugin loaded, or the plugin's own child from
+  before a Host crash. Only a child spawned in this plugin lifetime is stopped.
+  The previous code killed any process it had attached to, including one the
+  user started by hand, which contradicted the comment above the unload hook.
+- A supervisor that spawns a replacement for an adopted pid marks it owned
+  again, so the next unload does stop that child.
+- The README's limits now say what happens to an adopted server instead of
+  leaving the unload behaviour to be discovered.
+
 ## 0.6.9
 
 - The state summary — and with it `comfyui_status` — now says whether the panel

@@ -89,6 +89,23 @@ export function planFromSettings(settings, upstream) {
 }
 
 /**
+ * Whether unloading the plugin may stop this process.
+ *
+ * Only a child this supervisor spawned qualifies. An adopted pid belongs to
+ * whoever launched it — the plugin closed its handle to its own survivor after
+ * a reload, and cannot tell that survivor from a server the user started by
+ * hand — so unloading leaves it running and the panel's Stop stays the only
+ * way to end it.
+ *
+ * @param {object | undefined} snapshot - supervisor snapshot, if there is one.
+ * @returns {boolean} true when the process is the plugin's to stop.
+ */
+export function stopsOnUnload(snapshot) {
+  if (snapshot === undefined || snapshot.attached === true) return false
+  return snapshot.state !== 'external' && snapshot.state !== 'stopped' && snapshot.state !== 'failed'
+}
+
+/**
  * The pid listening on `port`, or null when the platform will not name it.
  * `ss` is Linux's; `lsof` covers macOS and everything else.
  */
@@ -252,12 +269,15 @@ export function createServiceController({ upstream, config, probe, logger }) {
       supervisor = null
       return this.start()
     },
-    /** Stop an owned child on plugin unload. */
+    /**
+     * Stop a child on plugin unload. An adopted server keeps running: the
+     * plugin did not spawn it, and a reload cannot tell its own survivor from
+     * a server the user launched, so unloading leaves both alone.
+     */
     async shutdown() {
       const snap = supervisor?.snapshot()
-      if (snap !== undefined && snap.state !== 'external' && snap.state !== 'stopped' && snap.state !== 'failed') {
-        await supervisor.stop().catch(() => {})
-      }
+      if (supervisor === null || supervisor === undefined || !stopsOnUnload(snap)) return
+      await supervisor.stop().catch(() => {})
     },
   }
 }

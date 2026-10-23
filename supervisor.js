@@ -196,6 +196,9 @@ export function createSupervisor({ config, probe, logger }) {
     }
     if (log !== null) closeSync(log)
     child = proc
+    // A spawned child is owned again, even when the pid it replaces was only
+    // adopted: unload must stop what this plugin started, and nothing else.
+    status.attached = false
     status.pid = proc.pid ?? null
     status.state = 'starting'
     logger?.info(`dsh-comfyui: started ComfyUI pid ${proc.pid} (log ${logPath})`)

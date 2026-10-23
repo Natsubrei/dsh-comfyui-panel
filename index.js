@@ -65,7 +65,8 @@ export function apply(ctx, rawConfig = {}) {
   ctx.logger?.info(`dsh-comfyui: upstream ${upstream.href}, panel ${prefix}/`)
 
   // A `supervise` config, when present, starts ComfyUI at boot; otherwise the
-  // panel decides. Unloading the plugin stops only a process it started.
+  // panel decides. Unloading stops a child this plugin spawned; a ComfyUI it
+  // only adopted is left running.
   ctx.effect(() => {
     if (config.supervise.enabled) {
       void service.start().catch(error => ctx.logger?.warn(`dsh-comfyui: could not start ComfyUI: ${String(error)}`))

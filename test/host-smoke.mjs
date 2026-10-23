@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply, applySeedControls, takeCommand } from '../index.js'
 import { createSupervisor } from '../supervisor.js'
+import { stopsOnUnload } from '../service.js'
 
 const UPSTREAM_PORT = 18188
 const PROXY_PORT = 18189
@@ -767,6 +768,9 @@ try {
   assert.equal(attached.state, 'running')
   assert.equal(attached.attached, true)
   assert.equal(attached.pid, attachedChild.pid)
+  // Unloading the plugin must not signal a process it adopted: only a child it
+  // spawned is the plugin's to stop.
+  assert.equal(stopsOnUnload(attacher.snapshot()), false, 'an adopted server survives unload')
   const exited = new Promise(resolve => attachedChild.once('exit', resolve))
   await attacher.stop()
   await exited
@@ -776,6 +780,16 @@ try {
 } finally {
   attachedChild.kill('SIGKILL')
 }
+
+// Only a spawned child is the plugin's to stop on unload. An adopted pid is
+// somebody else's process, and the snapshot has to say so for every state.
+assert.equal(stopsOnUnload({ state: 'running', attached: true }), false, 'adopted')
+assert.equal(stopsOnUnload({ state: 'running', attached: false }), true, 'spawned child')
+assert.equal(stopsOnUnload({ state: 'starting', attached: false }), true, 'child still booting')
+assert.equal(stopsOnUnload({ state: 'external', attached: false }), false, 'unmanaged upstream')
+assert.equal(stopsOnUnload({ state: 'stopped', attached: false }), false, 'already stopped')
+assert.equal(stopsOnUnload({ state: 'failed', attached: false }), false, 'failed to start')
+assert.equal(stopsOnUnload(undefined), false, 'no supervisor at all')
 
 // ── Panel-managed start/stop against a throwaway "ComfyUI" ─────────────────
 

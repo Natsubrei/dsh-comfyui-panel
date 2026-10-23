@@ -139,7 +139,7 @@ takes precedence at start-up:
 load instead of silently never starting ComfyUI. `command` defaults to
 `python3`, `args` to `main.py --listen 127.0.0.1`. An upstream that already
 answers `/system_stats` is adopted (`state: external`) rather than duplicated.
-Stopping the plugin stops only a process it started.
+Unloading the plugin stops only a process it started.
 
 ## Requirements
 
@@ -223,11 +223,17 @@ than 16 pixels (exit code 2 when any do). Use it to judge a layout file, or
 - Execution events are relayed from the editor's own bus, so progress and errors
   exist only while the panel is mounted; a run started before the panel opened
   shows its queue entry but no step progress.
+- A ComfyUI the plugin only adopted stays running when the plugin unloads: it did
+  not start that process, and after a reload it cannot tell its own survivor from
+  a server you launched by hand. Stop it from the panel first if you want it
+  gone; a child the plugin spawned is stopped on unload.
 - The process manager cannot distinguish a hung ComfyUI from one doing a long
   generation that stops answering `/system_stats`; health restarts should be
   tuned per workload.
-- A process started outside the plugin is adopted but never stopped by it: the
-  panel hides Stop/Restart for that case.
+- An upstream the plugin cannot adopt — a pid it cannot name, or one running
+  from a different directory — stays `external`: the plugin never stops it and
+  the panel hides Stop/Restart. One it can adopt gets those buttons, but keeps
+  running when the plugin unloads (previous bullet).
 
 ## Design notes
 
