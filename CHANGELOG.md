@@ -5,6 +5,11 @@ truth, and every release is pinned by a commit in `market/index.json`.
 
 ## Unreleased
 
+- Read execution events from the editor's own event bus instead of opening a
+  ComfyUI WebSocket of the panel's own. That socket never received anything but
+  `status` broadcasts — no prompt queues under its id — so the run record, the
+  digest's run segment, `comfyui_progress` and the completion shown in the bar
+  all stayed empty while the editor itself ran fine.
 - An edit whose tool call timed out is no longer replayed: `comfyui_edit`
   removes it from the queue when it gives up, and a poll discards any command
   older than 60 s. A panel that reconnected later used to apply the edit with

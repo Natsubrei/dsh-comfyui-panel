@@ -539,41 +539,93 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** Event kinds the editor's bus dispatches that the Host records. */
+    const PANEL_EVENTS = [
+      'status',
+      'execution_start',
+      'execution_cached',
+      'executing',
+      'progress',
+      'executed',
+      'execution_success',
+      'execution_error',
+      'execution_interrupted',
+    ]
+
     /**
-     * Reduce a ComfyUI WebSocket message to the small event shape the Host
-     * stores. Messages the Host does not need (binary previews, node-specific
-     * payloads) return null.
+     * Reduce one event the editor's own bus delivered to the shape the Host
+     * stores.
+     *
+     * The frontend dispatches these from the `api` object behind the iframe's
+     * WebSocket, so the panel can read the same events the editor renders
+     * instead of opening a socket of its own. The payload is not uniform:
+     * `executing` carries only the node id, `status` only the queue state, and
+     * everything else the raw message body. Kinds the Host does not track
+     * return null.
      */
-    function mapComfyEvent(message) {
-      const type = message?.type
-      const data = message?.data !== null && typeof message?.data === 'object' ? message.data : {}
+    function mapApiEvent(kind, detail) {
+      const data = detail !== null && typeof detail === 'object' ? detail : {}
       const promptId = typeof data.prompt_id === 'string' ? data.prompt_id : null
       const node = typeof data.node === 'string' ? data.node : null
-      switch (type) {
+      switch (kind) {
         case 'status':
-          return { kind: 'status', queueRemaining: data?.status?.exec_info?.queue_remaining ?? null }
-        case 'execution_start':
-        case 'execution_cached':
-        case 'execution_success':
-          return { kind: type, promptId }
+          return { kind, queueRemaining: data?.exec_info?.queue_remaining ?? null }
         case 'executing':
-          return { kind: type, promptId, node }
+          return { kind, promptId, node: typeof detail === 'string' ? detail : node }
         case 'progress':
-          return { kind: type, promptId, node, value: data.value ?? null, max: data.max ?? null }
+          return { kind, promptId, node, value: data.value ?? null, max: data.max ?? null }
         case 'executed':
-          return { kind: type, promptId, node }
+          return { kind, promptId, node }
         case 'execution_error':
           return {
-            kind: type,
+            kind,
             promptId,
             error: typeof data.exception_message === 'string'
               ? data.exception_message
               : (typeof data.exception_type === 'string' ? data.exception_type : 'execution error'),
           }
+        case 'execution_start':
+        case 'execution_cached':
+        case 'execution_success':
         case 'execution_interrupted':
-          return { kind: type, promptId }
+          return { kind, promptId }
         default:
           return null
+      }
+    }
+
+    /**
+     * Start relaying one editor api's execution events to the panel.
+     *
+     * Returns a disposer that removes every listener again. Kept apart from the
+     * effect so the wiring itself — every kind subscribed, the payload mapped,
+     * both sinks fed, nothing left behind — is testable without a DOM.
+     */
+    function relayEditorEvents(api, { applyEvent, postEvent }) {
+      const listeners = []
+      for (const kind of PANEL_EVENTS) {
+        const listener = event => {
+          const mapped = mapApiEvent(kind, event?.detail)
+          if (mapped === null) return
+          applyEvent(mapped)
+          postEvent(mapped)
+        }
+        try {
+          api.addEventListener(kind, listener)
+          listeners.push([kind, listener])
+        } catch {
+          // A frontend that refuses a listener name is not fatal: the panel
+          // still syncs, only the progress readouts stay empty.
+        }
+      }
+      return () => {
+        for (const [kind, listener] of listeners) {
+          try {
+            api.removeEventListener(kind, listener)
+          } catch {
+            // The iframe reloaded: its realm, and the api with it, are gone.
+          }
+        }
       }
     }
 
@@ -1274,59 +1326,43 @@ window.__ModuleLoader__.load({
         })
       }, [])
 
+      // Execution events follow the socket that queued the prompt, and that is
+      // the editor's own. Reading them from its event bus is what lets the
+      // Host's progress, the digest and `comfyui_progress` see a run at all: a
+      // socket the panel opened for itself would receive nothing but `status`,
+      // because no prompt ever queues under that id.
       useEffect(() => {
         if (sessionId === undefined || sessionId === null) return undefined
-        let disposed = false
-        let socket = null
-        let retry = null
-        let lastMessageAt = Date.now()
-        const watchdog = setInterval(() => {
-          if (disposed) return
-          if (Date.now() - lastMessageAt > 120000) {
-            try { socket.close() } catch { /* already closed */ }
-          }
-        }, 15000)
-        const connect = () => {
-          if (disposed) return
-          const scheme = location.protocol === 'https:' ? 'wss' : 'ws'
-          const url = `${scheme}://${location.host}/comfyui/ws?clientId=dsh-${encodeURIComponent(sessionId)}`
-          try {
-            socket = new WebSocket(url)
-          } catch {
-            retry = setTimeout(connect, 3000)
-            return
-          }
-          socket.onmessage = message => {
-            lastMessageAt = Date.now()
-            if (typeof message.data !== 'string') return
-            let parsed
-            try {
-              parsed = JSON.parse(message.data)
-            } catch {
-              return
-            }
-            const event = mapComfyEvent(parsed)
-            if (event === null) return
-            applyEvent(event)
-            postEvent(event)
-          }
-          socket.onclose = () => {
-            if (!disposed) retry = setTimeout(connect, 3000)
-          }
-          socket.onerror = () => {
-            try { socket.close() } catch { /* already closed */ }
-          }
+        let attached = null
+        const detach = () => {
+          if (attached === null) return
+          attached.detach()
+          attached = null
         }
-        connect()
-        return () => {
-          disposed = true
-          clearInterval(watchdog)
-          if (retry !== null) clearTimeout(retry)
-          if (socket !== null) {
-            socket.onclose = null
-            socket.onmessage = null
-            try { socket.close() } catch { /* already closed */ }
+        // The shim exposes the api inside the app; the namespace path is the
+        // fallback for a frontend whose app object no longer carries it.
+        const editorApi = () => {
+          const win = iframeRef.current?.contentWindow
+          for (const candidate of [win?.comfyAPI?.app?.app?.api, win?.comfyAPI?.api?.api]) {
+            if (typeof candidate?.addEventListener === 'function') return candidate
           }
+          return null
+        }
+        const attach = () => {
+          const api = editorApi()
+          if (api === null) return
+          if (attached !== null && attached.api === api) return
+          detach()
+          attached = { api, detach: relayEditorEvents(api, { applyEvent, postEvent }) }
+        }
+        attach()
+        // The iframe finishes booting after this effect runs, and every reload
+        // brings a new api: keep checking until we are attached to the current
+        // one, and re-attach when it changes.
+        const timer = setInterval(attach, 1000)
+        return () => {
+          clearInterval(timer)
+          detach()
         }
       }, [applyEvent, postEvent, sessionId])
 
@@ -1563,7 +1599,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale', 'sidebarRightTabs'],
       // Editor operations, dictionaries, and the bar/stage rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, captureGraph, findNode, coerceWidgetValue, frontendClientId, barPlan, overlayPlan, StageOverlay, projectGraph, fitCanvas, fitCanvasByBounds, viewShowsAll, describeOperation, en, zh },
+      __ops: { applyOperation, captureGraph, findNode, coerceWidgetValue, frontendClientId, mapApiEvent, relayEditorEvents, barPlan, overlayPlan, StageOverlay, projectGraph, fitCanvas, fitCanvasByBounds, viewShowsAll, describeOperation, en, zh },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')

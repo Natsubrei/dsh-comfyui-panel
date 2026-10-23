@@ -122,10 +122,18 @@ Queue a prompt without it and everything looks fine except the user's editor:
 no queue entry, no node progress, no preview, and nothing in the history — the
 image exists on disk and nowhere in the UI.
 
-The panel also holds a WebSocket of its own (`/comfyui/ws?clientId=dsh-<session>`),
-but that one only ever sees broadcasts such as `status`: reusing the editor's id
-for it is not an option, because ComfyUI keys `server.sockets` by client id and a
-second connection would replace the editor's.
+The panel does not open a socket of its own. The editor's `api` is an
+`EventTarget` that dispatches every message its own WebSocket receives — `status`,
+`executing`, `progress`, `executed`, and the terminal events — so the parent page
+subscribes to it and forwards what it hears to the Host. A socket of the panel's
+own would receive nothing but `status` broadcasts, because no prompt ever queues
+under its id; and it cannot borrow the editor's id either, since ComfyUI keys
+`server.sockets` by client id and a second connection would replace the editor's.
+
+The bus payload is not uniform, which is why `mapApiEvent` in `client.js` exists:
+`executing` arrives as the node id alone, `status` as the queue state, everything
+else as the raw message body. The iframe replaces its `api` on every reload, so
+that subscription is re-established whenever the identity changes.
 
 ## Re-deriving this after an upgrade
 

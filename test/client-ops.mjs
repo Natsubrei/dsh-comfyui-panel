@@ -389,6 +389,86 @@ const stage = (service, extra = {}) => overlayPlan({
   assert.equal(render(stage(running, { status: 'ready' })).length, 0)
 }
 
+// The panel reads execution events from the editor's own event bus, so the
+// mapping from that bus's payloads (which differ per kind) to the Host's event
+// shape lives here and nowhere else.
+{
+  const { mapApiEvent } = mod.__ops
+  assert.deepEqual(
+    mapApiEvent('status', { exec_info: { queue_remaining: 3 } }),
+    { kind: 'status', queueRemaining: 3 },
+  )
+  assert.deepEqual(
+    mapApiEvent('executing', '9'),
+    { kind: 'executing', promptId: null, node: '9' },
+    'executing carries only the node id, not the message body',
+  )
+  assert.deepEqual(
+    mapApiEvent('progress', { prompt_id: 'p1', node: '9', value: 3, max: 20 }),
+    { kind: 'progress', promptId: 'p1', node: '9', value: 3, max: 20 },
+  )
+  assert.deepEqual(
+    mapApiEvent('execution_error', { prompt_id: 'p1', exception_message: 'out of memory' }),
+    { kind: 'execution_error', promptId: 'p1', error: 'out of memory' },
+  )
+  assert.deepEqual(
+    mapApiEvent('execution_error', { prompt_id: 'p1', exception_type: 'OOM' }),
+    { kind: 'execution_error', promptId: 'p1', error: 'OOM' },
+    'an error without a message still says what kind it was',
+  )
+  assert.deepEqual(
+    mapApiEvent('execution_start', { prompt_id: 'p1' }),
+    { kind: 'execution_start', promptId: 'p1' },
+  )
+  assert.equal(mapApiEvent('logs', { message: 'x' }), null, 'kinds the Host does not record are dropped')
+  assert.equal(mapApiEvent('b_preview', null), null)
+}
+
+// The relay is the only path a run's events take into the Host, so it has to
+// subscribe to each recorded kind, feed both sinks, and detach cleanly when the
+// iframe reloads.
+{
+  const { relayEditorEvents } = mod.__ops
+  const handlers = new Map()
+  const api = {
+    addEventListener(kind, listener) {
+      const list = handlers.get(kind)
+      if (list === undefined) handlers.set(kind, [listener])
+      else list.push(listener)
+    },
+    removeEventListener(kind, listener) {
+      const list = handlers.get(kind) ?? []
+      const index = list.indexOf(listener)
+      if (index !== -1) list.splice(index, 1)
+    },
+  }
+  const applied = []
+  const posted = []
+  const dispose = relayEditorEvents(api, {
+    applyEvent: event => applied.push(event),
+    postEvent: event => posted.push(event),
+  })
+
+  for (const kind of [
+    'status', 'execution_start', 'execution_cached', 'executing', 'progress',
+    'executed', 'execution_success', 'execution_error', 'execution_interrupted',
+  ]) {
+    assert.equal(handlers.get(kind)?.length, 1, `subscribed to ${kind}`)
+  }
+  assert.equal(handlers.has('logs'), false, 'kinds the Host does not record are not subscribed')
+
+  handlers.get('progress')[0]({ detail: { prompt_id: 'p1', node: '9', value: 2, max: 8 } })
+  assert.deepEqual(applied, [{ kind: 'progress', promptId: 'p1', node: '9', value: 2, max: 8 }], 'the bar sees the event')
+  assert.deepEqual(posted, applied, 'the Host sees the same event')
+
+  applied.length = 0
+  handlers.get('status')[0]({ detail: { exec_info: { queue_remaining: 0 } } })
+  assert.deepEqual(applied, [{ kind: 'status', queueRemaining: 0 }])
+
+  dispose()
+  assert.equal(handlers.get('progress').length, 0, 'disposing removes every listener')
+}
+
 // The Host has to queue as the iframe's socket, or ComfyUI sends the run's
 // events to nobody the UI is listening to.
 {
