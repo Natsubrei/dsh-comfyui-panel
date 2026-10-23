@@ -114,13 +114,18 @@ grep -l 'Comfy.Canvas.FitView' *.js
 
 ComfyUI sends `execution_start`, `executing`, `progress`, `executed`, and the
 terminal events to the WebSocket that queued the prompt (`server.client_id`),
-not to every client. The panel therefore opens its own ComfyUI WebSocket from
-inside the iframe and reports `app.api.clientId` with every state sync, and
-`comfyui_run` queues with that id.
+not to every client. The panel therefore reports the id the embedded editor's
+socket registered with — `app.api.clientId`, else the iframe's `window.name` or
+`sessionStorage` — with every state sync, and `comfyui_run` queues with that id.
 
 Queue a prompt without it and everything looks fine except the user's editor:
 no queue entry, no node progress, no preview, and nothing in the history — the
 image exists on disk and nowhere in the UI.
+
+The panel also holds a WebSocket of its own (`/comfyui/ws?clientId=dsh-<session>`),
+but that one only ever sees broadcasts such as `status`: reusing the editor's id
+for it is not an option, because ComfyUI keys `server.sockets` by client id and a
+second connection would replace the editor's.
 
 ## Re-deriving this after an upgrade
 

@@ -399,6 +399,16 @@ const stage = (service, extra = {}) => overlayPlan({
     'abcdef0123456789',
     "falls back to the id ComfyUI's api kept in sessionStorage",
   )
+  assert.equal(
+    frontendClientId(null, { api: { clientId: 'abcdef0123456789' } }),
+    'abcdef0123456789',
+    "the editor's own api is the authoritative source",
+  )
+  assert.equal(
+    frontendClientId({ name: '0f3c2b1a9d8e7f60' }, { api: { clientId: 'not a socket id' } }),
+    '0f3c2b1a9d8e7f60',
+    'an unusable api id falls through to the window rather than winning',
+  )
   assert.equal(frontendClientId({ name: 'not a socket id' }), null)
   assert.equal(frontendClientId(null), null)
   assert.equal(

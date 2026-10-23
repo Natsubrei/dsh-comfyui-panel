@@ -1,6 +1,6 @@
 {
   "name": "dsh-comfyui-panel",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "description": "The real ComfyUI editor inside the DeepSeek Harness Web UI, with per-session workflow tools and panel-managed ComfyUI. / 在 DeepSeek Harness Web UI 里嵌入真正的 ComfyUI 编辑器，按会话向模型暴露工作流工具，并可在面板中管理 ComfyUI 进程。",
   "type": "module",
   "license": "MIT",

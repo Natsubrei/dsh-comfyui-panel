@@ -3,8 +3,13 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
-## Unreleased
+## 0.6.7
 
+- Fix `comfyui_run` queueing with a client id no socket owned, which put a
+  tool-driven run's image on disk and nowhere in the panel: the sync now
+  reports the id the embedded editor connected with (its `api`, else the
+  iframe's `window.name` / `sessionStorage`), so the queue entry, node
+  progress, preview and history all show up in the editor again.
 - Fix the panel spinning forever on `Loading the editor…` while ComfyUI is
   stopped: the stage now follows the server snapshot, so a stopped server shows
   `ComfyUI is not running` with Start and Server settings, a starting one shows

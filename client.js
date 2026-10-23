@@ -581,13 +581,16 @@ window.__ModuleLoader__.load({
      * The client id the embedded ComfyUI frontend is connected with.
      *
      * ComfyUI addresses execution events to the client that queued the prompt
-     * (`server.send_sync(..., server.client_id)`), and its API stores the id
-     * the server assigned in `window.name` and `sessionStorage`. A Host-queued
-     * prompt has to carry the same id, or the run happens with no queue entry,
-     * no node progress, no preview, and nothing in the panel's history.
+     * (`server.send_sync(..., server.client_id)`). A Host-queued prompt has to
+     * carry the id of a socket the editor is listening on, or the run happens
+     * with no queue entry, no node progress, no preview, and nothing in the
+     * panel's history. Two sources hold it, and the editor's own `api` is the
+     * authoritative one: `window.name` and `sessionStorage` are what ComfyUI's
+     * api keeps for the id the server assigned.
      */
-    function frontendClientId(win) {
+    function frontendClientId(win, app) {
       const usable = value => typeof value === 'string' && /^[0-9a-z]{8,64}$/i.test(value)
+      if (usable(app?.api?.clientId)) return app.api.clientId
       if (win === null || win === undefined) return null
       try {
         if (usable(win.name)) return win.name
@@ -1050,8 +1053,10 @@ window.__ModuleLoader__.load({
         }
         // ComfyUI addresses execution events to the client that queued the
         // prompt, so the Host has to queue as this iframe or the run never
-        // appears in the panel's own queue, previews, or history.
-        const frameClient = frontendClientId()
+        // appears in the panel's own queue, previews, or history. Both
+        // arguments matter: the editor's `api` and the iframe window holding
+        // the id its socket registered with.
+        const frameClient = frontendClientId(iframeRef.current?.contentWindow, app)
         if (frameClient !== lastClientIdRef.current) {
           lastClientIdRef.current = frameClient
           force = true
