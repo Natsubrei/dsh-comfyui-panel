@@ -41,22 +41,6 @@ dsh plugin --profile <name> add dsh-comfyui-panel
 Then [configure](#configuration) the upstream if it is not `127.0.0.1:8188`, and
 read on for the panel itself.
 
-## 中文快速开始
-
-在 DSH 里打开**设置 → 插件 → 发现 → 添加索引源**，粘贴：
-
-```text
-https://raw.githubusercontent.com/Natsubrei/dsh-comfyui-panel/main/market/index.json
-```
-
-安装 **ComfyUI 面板** 后，在会话右侧边栏的引导页点 **ComfyUI**，编辑器就会在同一
-个页面里启动。面板顶部一行是服务器状态（运行/停止）和启停按钮，中间是节点/连线
-计数与最近同步时间，右边是缩放适应、同步、重载、新标签打开和服务器设置。
-
-插件会把当前工作流投影给模型：模型能读节点和连线、改控件值、增删节点、发起
-生成，并通过 `comfyui_progress` 看到进度。ComfyUI 进程可以在面板里启动、停止和
-重启，工作流保存在插件自己的存储域里，重启 DSH 不会丢。
-
 ## What it does
 
 - Serves the real ComfyUI frontend under the DSH origin at `/comfyui/`
