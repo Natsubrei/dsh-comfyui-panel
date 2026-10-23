@@ -195,7 +195,7 @@ const upstream = http.createServer((req, res) => {
   res.end('<!doctype html><title>mock comfy</title><div id="ok">mock</div>')
 })
 
-await new Promise(resolve => upstream.listen(UPSTREAM_PORT, '127.0.0.1', resolve))
+await new Promise(resolve => { upstream.listen(UPSTREAM_PORT, '127.0.0.1', () => { resolve(undefined) }) })
 
 // ── Proxy, bridge, and session tools ──────────────────────────────────────
 
@@ -239,7 +239,7 @@ assert.equal(restoredStatus.panelConnected, false)
 const proxyServer = http.createServer((req, res) => {
   host.routes.get('/comfyui').handler(req, res)
 })
-await new Promise(resolve => proxyServer.listen(PROXY_PORT, '127.0.0.1', resolve))
+await new Promise(resolve => { proxyServer.listen(PROXY_PORT, '127.0.0.1', () => { resolve(undefined) }) })
 
 const page = await fetch(`http://127.0.0.1:${PROXY_PORT}/comfyui/`)
 assert.equal(page.status, 200)
@@ -268,6 +268,17 @@ const semantic = {
   linkCount: 1,
   selection: [7],
 }
+// A sync that carries no socket id leaves runs invisible in the editor, and
+// nothing else in the summary would tell the model so.
+const bare = await host.fetches.get('/api/comfyui/state').fetch(new Request(
+  'http://127.0.0.1/api/comfyui/state?sessionId=s-bare',
+  {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId: 's-bare', revision: 1, workflow, prompt: null, semantic }),
+  },
+))
+assert.equal((await bare.json()).clientIdKnown, false, 'a session with no socket id says so')
 const post = await host.fetches.get('/api/comfyui/state').fetch(new Request(
   'http://127.0.0.1/api/comfyui/state?sessionId=s1',
   {
@@ -290,6 +301,7 @@ assert.equal(saved.links, 1)
 assert.equal(saved.hasPrompt, true)
 assert.equal(saved.hasProjection, true)
 assert.deepEqual(saved.selection, [7])
+assert.equal(saved.clientIdKnown, true, 'a sync that names the editor socket is reported as such')
 
 const got = await host.fetches.get('/api/comfyui/state').fetch(
   new Request('http://127.0.0.1/api/comfyui/state?sessionId=s1'),

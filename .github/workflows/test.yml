@@ -1,9 +1,10 @@
 name: test
 
-# The plugin ships without dependencies, so there is nothing to install: the
-# checks are plain `node` scripts. The real-runtime contract (`npm run
-# contract`) needs a DeepSeek Harness checkout next to this one and stays a
-# local check; see AGENTS.md.
+# The plugin ships without runtime dependencies; the checks are plain `node`
+# scripts. TypeScript and @types/node are dev-only, for the `checkJs` pass that
+# catches the calls a mocked test cannot — a wrong argument count, a stale
+# result shape. The real-runtime contract (`npm run contract`) needs a
+# DeepSeek Harness checkout next to this one and stays a local check.
 
 on:
   push:
@@ -33,5 +34,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+          cache: npm
+      - name: Install the type-check dependencies
+        run: npm ci
+      - name: Type check
+        run: npm run typecheck
       - name: Checks, host smoke, editor ops, repository hygiene
         run: npm test

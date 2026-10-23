@@ -34,6 +34,7 @@ export function defaultLogPath() {
 
 /**
  * Create the supervisor.
+ * @param {object} options - the supervisor's collaborators.
  * @param options.config - normalized `supervise` config.
  * @param options.probe - resolves true when the upstream answers `/system_stats`.
  * @param options.logger - host logger.

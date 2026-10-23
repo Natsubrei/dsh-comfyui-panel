@@ -402,6 +402,10 @@ export function apply(ctx, rawConfig = {}) {
       hasPrompt: state.prompt !== null,
       hasProjection: state.semantic !== null,
       selection: state.semantic?.selection ?? [],
+      // Without it, a panel whose socket id never arrived looks exactly like a
+      // working one until a run's events go somewhere else. The id stays out
+      // of the summary; only whether the panel reported one is public.
+      clientIdKnown: typeof state.clientId === 'string' && state.clientId.length > 0,
     }
   }
 
@@ -706,7 +710,9 @@ export function apply(ctx, rawConfig = {}) {
       output: textOutput(),
       async execute() {
         const state = sessions.get(sessionId)
-        const health = await fetchJson('/system_stats', 2500).catch(error => ({ ok: false, error: error.message }))
+        const health = await fetchJson('/system_stats', 2500).catch(error => ({
+          ok: false, status: 0, data: null, error: error.message,
+        }))
         return {
           text: JSON.stringify({
             sessionId,
@@ -876,7 +882,9 @@ export function apply(ctx, rawConfig = {}) {
         const bucket = progress.get(sessionId)
         const wanted = typeof args?.promptId === 'string' && args.promptId.length > 0 ? args.promptId : null
         const run = wanted === null ? latestProgress(sessionId).run : (bucket?.runs.get(wanted) ?? null)
-        const queue = await fetchJson('/queue', 2500).catch(error => ({ ok: false, error: error.message }))
+        const queue = await fetchJson('/queue', 2500).catch(error => ({
+          ok: false, status: 0, data: null, error: error.message,
+        }))
         let history = null
         if (wanted !== null && (run === null || run.status === 'queued' || run.status === 'running')) {
           const settled = await fetchJson(`/history/${encodeURIComponent(wanted)}`, 2500).catch(() => undefined)
@@ -1155,6 +1163,13 @@ export function apply(ctx, rawConfig = {}) {
     headers['cache-control'] = 'public, max-age=31536000, immutable'
   }
 
+  /**
+   * Request one path on the ComfyUI upstream and decode its JSON body.
+   * @param path - path below the upstream root, e.g. `/system_stats`.
+   * @param timeoutMs - abort budget in milliseconds.
+   * @param init - extra fetch options.
+   * @returns {Promise<{ok: boolean, status: number, data: any, error?: string}>} the outcome; `error` is set only on a transport failure.
+   */
   async function fetchJson(path, timeoutMs, init = {}) {
     const target = new URL(upstream.href)
     const basePath = target.pathname.replace(/\/+$/, '')

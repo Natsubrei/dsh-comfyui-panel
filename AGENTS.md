@@ -37,8 +37,10 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
   panel is closed.
 - `test/repo-hygiene.mjs` — fails when this machine's paths, account, or
   hostname appear in the tree or in any commit.
-- `.github/workflows/test.yml` — CI: `npm test` on Node 22 and 24, nothing to
-  install.
+- `.github/workflows/test.yml` — CI: `npm ci`, `npm run typecheck`, then
+  `npm test` on Node 22 and 24.
+- `tsconfig.json` + `types/globals.d.ts` — `checkJs` over every `.js` and
+  `.mjs`. The dev dependencies exist only for this pass.
 - `market/index.json` — the plugin market index this repository hosts, the URL
   users add in Settings → Plugins → Discover. `scripts/market-index.mjs`
   regenerates it; `test/market-index.mjs` validates it with the real
@@ -48,6 +50,8 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
 ## Verify
 
 ```bash
+npm install       # once: typescript and @types/node for the type check
+npm run typecheck # checkJs over index.js, client.js, the tests and the scripts
 npm test          # checks, host smoke, editor ops, hygiene, market index
 npm run contract  # real DSH runtime; needs checkout at ../deepseek-harness
 npm run ui        # live panel in a headless browser; needs a running dsh web
@@ -61,10 +65,18 @@ the overlapping pairs when only the numbers are in question.
 
 A new route or tool needs a case in `host-smoke.mjs`; a new integration point
 (path, service, scope, tool schema) additionally needs a case in
-`dsh-contract.mjs`. The pre-commit hook runs `npm test`; it is enabled with
-`git config core.hooksPath .githooks` (already set in this checkout, and not
-inherited by a fresh clone). `npm run contract` needs the sibling checkout, so
-CI runs only `npm test`.
+`dsh-contract.mjs`. The pre-commit hook runs `npm test`, plus `npm run
+typecheck` when `node_modules` exists; it is enabled with `git config
+core.hooksPath .githooks` (already set in this checkout, and not inherited by a
+fresh clone). `npm run contract` needs the sibling checkout, so CI runs only
+`npm test` and the type check.
+
+The type check is only as good as the annotations it reads. A function with no
+`@param` types has `any` parameters, so a call with the wrong number of
+arguments still passes — that is exactly how a sync once shipped calling
+`frontendClientId()` with no arguments and queued every run under an id no
+socket owned. Give a function whose signature carries meaning `@param` and
+`@returns` tags, and the call sites get checked.
 
 ## Reload the live plugin
 
@@ -167,8 +179,5 @@ indexes discover packages through the `keywords: ["dsh-plugin"]` keyword and the
 - `/tmp` can be a small tmpfs (a few GB) on some machines. Multi-GB model
   downloads belong in the workspace (`.dl_parts/`) or `~/workspace/.tmp`; check
   `df` first.
-- Read a file with the `read` tool immediately before editing it. Shell reads
-  (`sed`, `cat`) and Python rewrites do not populate the edit cache, which
-  produces "file has not been read" and "file changed since it was read".
 - Commit with a quoted heredoc (`git commit -F - <<'MSG'`) so backticks in the
   message are not executed by the shell.

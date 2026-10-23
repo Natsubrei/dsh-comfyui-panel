@@ -157,7 +157,7 @@ export async function openPanel(browser, { timeout = 90_000, scratch = true } = 
     // session that might hold someone's conversation.
     let opened = false
     for (let attempt = 0; attempt < 2 && !opened; attempt += 1) {
-      await clickButtonText(browser, '/^(new session|新建会话)$/i', 'New session')
+      await clickButtonText(browser, /^(new session|新建会话)$/iu, 'New session')
       opened = await browser.waitFor(
         `(() => {
           const id = document.querySelector('${DOM.session}')?.getAttribute('data-conversation-session') ?? null
@@ -279,9 +279,12 @@ export async function bumpWidget(browser) {
  * @param {object} options - check options.
  * @param {string} options.out - directory for screenshots, created when missing.
  * @param {number} [options.bootMs] - editor boot time reported by {@link openPanel}.
+ * @param {string} [options.sessionId] - the session the panel is open in, for Host-side assertions.
+ * @param {number} [options.errorsSince] - console index to start counting from.
+ * @param {number} [options.exceptionsSince] - exception index to start counting from.
  * @returns {Promise<{results: Array<{name: string, ok: boolean, detail: string}>, shots: string[]}>} outcome.
  */
-export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exceptionsSince = 0 }) {
+export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exceptionsSince = 0, sessionId = null }) {
   mkdirSync(out, { recursive: true })
   /** @type {Array<{name: string, ok: boolean, detail: string}>} */
   const results = []
@@ -321,6 +324,27 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
     label: 'the first accepted sync', timeout: 20_000,
   }).catch(() => false)
   record('workflow reaches the host', synced === true, synced === true ? 'state POST accepted' : 'data-synced stayed 0')
+
+  // A run is addressed to the socket id the panel last reported. Without it,
+  // the Host queues under an id no socket owns: the image lands on disk and
+  // the editor stays blank. The summary the model reads must say so, and this
+  // is the only check that sees the id the browser actually sent.
+  const identity = sessionId === null ? 'no session id' : await (async () => {
+    const deadline = Date.now() + 10_000
+    let answer = 'unqueried'
+    for (;;) {
+      answer = await browser.evaluate(`(async () => {
+        const response = await fetch('/api/comfyui/state?sessionId=' + encodeURIComponent(${JSON.stringify(sessionId)}))
+        if (!response.ok) return 'HTTP ' + String(response.status)
+        const body = await response.json()
+        if (body.found !== true) return 'no record'
+        return body.clientIdKnown === true ? 'known' : (body.clientIdKnown === false ? 'missing' : 'field absent')
+      })()`, { awaitPromise: true })
+      if (answer === 'known' || Date.now() > deadline) return answer
+      await sleep(250)
+    }
+  })()
+  record('panel reports the editor client id', identity === 'known', identity === 'known' ? '' : identity)
 
   // Counters must describe the graph the editor actually holds, not a stale
   // snapshot: that mismatch is what a broken projection looks like.
@@ -436,7 +460,7 @@ export function formatReport(results, { sessionId, width, height, shots }) {
 /**
  * Parse the command line.
  * @param {string[]} argv - arguments after the script name.
- * @returns {{url: string | undefined, cookie: string | undefined, out: string, chrome: string | undefined, width: number, height: number, scratch: boolean}} options.
+ * @returns {{url: string | undefined, cookie: string | undefined, out: string, chrome: string | undefined, width: number, height: number, scratch: boolean, help?: boolean}} options.
  */
 export function parseArguments(argv) {
   const options = {
@@ -536,6 +560,7 @@ export async function main(argv) {
       bootMs: opened.bootMs,
       errorsSince,
       exceptionsSince,
+      sessionId: opened.sessionId,
     })
     const report = formatReport(results, {
       sessionId: opened.sessionId, width: options.width, height: options.height, shots,

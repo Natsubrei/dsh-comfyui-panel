@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": [
+    "types/**/*.d.ts",
+    "index.js",
+    "client.js",
+    "projection.js",
+    "storage.js",
+    "service.js",
+    "supervisor.js",
+    "test/**/*.mjs",
+    "scripts/**/*.mjs"
+  ]
+}

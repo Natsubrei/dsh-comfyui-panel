@@ -3,6 +3,28 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
+## Unreleased
+
+- The state summary — and with it `comfyui_status` — now says whether the panel
+  has reported the editor's socket id (`clientIdKnown`). That id is what a run
+  is addressed to, and when it is missing the editor shows nothing about the
+  run while the image still lands on disk; the model could not tell the two
+  apart from the summary before.
+- `npm run typecheck` runs the TypeScript checker over every `.js` and `.mjs`
+  file (`allowJs` + `checkJs`), and CI and the pre-commit hook run it next to
+  `npm test`. A mocked test cannot see a call site that drops an argument; the
+  checker can, and the sync that queued every run under an id no socket owned
+  was exactly that.
+- `npm run ui` now asserts that the socket id reached the Host: it asks
+  `/api/comfyui/state` from the page for the session it opened and requires
+  `clientIdKnown`, so the same break is caught at the browser level and not
+  only in the type annotations.
+- The sidebar guide entry describes the tab in one clause instead of two
+  sentences, in both languages.
+- `test/ui/README.md` explains how to run the check on a machine that hands
+  over neither the launch address nor a working browser, and `AGENTS.md` lost
+  the one paragraph the tools already enforce.
+
 ## 0.6.8
 
 - Read execution events from the editor's own event bus instead of opening a

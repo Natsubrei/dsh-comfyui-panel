@@ -8,8 +8,16 @@
  */
 window.__ModuleLoader__.load({
   id: 'dsh-comfyui-panel',
+  /**
+   * @param {(id: string) => any} require - the loader's dependency resolver, not
+   *   the CommonJS global: React arrives as a dependency, not an installed module.
+   */
   factory(require) {
-    const React = require('react')
+    // React is injected by the Host's loader, not installed, so this local
+    // alias keeps the type checker from looking for its package.
+    /** @type {(id: string) => any} */
+    const load = require
+    const React = load('react')
     const h = React.createElement
     const { useCallback, useEffect, useRef, useState } = React
 
@@ -25,7 +33,7 @@ window.__ModuleLoader__.load({
 
     const en = {
       title: 'ComfyUI',
-      description: 'Open the real ComfyUI editor in the right sidebar. Edits sync to the Host and are available to the model.',
+      description: 'ComfyUI in the sidebar, sharing one graph with the model.',
       loading: 'Starting ComfyUI…',
       ready: 'Connected',
       syncing: 'Syncing…',
@@ -82,7 +90,7 @@ window.__ModuleLoader__.load({
     }
     const zh = {
       title: 'ComfyUI',
-      description: '在右侧栏打开真实的 ComfyUI 编辑器；改动会同步到 Host，模型可以直接读取和修改。',
+      description: '侧栏里的 ComfyUI，和模型共用同一份工作流。',
       loading: '正在启动 ComfyUI…',
       ready: '已连接',
       syncing: '同步中…',
@@ -639,6 +647,9 @@ window.__ModuleLoader__.load({
      * panel's history. Two sources hold it, and the editor's own `api` is the
      * authoritative one: `window.name` and `sessionStorage` are what ComfyUI's
      * api keeps for the id the server assigned.
+     * @param {Window | null | undefined} win - the editor iframe's window.
+     * @param {any} app - the editor's `comfyAPI.app.app`, when it has one.
+     * @returns {string | null} the id to queue under, or `null` when unknown.
      */
     function frontendClientId(win, app) {
       const usable = value => typeof value === 'string' && /^[0-9a-z]{8,64}$/i.test(value)
@@ -1511,7 +1522,7 @@ window.__ModuleLoader__.load({
             placeholder: t('serverDirHint'),
             spellCheck: false,
             disabled: serviceBusy,
-            onChange: event => setServiceCwd(event.target.value),
+            onChange: event => setServiceCwd(/** @type {HTMLInputElement} */ (event.target).value),
           }),
         ),
         h('label', { className: 'dsh-comfyui-service-check' },

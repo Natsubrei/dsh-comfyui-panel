@@ -54,7 +54,12 @@
     "contract": "node test/dsh-contract.mjs",
     "ui": "node test/ui/panel.mjs",
     "shot": "node scripts/graph-shot.mjs",
-    "market": "node scripts/market-index.mjs"
+    "market": "node scripts/market-index.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "~6.0.3"
   },
   "dsh": {
     "bundle": {

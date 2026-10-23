@@ -121,6 +121,7 @@ function servesDirectory(pid, directory) {
 
 /**
  * Create the panel-facing service controller.
+ * @param {object} options - the controller's collaborators.
  * @param options.upstream - the ComfyUI upstream URL.
  * @param options.config - normalized `supervise` config from the plugin row.
  * @param options.probe - resolves true when the upstream answers `/system_stats`.

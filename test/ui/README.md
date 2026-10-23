@@ -31,6 +31,7 @@ check says so when it sees a URL without `?token=…`.
 | bar publishes counters | the bar reports nodes, links, revision, and last sync |
 | server state is known | the lifecycle chip resolved to a real state |
 | workflow reaches the host | a state POST was accepted |
+| panel reports the editor client id | the socket id a run is addressed to actually reached the Host |
 | counters match the editor | the projection describes the graph on screen |
 | zooming does not count as an edit | the viewport must not bump the revision |
 | a widget edit bumps the revision once | real edits still do, exactly once |
@@ -65,3 +66,30 @@ by asking the model and watching `comfyui_progress`.
   directory that has them — no root is needed to unpack the packages.
 - The viewport defaults to 1440×900; `--size 1024x800` checks the narrow
   layout, where the bar wraps.
+
+## Machines without a browser or a token
+
+The two things this check needs are also the two an agent rarely gets handed
+over: the launch address, and a browser that starts.
+
+- **No launch address.** `dsh web` prints it once, on the line starting with
+  `dsh web:`, and it dies with the process. Start the server through
+  `scripts/dsh-web.sh` and that line is teed to `~/.dsh/dsh.log`, so a lost
+  terminal does not lose the address. Otherwise take the cookie a browser is
+  already using: DevTools → Application → Cookies → `dsh-auth-<hash>`, then
+  `DSH_WEB_COOKIE='name=value'`.
+- **No Chromium on `PATH`.** `CHROME_BIN` takes any Chromium-family binary,
+  including a Playwright download under `$HOME/.cache/ms-playwright/
+  chromium_headless_shell-*/chrome-headless-shell-linux64/`.
+- **The browser will not start.** On a minimal image the cause is usually a
+  missing `libnspr4.so` / `libnss3.so`. Unpacking the packages is enough and
+  needs no root: `apt-get download libnspr4 libnss3`, `dpkg -x <pkg>.deb
+  /tmp/nsslibs` for each, then `LD_LIBRARY_PATH=/tmp/nsslibs/usr/lib/x86_64-linux-gnu`.
+
+All of it at once:
+
+```bash
+CHROME_BIN="$HOME/.cache/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-linux64/chrome-headless-shell" \
+LD_LIBRARY_PATH=/tmp/nsslibs/usr/lib/x86_64-linux-gnu \
+npm run ui -- --url "$(grep -oE 'http://[^ ]*/?token=[^ ]*' "$HOME/.dsh/dsh.log" | tail -1)"
+```

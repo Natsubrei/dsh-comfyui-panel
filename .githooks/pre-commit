@@ -1,4 +1,9 @@
 #!/bin/sh
-# Keep the executable smoke contract green before every commit.
+# Keep the executable smoke contract green before every commit. The type check
+# needs dev dependencies, which a fresh clone does not have; run it when they
+# are installed and let CI be the backstop otherwise.
 set -e
-exec npm test --silent
+npm test --silent
+if [ -d node_modules ]; then
+  npm run typecheck --silent
+fi

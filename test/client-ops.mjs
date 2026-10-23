@@ -10,9 +10,12 @@
  */
 import assert from 'node:assert/strict'
 
-let registered = null
-globalThis.window = { __ModuleLoader__: { load: module => { registered = module } } }
+// The panel registers itself on a global the browser runtime installs; the
+// node-side double only has to carry the one method `client.js` calls.
+let registered = /** @type {any} */ (undefined)
+globalThis.window = /** @type {any} */ ({ __ModuleLoader__: { load: module => { registered = module } } })
 await import('../client.js')
+if (registered === undefined) throw new Error('client.js did not register a module')
 assert.equal(registered.id, 'dsh-comfyui-panel')
 
 const fakeReact = {

@@ -107,6 +107,7 @@ ctx.provide('webServer', {
 
 /** sessionId -> tableName -> Map. Mirrors the domain KV surface the store uses. */
 const tables = new Map([['sessions', new Map()], ['settings', new Map()]])
+/** @type {any} */
 let openedSpec
 ctx.provide('storageDomain', {
   async open(spec) {
@@ -131,6 +132,7 @@ ctx.provide('storageDomain', {
 // The agent stand-in carries a real scope: the plugin registers tools through
 // `agent.ctx`, and `ToolRuntime` resolves that same key back to the scope.
 const agent = { id: SESSION_ID }
+/** @type {any} */
 let scope
 const scopeFiber = ctx.plugin(Object.assign(
   inner => { scope = createScope(inner, agent) },

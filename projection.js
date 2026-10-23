@@ -138,9 +138,7 @@ export function projectFromWorkflow(workflow) {
 /**
  * The one-line runtime-context digest for a session desktop.
  * @param state - the session's stored state.
- * @param options.connected - whether the panel polled recently.
- * @param options.run - the latest run record, if any.
- * @param options.revision - the revision shown to the model, when it differs.
+ * @param {{connected?: boolean, run?: any}} [options] - what the Host knows beyond the stored graph.
  * @returns one short line, or '' when there is nothing to say.
  */
 export function digestLine(state, { connected = false, run = null } = {}) {

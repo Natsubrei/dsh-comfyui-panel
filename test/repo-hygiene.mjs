@@ -31,6 +31,7 @@ const PATH_RULES = [
 
 /** The current account and host, which must not appear in a public tree. */
 function localNames() {
+  /** @type {Array<{name: string, pattern: RegExp, grep: string, example: string}>} */
   const rules = []
   try {
     const { username } = userInfo()
@@ -74,7 +75,7 @@ function git(args) {
 
 /**
  * Scan the working tree.
- * @param {Array<{name: string, pattern: RegExp, example: string}>} rules - patterns to look for.
+ * @param {Array<{name: string, pattern: RegExp, grep: string, example: string}>} rules - patterns to look for.
  * @returns {string[]} one `file:line: rule: text` line per hit.
  */
 function scanTree(rules) {
@@ -100,7 +101,7 @@ function scanTree(rules) {
 
 /**
  * Scan every commit's tree.
- * @param {Array<{name: string, pattern: RegExp, example: string}>} rules - patterns to look for.
+ * @param {Array<{name: string, pattern: RegExp, grep: string, example: string}>} rules - patterns to look for.
  * @returns {string[]} one line per hit, with the introducing commit.
  */
 function scanHistory(rules) {
