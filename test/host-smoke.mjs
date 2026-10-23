@@ -434,6 +434,13 @@ assert.equal(progress.run.max, 12)
 assert.equal(progress.queue.pending, 0)
 assert.equal(progress.hasPanelEvents, true)
 
+// A panel that attached after `execution_start` still has to show the run as
+// running rather than leave it "queued" until the success event lands.
+assert.equal((await sendEvent({ kind: 'progress', promptId: 'p2', node: '9', value: 1, max: 4 })).status, 200)
+const joined = parse(await s1.tools.get('comfyui_progress').execute({ promptId: 'p2' }, exec))
+assert.equal(joined.run.status, 'running', 'a progress event proves the run started')
+assert.ok(Number.isFinite(joined.run.startedAt), 'the record counts from the first event it saw')
+
 const nodeInfo = parse(await s1.tools.get('comfyui_node_info').execute({ type: 'KSampler' }, exec))
 assert.ok(nodeInfo.input.required.model)
 const searched = parse(await s1.tools.get('comfyui_node_info').execute({ search: 'ksam' }, exec))

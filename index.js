@@ -490,11 +490,25 @@ export function apply(ctx, rawConfig = {}) {
     } else if (event.kind === 'execution_interrupted') {
       run.status = 'interrupted'
     } else if (event.kind === 'executing') {
+      // A run can be joined after `execution_start` went out: the panel was
+      // reloading, or the editor's socket reconnected mid-run. Anything that
+      // only happens during a run proves it is running, so the record does not
+      // keep claiming "queued" until the success event arrives.
+      if (run.status === 'queued') {
+        run.status = 'running'
+        run.startedAt ??= event.at
+      }
       run.node = event.node
-    } else if (event.kind === 'progress') {
+    } else if (event.kind === 'progress' || event.kind === 'executed') {
+      if (run.status === 'queued') {
+        run.status = 'running'
+        run.startedAt ??= event.at
+      }
       run.node = event.node ?? run.node
-      run.value = event.value
-      run.max = event.max
+      if (event.kind === 'progress') {
+        run.value = event.value
+        run.max = event.max
+      }
     }
     while (bucket.runs.size > 20) {
       const oldest = bucket.runs.keys().next().value
