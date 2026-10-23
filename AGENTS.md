@@ -93,35 +93,45 @@ changes still need a full page refresh (hard reload); `pnpm run dev:web` does
 not rebuild profile bundles by default. `package.json` is the source of truth
 for the version.
 
+The toggle also reconciles the client-module graph, which keys each package by
+the path the loader resolved when the plugin started. Move or rename the
+checkout and the client half drops out of the boot manifest: the Host tools keep
+working while the sidebar entry is gone. Toggle once more and reload; there is
+no full rescan, so a Host restart is the fallback.
+
 ## Panel check (after client changes)
 
-`npm run ui` does this in a headless browser and is the first thing to run; it
-covers the checks marked ✔ below. It needs a running `dsh web` and an installed
-Chromium; see `test/ui/README.md` for the address/cookie it wants. It opens the
-panel in a **new draft session**, so it never touches the conversation you are
-working in.
+`npm run ui` automates what a headless browser can see: the panel mounts, the
+editor boots, counters match the graph on screen, zooming is not an edit, a
+widget edit bumps the revision once, editor events reach the bar, the Host
+learned the socket id, and Fit frames the graph. It needs a running `dsh web`
+and an installed Chromium (`test/ui/README.md` has the address, cookie and
+library it wants), and it opens a **new draft session**, so it never touches the
+conversation you are working in. What it cannot see — the digest line, the bar's
+labels and buttons, the stopped stage — is the manual pass below.
 
-1. ✔ Hard-refresh the GUI, open the **ComfyUI** tab, wait for **Connected**.
-2. ✔ The header digest should read `ComfyUI: rev … · N nodes · … · panel open.`
-3. ✔ The bar reads left to right: status label (`Running` / `Stopped` /
+1. Hard-refresh the GUI, open the **ComfyUI** tab, wait for **Connected**.
+2. The header digest should read `ComfyUI: rev … · N nodes · … · panel open.`
+3. The bar reads left to right: status label (`Running` / `Stopped` /
    `External` / `Starting…`), the lifecycle buttons that fit it (Start when
    stopped, Stop + Restart when running and owned), the counters with the
    last sync time, then the panel tools (fit, `Sync`, `Reload`, open, gear).
    The gear opens settings only; settings hold configuration, not lifecycle
    buttons.
-4. ✔ On first open the graph is framed in the canvas and the counter shows
+4. On first open the graph is framed in the canvas and the counter shows
    `synced HH:MM`. The stage has three faces and never spins forever: a stopped
    server shows `ComfyUI is not running` with Start (plus Server settings), a
    starting one shows `Starting ComfyUI… Ns`, and a frontend that never hands
    over `comfyAPI.app` within 45 s shows `The editor did not load` with Reload.
    (The stopped state needs a manual run: stop the server from the bar and look.)
-5. ✔ Zoom, pan, and resize the panel; `rev` must not change. Edit a widget in
+5. Zoom, pan, and resize the panel; `rev` must not change. Edit a widget in
    the editor or let the model do it; the revision goes up by exactly one and a
    short toast names what changed.
 6. Queue one run; `comfyui_progress` should go `queued` → `running` → success.
    This one needs the model: the check does not queue runs.
-7. If the tab says "panel is not connected", the Host↔panel WebSocket did not
-   re-admit. Reload the page before investigating plugin code.
+7. If the chip reads `Running · Bridge error`, the state POST is failing: check
+   the Host log and `fetch('/api/comfyui/state?sessionId=…')` from the page
+   before touching panel code.
 
 When no browser can run (no `dsh web`, no Chromium), ask the user for a
 confirmation or a screenshot instead of guessing; say which of the steps above

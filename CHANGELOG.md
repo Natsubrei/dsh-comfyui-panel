@@ -19,11 +19,15 @@ truth, and every release is pinned by a commit in `market/index.json`.
   `/api/comfyui/state` from the page for the session it opened and requires
   `clientIdKnown`, so the same break is caught at the browser level and not
   only in the type annotations.
-- The sidebar guide entry describes the tab in one clause instead of two
-  sentences, in both languages.
+- The sidebar entry reads `ComfyUI, shared with the model` /
+  `与模型共用的 ComfyUI`: one line, no full stop, like the other sidebar tabs.
+- The README and the npm description are English only. The Chinese quick start
+  sat between two English sections, and npm metadata cannot carry two languages;
+  the market index keeps `description.en` and `.zh` for the card.
 - `test/ui/README.md` explains how to run the check on a machine that hands
   over neither the launch address nor a working browser, and `AGENTS.md` lost
-  the one paragraph the tools already enforce.
+  the one paragraph the tools already enforce and gained the client-bundle
+  caveat a directory rename runs into.
 
 ## 0.6.8
 

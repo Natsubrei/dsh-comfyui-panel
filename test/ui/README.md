@@ -57,8 +57,8 @@ by asking the model and watching `comfyui_progress`.
 ## Requirements and quirks
 
 - A running `dsh web` with this plugin enabled and a ComfyUI the panel can
-  reach. The panel itself starts ComfyUI when it is stopped, but the boot then
-  takes as long as ComfyUI does.
+  reach. When the server is stopped the panel shows its Start button; the check
+  waits for the editor instead of pressing it, so start ComfyUI first.
 - A Chromium, Chrome, Edge, or Brave binary. Set `CHROME_BIN` when it is not on
   `PATH` (a Playwright-downloaded `chrome-headless-shell` works).
 - A minimal Linux image can lack the browser's shared libraries. If the launch

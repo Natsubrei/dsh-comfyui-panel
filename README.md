@@ -53,10 +53,13 @@ read on for the panel itself.
   semantic projection from the live nodes (ids, class types, widget names and
   values, input sources, selection), asks `app.graphToPrompt()` for the API
   prompt, and POSTs all three to `/api/comfyui/state`.
-- Opens a second ComfyUI WebSocket from the panel and forwards a compact event
-  stream (queue status, `execution_start`, `executing`, `progress`, `executed`,
-  `execution_success` / `execution_error` / `execution_interrupted`) to
-  `/api/comfyui/events`, so the Host sees runs without polling.
+- Subscribes to the embedded editor's own event bus (`app.api`, a DOM
+  `EventTarget`) and forwards a compact event stream (queue status,
+  `execution_start`, `executing`, `progress`, `executed`, `execution_success` /
+  `execution_error` / `execution_interrupted`) to `/api/comfyui/events`, so the
+  Host sees runs without polling. ComfyUI addresses those events to the socket
+  that queued the prompt, so the panel relays the editor's connection instead of
+  opening one of its own.
 - Registers seven model tools **on the Agent context of each session that has a
   synced workflow**. Other sessions see no ComfyUI tools:
   - `comfyui_status` — upstream reachability, panel connection, workflow
@@ -169,7 +172,9 @@ the mock before starting a real ComfyUI on port 8188.
 Run the checks with:
 
 ```bash
-npm test          # checks, host smoke, editor ops, repository hygiene
+npm install       # once: typescript and @types/node for the type check
+npm run typecheck # checkJs over the plugin, the tests and the scripts
+npm test          # checks, host smoke, editor ops, hygiene, market index
 npm run contract  # real DSH runtime, needs ../deepseek-harness
 npm run ui        # live panel in a headless browser, needs a running dsh web
 npm run shot -- workflow.json   # render a workflow file to a PNG
@@ -182,14 +187,16 @@ start/stop/restart of a real child process, and the supervisor's adoption path.
 It prints `host smoke test passed`. `npm run contract` mounts the plugin next to
 the real Cordis context, `ToolRuntime`, `SystemPrompt`, and
 `HostConnectionService`, so an invalid Fetch path or a tool schema the registry
-rejects fails locally instead of at install time. Both are run by the
-pre-commit hook; see [AGENTS.md](AGENTS.md) for reload and logging steps.
+rejects fails locally instead of at install time. `npm test` and
+`npm run typecheck` are what the pre-commit hook runs; see
+[AGENTS.md](AGENTS.md) for reload and logging steps.
 
 `npm run ui` is the browser check: it opens the GUI in a headless Chromium, puts
-the panel in a throwaway session, and asserts that the editor boots, the
-counters match the graph, zooming is not counted as an edit, a widget edit bumps
-the revision once, and Fit frames the graph. It needs an installed
-Chromium-family browser but installs nothing; see
+the panel in a throwaway session, and asserts the panel's observable behaviour —
+the editor boots, the counters describe the graph on screen, zooming is not an
+edit, a widget edit bumps the revision once, editor events reach the bar, the
+Host learned the editor's socket id, and Fit frames the graph. It needs an
+installed Chromium-family browser but installs nothing; see
 [test/ui/README.md](test/ui/README.md). `npm test` also scans the tree and the
 whole history for machine-specific paths, so a stray home directory fails
 before it ships.
@@ -213,8 +220,9 @@ than 16 pixels (exit code 2 when any do). Use it to judge a layout file, or
 - `save`/`cancel` of a run are not exposed yet; `comfyui_run` only queues.
 - The panel is an iframe, so it does not inherit DSH theme tokens; this is a
   deliberate exception for UI-workflow fidelity and third-party node UIs.
-- Execution events arrive over the panel's own ComfyUI WebSocket, so progress
-  and errors exist only while the panel is mounted.
+- Execution events are relayed from the editor's own bus, so progress and errors
+  exist only while the panel is mounted; a run started before the panel opened
+  shows its queue entry but no step progress.
 - The process manager cannot distinguish a hung ComfyUI from one doing a long
   generation that stops answering `/system_stats`; health restarts should be
   tuned per workload.
