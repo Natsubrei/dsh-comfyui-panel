@@ -187,6 +187,7 @@ try {
     'comfyui_node_info',
     'comfyui_progress',
     'comfyui_run',
+    'comfyui_screenshot',
     'comfyui_status',
   ]
   assert.deepEqual(ctx.tools.schemas(agent).map(tool => tool.name).sort(), expected)

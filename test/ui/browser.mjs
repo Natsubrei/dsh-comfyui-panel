@@ -60,7 +60,12 @@ export function findBrowser(explicit) {
   const wanted = explicit ?? process.env.CHROME_BIN
   if (wanted !== undefined && wanted !== '') {
     if (executable(wanted)) return wanted
-    throw new Error(`browser binary not executable: ${wanted}`)
+    // Name the neighbours that do exist: the Playwright download names its
+    // binary `chrome-linux64/chrome` or `chrome-headless-shell-linux64/
+    // chrome-headless-shell`, which is easy to guess wrong from the directory.
+    const nearby = INSTALLS.filter(executable)
+    const hint = nearby.length > 0 ? `; found instead: ${nearby.join(', ')}` : `; known locations: ${INSTALLS.join(', ')}`
+    throw new Error(`browser binary not executable: ${wanted}${hint}`)
   }
   const path = process.env.PATH ?? ''
   for (const name of BINARIES) {
@@ -73,7 +78,7 @@ export function findBrowser(explicit) {
   for (const candidate of INSTALLS) {
     if (executable(candidate)) return candidate
   }
-  throw new Error('no Chrome/Chromium found; set CHROME_BIN to a browser binary')
+  throw new Error(`no Chrome/Chromium found; set CHROME_BIN to a browser binary (looked on PATH and at: ${INSTALLS.join(', ')})`)
 }
 
 /** @param {number} ms - delay. @returns {Promise<void>} resolves after the delay. */
@@ -304,9 +309,19 @@ export class Browser {
   async waitFor(expression, { timeout = 15_000, label = expression, interval = 150 } = {}) {
     const deadline = Date.now() + timeout
     let lastError
+    // Objects cannot cross CDP: `window.app && window.app.graph` fails with
+    // "Object reference chain is too long", which surfaced as a bare timeout
+    // instead of the condition being met. Primitives still come back as they
+    // are, because callers read numbers and strings out of the first hit.
+    const probe = `(() => {
+      const value = ( ${expression} );
+      if (value === null || value === undefined) return value;
+      if (typeof value === 'object' || typeof value === 'function') return true;
+      return value;
+    })()`
     for (;;) {
       try {
-        const value = await this.evaluate(expression)
+        const value = await this.evaluate(probe)
         if (value !== null && value !== undefined && value !== false && value !== '') return value
       } catch (error) {
         lastError = error

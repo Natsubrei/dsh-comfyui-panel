@@ -39,6 +39,8 @@ window.__ModuleLoader__.load({
       syncedAt: 'synced {{time}}',
       syncPending: 'syncing…',
       notRunning: 'ComfyUI is not running',
+      editorStalled: 'The editor did not load',
+      editorStalledHint: 'ComfyUI answers, but the frontend never exposed its editor. Reload it, or start the server again from Server settings.',
       open: 'Open in new tab',
       noSession: 'No session',
       stats: '{{nodes}} nodes · {{links}} links',
@@ -94,6 +96,8 @@ window.__ModuleLoader__.load({
       syncedAt: '已同步 {{time}}',
       syncPending: '同步中…',
       notRunning: 'ComfyUI 未运行',
+      editorStalled: '编辑器没有加载出来',
+      editorStalledHint: 'ComfyUI 有响应，但前端一直没有交出编辑器。可以重新加载；如果仍不行，到「服务设置」里重启服务。',
       open: '新标签打开',
       noSession: '无会话',
       stats: '{{nodes}} 个节点 · {{links}} 条连线',
@@ -239,6 +243,11 @@ window.__ModuleLoader__.load({
       }
       .dsh-comfyui-empty { flex-direction: column; gap: 10px; }
       .dsh-comfyui-empty-title { color: var(--dsw-alias-label-primary); font-size: 13px; }
+      .dsh-comfyui-empty-hint {
+        max-width: 360px; text-align: center; line-height: 1.5;
+        color: var(--dsw-alias-label-secondary);
+      }
+      .dsh-comfyui-empty-actions { display: flex; align-items: center; gap: 8px; }
       .dsh-comfyui-spinner {
         width: 14px; height: 14px; border-radius: 50%;
         border: 2px solid var(--dsw-alias-border-l1);
@@ -362,6 +371,99 @@ window.__ModuleLoader__.load({
       }
 
       return { tone, label, chipTitle, actions, healthy, owned }
+    }
+
+    // A ComfyUI that never hands over `comfyAPI.app` looks exactly like a slow
+    // one, so the spinner turns into an explanation with a way out after this.
+    const EDITOR_STALL_SECONDS = 45
+
+    /**
+     * Which full-stage overlay the editor area shows, if any.
+     *
+     * Order is the fix for a panel that spun forever: while ComfyUI is stopped
+     * the embedded frontend can never finish booting, so `status` stays
+     * `'loading'` and a status-only rule painted a spinner over the whole tab.
+     * The server snapshot leads, and the bridge status only decides what to say
+     * while the server is believed to be up.
+     */
+    function overlayPlan({ status, service, bootSeconds = 0, dir = '', t }) {
+      const known = service !== null && service !== undefined
+      const state = known ? service.state : null
+      const starting = state === 'starting' || state === 'restarting'
+      const needDir = String(dir ?? '').trim() === ''
+      const idle = { stage: 'none', title: '', hint: '', seconds: 0, canStart: false, needDir }
+      // The iframe stays mounted underneath, so a probe that flips false for one
+      // poll covers the canvas for five seconds and then uncovers it; nothing
+      // the user typed is lost and no reload is triggered by the overlay.
+      // `=== false`, not `!healthy`: a snapshot without a health field (an older
+      // Host) must fall through to the spinner, not claim the server is down.
+      if (known && service.health === false && !starting) {
+        return {
+          stage: 'stopped',
+          title: t('notRunning'),
+          hint: needDir ? t('serverPick') : '',
+          seconds: 0,
+          canStart: !needDir,
+          needDir,
+        }
+      }
+      if (starting) {
+        return { stage: 'starting', title: t('serverStarting'), hint: '', seconds: bootSeconds, canStart: false, needDir }
+      }
+      if (status !== 'loading') return idle
+      if (bootSeconds >= EDITOR_STALL_SECONDS) {
+        return {
+          stage: 'stalled',
+          title: t('editorStalled'),
+          hint: t('editorStalledHint'),
+          seconds: bootSeconds,
+          canStart: false,
+          needDir,
+        }
+      }
+      return { stage: 'loading', title: t('editorLoading'), hint: '', seconds: bootSeconds, canStart: false, needDir }
+    }
+
+    /**
+     * The overlay that covers the editor area. Pure markup over an
+     * `overlayPlan` result so the stopped / starting / stalled faces can be
+     * rendered and asserted in `test/client-ops.mjs` without a browser.
+     */
+    function StageOverlay({ stage, busy, t, onStart, onReload, onService }) {
+      if (stage.stage === 'none') return null
+      if (stage.stage === 'loading' || stage.stage === 'starting') {
+        return h('div', { className: 'dsh-comfyui-overlay' },
+          h('span', { className: 'dsh-comfyui-spinner' }),
+          h('span', null, stage.seconds > 0 ? `${stage.title} ${stage.seconds}s` : stage.title),
+        )
+      }
+      return h('div', { className: 'dsh-comfyui-overlay dsh-comfyui-empty' },
+        h('span', { className: 'dsh-comfyui-empty-title' }, stage.title),
+        stage.hint === '' ? null : h('span', { className: 'dsh-comfyui-empty-hint' }, stage.hint),
+        h('div', { className: 'dsh-comfyui-empty-actions' },
+          stage.stage === 'stopped'
+            ? h('button', {
+              className: 'dsh-comfyui-button',
+              'data-variant': 'primary',
+              type: 'button',
+              disabled: busy || !stage.canStart,
+              title: stage.needDir ? t('serverPick') : t('serverStart'),
+              onClick: onStart,
+            }, t('serverStart'))
+            : h('button', {
+              className: 'dsh-comfyui-button',
+              'data-variant': 'primary',
+              type: 'button',
+              onClick: onReload,
+            }, t('reload')),
+          h('button', {
+            className: 'dsh-comfyui-button',
+            'data-variant': 'quiet',
+            type: 'button',
+            onClick: onService,
+          }, t('serverPanel')),
+        ),
+      )
     }
 
     function TopBar({ stats, synced, syncAt, runText, plan, serviceOpen, onSync, onReload, onFit, onOpen, onService, onAction, t }) {
@@ -688,6 +790,10 @@ window.__ModuleLoader__.load({
           return `#${operation.from?.id}:${operation.from?.output}→#${operation.to?.id}.${operation.to?.input}`
         case 'disconnect':
           return `#${operation.to?.id}.${operation.to?.input} ×`
+        case 'move_node': {
+          const [x, y] = Array.isArray(result?.pos) ? result.pos : []
+          return `#${operation.id} @${x},${y}`
+        }
         default:
           return String(operation?.op ?? '?')
       }
@@ -775,6 +881,17 @@ window.__ModuleLoader__.load({
           ? `Target node ${targetId ?? '(missing)'} not found; ${op} needs "id" or "to.id"`
           : `Node ${operation.id} not found`)
       }
+      if (op === 'move_node') {
+        // Repositioning is the one edit that changes nothing but `pos`: doing it
+        // with remove+add would drop every link and widget value the node holds.
+        const pos = operation.pos
+        if (!Array.isArray(pos) || pos.length < 2 || !Number.isFinite(Number(pos[0])) || !Number.isFinite(Number(pos[1]))) {
+          throw new Error(`Node ${operation.id} needs "pos": [x, y]`)
+        }
+        node.pos = [Number(pos[0]), Number(pos[1])]
+        graph.setDirtyCanvas?.(true, true)
+        return { op, id: node.id, pos: node.pos }
+      }
       if (op === 'remove_node') {
         graph.remove(node)
         graph.setDirtyCanvas?.(true, true)
@@ -805,6 +922,41 @@ window.__ModuleLoader__.load({
       throw new Error(`Unknown operation "${op}"`)
     }
 
+    /**
+     * Capture the editor canvas as a PNG data URL.
+     *
+     * The panel is the only place that can see the graph: the Host stores the
+     * workflow JSON, not the pixels. LiteGraph paints every node, link, and
+     * widget on one 2D canvas, so its `toDataURL` is exactly what the user is
+     * looking at — zoom, pan and selection included.
+     */
+    function captureGraph(app) {
+      const canvas = app?.canvas?.canvas
+      if (canvas === undefined || canvas === null || typeof canvas.toDataURL !== 'function') {
+        throw new Error('The editor canvas is not ready; if ComfyUI is stopped, start it from the panel and retry')
+      }
+      let dataUrl = canvas.toDataURL('image/png')
+      if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png')) {
+        throw new Error('The editor canvas refused to serialize as PNG')
+      }
+      // The command channel carries this as one JSON body. A large retina canvas
+      // can serialize past a few megabytes, so halve it once before sending
+      // rather than letting the round trip fail on a body limit.
+      if (dataUrl.length > 3_000_000 && typeof document !== 'undefined' && typeof document.createElement === 'function') {
+        const copy = document.createElement('canvas')
+        copy.width = Math.max(1, Math.round(canvas.width / 2))
+        copy.height = Math.max(1, Math.round(canvas.height / 2))
+        copy.getContext('2d')?.drawImage(canvas, 0, 0, copy.width, copy.height)
+        dataUrl = copy.toDataURL('image/png')
+      }
+      return {
+        kind: 'screenshot',
+        dataUrl,
+        width: canvas.width,
+        height: canvas.height,
+      }
+    }
+
     function ComfyPanel({ sessionId, t }) {
       const iframeRef = useRef(null)
       const appRef = useRef(null)
@@ -831,6 +983,11 @@ window.__ModuleLoader__.load({
       const [serviceAutoStart, setServiceAutoStart] = useState(false)
       const [serviceBusy, setServiceBusy] = useState(false)
       const [serviceMessage, setServiceMessage] = useState('')
+      // Read by the boot clock below; the overlay recomputes the same two facts
+      // through `overlayPlan` so the rule itself stays testable.
+      const serverStarting = service !== null
+        && (service.state === 'starting' || service.state === 'restarting')
+      const serverStopped = service !== null && service.health === false && !serverStarting
 
       const readApp = useCallback(() => {
         const win = iframeRef.current?.contentWindow
@@ -1007,7 +1164,11 @@ window.__ModuleLoader__.load({
         setNotice({ text: `${t('modelEdited')}: ${parts.join(' · ')}`, at: Date.now() })
         flashNodes(app, touched)
         await syncNow(true)
-        return { applied: applied.length, operations: applied }
+        // Counters travel with the edit so a batch that half-applied (a graph
+        // left with no links) is visible in the tool result, not only in the
+        // next status read.
+        const links = graph.links instanceof Map ? graph.links.size : Object.keys(graph.links ?? {}).length
+        return { applied: applied.length, nodes: graph._nodes?.length ?? 0, links, operations: applied }
       }, [syncNow, t])
 
       const commandRef = useRef(null)
@@ -1032,7 +1193,9 @@ window.__ModuleLoader__.load({
               try {
                 const app = readApp()
                 if (app === null) throw new Error('The ComfyUI panel is still loading')
-                const value = await commandRef.current(app, command.operations ?? [])
+                const value = command.kind === 'screenshot'
+                  ? captureGraph(app)
+                  : await commandRef.current(app, command.operations ?? [])
                 payload = { sessionId, id: command.id, ok: true, value }
               } catch (error) {
                 payload = { sessionId, id: command.id, ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -1222,16 +1385,23 @@ window.__ModuleLoader__.load({
       }, [])
 
       useEffect(() => {
-        if (status !== 'loading') {
+        // The boot clock also runs while the Host is starting the child process:
+        // "Starting ComfyUI… 12s" is the difference between a progress report
+        // and a spinner that looks hung. It must not run while the server is
+        // stopped, or an hour of waiting would turn the first second of a real
+        // start into "the editor did not load".
+        const counting = !serverStopped && (status === 'loading' || serverStarting)
+        if (!counting) {
           setBootSeconds(0)
           return undefined
         }
+        setBootSeconds(0)
         const started = Date.now()
         const timer = setInterval(() => {
           setBootSeconds(Math.round((Date.now() - started) / 1000))
         }, 1000)
         return () => clearInterval(timer)
-      }, [status])
+      }, [serverStarting, serverStopped, status])
 
       // A model edit is announced once and fades; it is a glance, not a log.
       useEffect(() => {
@@ -1266,7 +1436,7 @@ window.__ModuleLoader__.load({
       // Lifecycle controls live in the bar; this form is configuration only, so
       // there is exactly one place that decides whether Start is clickable.
       const plan = barPlan({ status, service, busy: serviceBusy, dir: serviceCwd, bootSeconds, t })
-      const serviceStopped = service !== null && service.health === false && service.state !== 'starting'
+      const stage = overlayPlan({ status, service, bootSeconds, dir: serviceCwd, t })
       const dir = serviceCwd.trim()
       const notOwnedHint = plan.healthy && !plan.owned ? t('serverExternalHint') : ''
       const dirHint = !plan.healthy && dir === '' ? t('serverPick') : ''
@@ -1360,24 +1530,16 @@ window.__ModuleLoader__.load({
           }),
           // The iframe paints ComfyUI's own splash first; without this the
           // panel looks stuck on a white rectangle while the frontend boots.
-          status === 'loading'
-            ? h('div', { className: 'dsh-comfyui-overlay' },
-              h('span', { className: 'dsh-comfyui-spinner' }),
-              h('span', null, bootSeconds > 0 ? `${t('editorLoading')} ${bootSeconds}s` : t('editorLoading')),
-            )
-            : serviceStopped
-              ? h('div', { className: 'dsh-comfyui-overlay dsh-comfyui-empty' },
-                h('span', { className: 'dsh-comfyui-empty-title' }, t('notRunning')),
-                h('button', {
-                  className: 'dsh-comfyui-button',
-                  'data-variant': 'primary',
-                  type: 'button',
-                  disabled: serviceBusy || serviceCwd.trim() === '',
-                  title: serviceCwd.trim() === '' ? t('serverPick') : t('serverStart'),
-                  onClick: () => { void serviceAction('start') },
-                }, t('serverStart')),
-              )
-              : null,
+          // A stopped server, a starting one, and a stuck frontend each get
+          // their own face: only the last untouched state is a bare spinner.
+          h(StageOverlay, {
+            stage,
+            busy: serviceBusy,
+            t,
+            onStart: () => { void serviceAction('start') },
+            onReload: reload,
+            onService: () => setServiceOpen(true),
+          }),
           notice === null ? null : h('div', { className: 'dsh-comfyui-toast' }, notice.text),
         ),
       )
@@ -1385,9 +1547,9 @@ window.__ModuleLoader__.load({
 
     return {
       inject: ['slots', 'locale', 'sidebarRightTabs'],
-      // Pure editor operations, dictionaries and the top-bar rules, exposed for
+      // Editor operations, dictionaries, and the bar/stage rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, findNode, coerceWidgetValue, frontendClientId, barPlan, projectGraph, fitCanvas, fitCanvasByBounds, viewShowsAll, describeOperation, en, zh },
+      __ops: { applyOperation, captureGraph, findNode, coerceWidgetValue, frontendClientId, barPlan, overlayPlan, StageOverlay, projectGraph, fitCanvas, fitCanvasByBounds, viewShowsAll, describeOperation, en, zh },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')

@@ -29,6 +29,7 @@ It is a partial view of the real `ComfyApp`; what the plugin uses:
 | `app.extensionManager.command.execute(id)` | run a registered command (see §3) |
 | `app.api.clientId` | the socket id ComfyUI will address execution events to |
 | `app.loadGraphData(workflow)` | replace the editor graph from a serialized workflow |
+| `app.canvas.canvas` | the 2D canvas element behind the editor; `toDataURL('image/png')` is the screenshot `comfyui_screenshot` returns |
 | `app.canvasInternal` / `app.rootGraphRef` | Vue-level members; `canvasInternal` is the same canvas, `rootGraphRef.value` the same graph |
 
 `rootGraph`, `graph`, `canvas`, and `extensionManager` are `undefined` until

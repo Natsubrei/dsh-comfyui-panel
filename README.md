@@ -73,20 +73,25 @@ https://raw.githubusercontent.com/Natsubrei/dsh-comfyui-panel/main/market/index.
   stream (queue status, `execution_start`, `executing`, `progress`, `executed`,
   `execution_success` / `execution_error` / `execution_interrupted`) to
   `/api/comfyui/events`, so the Host sees runs without polling.
-- Registers six model tools **on the Agent context of each session that has a
+- Registers seven model tools **on the Agent context of each session that has a
   synced workflow**. Other sessions see no ComfyUI tools:
   - `comfyui_status` — upstream reachability, panel connection, workflow
     summary, persistence backend, supervisor state, and the latest run.
   - `comfyui_graph_read` — the semantic projection: per node `id`, `type`,
     `title`, `mode`, `widgets` (`name -> value`), and `inputs`
-    (`name -> "<sourceNodeId>:<slot>"`). `full=true` returns the raw UI
-    workflow and API prompt.
+    (`name -> "<sourceNodeId>:<slot>"`). `layout=true` returns the canvas boxes
+    plus an overlap verdict, `full=true` the raw UI workflow and API prompt.
   - `comfyui_run` — submit the synced API prompt and return the `prompt_id`;
     optionally wait for history.
   - `comfyui_progress` — panel events (current node, step progress, errors),
     the run record, and a live `/queue` snapshot.
-  - `comfyui_edit` — add/remove nodes, set widget values, connect/disconnect
-    inside the open panel through a Host → panel command channel.
+  - `comfyui_edit` — add, remove, move, and reconnect nodes and set widget
+    values inside the open panel through a Host → panel command channel. One
+    batch is applied in order and answers with the node and link counts it left
+    behind, so a half-applied edit is visible in the result.
+  - `comfyui_screenshot` — serialize the panel's editor canvas to a PNG on
+    disk and return the path; open it with `read_image` to see the graph the
+    user sees.
   - `comfyui_node_info` — cached `/object_info` lookup for class types and
     input names.
 - Adds one runtime-context digest line to those sessions, e.g.
@@ -183,6 +188,7 @@ Run the checks with:
 npm test          # checks, host smoke, editor ops, repository hygiene
 npm run contract  # real DSH runtime, needs ../deepseek-harness
 npm run ui        # live panel in a headless browser, needs a running dsh web
+npm run shot -- workflow.json   # render a workflow file to a PNG
 ```
 
 `npm test` covers the proxy, redirect, asset caching, the workflow and event
@@ -203,6 +209,12 @@ Chromium-family browser but installs nothing; see
 [test/ui/README.md](test/ui/README.md). `npm test` also scans the tree and the
 whole history for machine-specific paths, so a stray home directory fails
 before it ships.
+
+`npm run shot -- workflow.json` renders a workflow file to a PNG without a DSH
+session: it loads the graph into a real ComfyUI frontend, frames it the way the
+editor does, writes the image, and prints the boxes that overlap or sit closer
+than 16 pixels (exit code 2 when any do). Use it to judge a layout file, or
+`comfyui_screenshot` for the graph already open in a panel.
 
 ## Current limits
 

@@ -20,8 +20,11 @@ import http from 'node:http'
 import https from 'node:https'
 import net from 'node:net'
 import tls from 'node:tls'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { digestLine, projectFromWorkflow, sanitizeSemantic, stripViewState } from './projection.js'
+import { digestLine, layoutReport, projectFromWorkflow, sanitizeSemantic, stripViewState } from './projection.js'
 import { createWorkflowStore } from './storage.js'
 import { createServiceController } from './service.js'
 
@@ -632,6 +635,7 @@ export function apply(ctx, rawConfig = {}) {
       add(() => sessionCtx.tools.register(runTool(sessionId)))
       add(() => sessionCtx.tools.register(progressTool(sessionId)))
       add(() => sessionCtx.tools.register(editTool(sessionId)))
+      add(() => sessionCtx.tools.register(screenshotTool(sessionId)))
       add(() => sessionCtx.tools.register(nodeInfoTool()))
       add(() => sessionCtx.systemPrompt.context({
         name: 'comfyui:workflow',
@@ -709,17 +713,24 @@ export function apply(ctx, rawConfig = {}) {
         }
         if (args?.layout === true) {
           const nodes = Array.isArray(state.workflow?.nodes) ? state.workflow.nodes : []
+          const projected = nodes.map(node => ({
+            id: node?.id,
+            type: node?.type,
+            pos: node?.pos,
+            size: node?.size,
+          }))
+          // Boxes that share pixels are the one layout fault nobody can see in a
+          // `pos` list, so the verdict travels with the boxes.
+          const { overlaps, tight, missing } = layoutReport(projected)
           return {
             text: JSON.stringify({
               sessionId,
               revision: state.revision,
-              nodes: nodes.map(node => ({
-                id: node?.id,
-                type: node?.type,
-                pos: node?.pos,
-                size: node?.size,
-              })),
-            }),
+              nodes: projected,
+              overlaps,
+              tight,
+              ...(missing.length > 0 ? { missing } : {}),
+            }, null, 2),
           }
         }
         if (args?.full === true) {
@@ -852,22 +863,22 @@ export function apply(ctx, rawConfig = {}) {
   function editTool(sessionId) {
     return {
       name: 'comfyui_edit',
-      description: 'Edit the workflow open in this session\'s ComfyUI panel: add or remove nodes, set widget values, and connect or disconnect inputs. Requires the panel to be open in this session. Call comfyui_graph_read first to see node ids and widget names, and comfyui_node_info to check class types and input names. Operations run in order; the panel re-syncs the workflow afterwards.',
+      description: 'Edit the workflow open in this session\'s ComfyUI panel: add or remove nodes, move them, set widget values, and connect or disconnect inputs. Requires the panel to be open in this session. Call comfyui_graph_read first to see node ids and widget names (layout=true adds canvas boxes plus an overlap verdict), and comfyui_node_info to check class types and input names. Operations run in order, in one batch; the panel re-syncs the workflow afterwards and the result reports the node and link counts it ended with.',
       parameters: {
         type: 'object',
         properties: {
           operations: {
             type: 'array',
             minItems: 1,
-            maxItems: 32,
-            description: 'Ordered edits to apply inside the ComfyUI editor.',
+            maxItems: 128,
+            description: 'Ordered edits to apply inside the ComfyUI editor. Up to 128 fit in one batch, so a whole relayout or rebuild stays atomic.',
             items: {
               type: 'object',
               properties: {
-                op: { type: 'string', enum: ['add_node', 'remove_node', 'set_widget', 'connect', 'disconnect'] },
+                op: { type: 'string', enum: ['add_node', 'remove_node', 'move_node', 'set_widget', 'connect', 'disconnect'] },
                 type: { type: 'string', description: 'Node class for add_node, e.g. KSampler.' },
-                id: { type: 'integer', description: 'Node id: the target of remove_node, set_widget, connect and disconnect (connect/disconnect also accept to.id), and the id to assign on add_node.' },
-                pos: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Canvas position for add_node.' },
+                id: { type: 'integer', description: 'Node id: the target of remove_node, move_node, set_widget, connect and disconnect (connect/disconnect also accept to.id), and the id to assign on add_node.' },
+                pos: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Canvas position: the new placement for move_node, or the initial one for add_node. Positions come from comfyui_graph_read layout=true.' },
                 widgets: { type: 'object', additionalProperties: { description: 'Initial widget value.' }, description: 'Widget values for add_node, keyed by widget name.' },
                 name: { type: 'string', description: 'Widget name for set_widget.' },
                 value: { description: 'New widget value for set_widget; coerced to the widget type.' },
@@ -915,12 +926,75 @@ export function apply(ctx, rawConfig = {}) {
           enqueueCommand(sessionId, { id, operations, at: Date.now() })
         })
         if (answer.ok !== true) throw new Error(`ComfyUI rejected the edit: ${answer.error ?? 'unknown error'}`)
+        const value = answer.value ?? null
         return {
           text: JSON.stringify({
             id,
             sessionId,
             applied: operations.length,
-            result: answer.value,
+            // The panel reports the size of the graph it ended with: a batch
+            // that half-applied (a rebuild that lost its links) is visible here
+            // rather than only in the next status read.
+            nodes: value?.nodes ?? null,
+            links: value?.links ?? null,
+            result: value,
+          }, null, 2),
+        }
+      },
+    }
+  }
+
+  /**
+   * Ask the panel for a picture of its canvas and keep the bytes.
+   *
+   * Coordinates describe a layout; only the pixels show one. The panel holds the
+   * editor canvas, so it serializes that canvas and the Host writes the result
+   * next to the other temporary files; the model then opens it with
+   * `read_image`. Requires the panel to be open, like every other editor tool.
+   */
+  function screenshotTool(sessionId) {
+    return {
+      name: 'comfyui_screenshot',
+      description: 'Capture the ComfyUI panel exactly as it looks right now — nodes, links, zoom and pan — into a PNG on disk, and return its path. Open that path with read_image to see the graph. Use it after a layout edit instead of judging positions from coordinates. Requires the panel to be open in this session.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        additionalProperties: false,
+      },
+      output: textOutput(),
+      async execute() {
+        if (!panelConnected(sessionId)) {
+          throw new Error('The ComfyUI panel is not connected in this session. Open the ComfyUI tab in this session and wait for Connected, then retry.')
+        }
+        const id = randomUUID()
+        const answer = await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            pendingCommands.delete(id)
+            reject(new Error('The ComfyUI panel did not answer the screenshot in time. It may be reloading.'))
+          }, 30000)
+          pendingCommands.set(id, { resolve, timer })
+          enqueueCommand(sessionId, { id, kind: 'screenshot', at: Date.now() })
+        })
+        if (answer.ok !== true) throw new Error(`ComfyUI rejected the screenshot: ${answer.error ?? 'unknown error'}`)
+        const value = answer.value ?? {}
+        const dataUrl = typeof value.dataUrl === 'string' ? value.dataUrl : ''
+        const comma = dataUrl.indexOf(',')
+        if (!dataUrl.startsWith('data:image/png;base64,') || comma === -1) {
+          throw new Error('The panel did not return a PNG. Update the plugin and reload the page so the panel learns the screenshot command.')
+        }
+        const bytes = Buffer.from(dataUrl.slice(comma + 1), 'base64')
+        if (bytes.byteLength === 0) throw new Error('The panel returned an empty image')
+        const directory = join(tmpdir(), 'dsh-comfyui')
+        await mkdir(directory, { recursive: true })
+        const file = join(directory, `panel-${sessionId.slice(0, 8)}-${Date.now()}.png`)
+        await writeFile(file, bytes)
+        return {
+          text: JSON.stringify({
+            path: file,
+            bytes: bytes.byteLength,
+            width: value.width ?? null,
+            height: value.height ?? null,
+            hint: 'read_image on this path shows the graph as the panel renders it.',
           }, null, 2),
         }
       },

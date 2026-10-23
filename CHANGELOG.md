@@ -5,6 +5,27 @@ truth, and every release is pinned by a commit in `market/index.json`.
 
 ## Unreleased
 
+- Fix the panel spinning forever on `Loading the editor…` while ComfyUI is
+  stopped: the stage now follows the server snapshot, so a stopped server shows
+  `ComfyUI is not running` with Start and Server settings, a starting one shows
+  elapsed seconds, and a frontend that never exposes `comfyAPI.app` after 45 s
+  offers Reload instead of an endless spinner.
+- Add `comfyui_edit` op `move_node`: repositioning a node no longer means
+  removing and re-adding it, so a relayout keeps every link and widget value.
+  A batch now takes up to 128 operations, so a whole rebuild fits in one call
+  instead of a remove/add batch followed by a link batch.
+- `comfyui_edit` answers with the graph's `nodes` and `links` counts, so a batch
+  that half-applied is visible in the result instead of in the next status read.
+- Add `comfyui_screenshot`: the panel serializes its editor canvas to a PNG, the
+  Host writes it to the temporary directory, and the tool returns the path.
+- `comfyui_graph_read layout=true` reports `overlaps` and `tight` pairs computed
+  from the boxes, and `missing` nodes without a `pos`/`size`.
+- Add `npm run shot -- workflow.json`: render a workflow file to a PNG in a
+  headless browser, framed the way the editor frames it, with the same overlap
+  verdict (exit code 2 when boxes overlap).
+- `test/ui/browser.mjs`: `waitFor` no longer times out when the expression
+  evaluates to an object (the answer is coerced before it crosses the DevTools
+  protocol), and `findBrowser` names the paths it looked at.
 - Drop the session-header `ComfyUI` shortcut. The panel stays reachable from
   the right sidebar: its guide lists every registered tab type, and the tab
   is restored once opened. The header row keeps only DSH's own controls, so

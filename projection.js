@@ -188,3 +188,55 @@ export function stripViewState(workflow) {
   }
   return { ...workflow, extra: rest }
 }
+
+/**
+ * Pairs of nodes whose canvas boxes overlap, plus pairs closer than `gap`.
+ *
+ * A workflow that reads correctly has no overlapping boxes: the model cannot
+ * see the canvas, and a `pos` list that "looks fine" in JSON hides the fact
+ * that two boxes share pixels. Measuring it here means every reader of
+ * `comfyui_graph_read layout=true` gets the verdict instead of recomputing it.
+ * @param nodes - projected nodes carrying `pos` and `size`.
+ * @param [options] - `gap` is the distance below which a pair counts as tight.
+ * @returns `{ overlaps, tight, missing }`, each a list of `{ a, b }` id pairs.
+ */
+export function layoutReport(nodes, { gap = 16 } = {}) {
+  const boxes = []
+  const missing = []
+  for (const node of Array.isArray(nodes) ? nodes : []) {
+    const id = node?.id
+    const pos = node?.pos
+    const size = node?.size
+    if (!Array.isArray(pos) || !Array.isArray(size) || pos.length < 2 || size.length < 2) {
+      missing.push(id)
+      continue
+    }
+    const [x, y] = pos.map(Number)
+    const [w, h] = size.map(Number)
+    if (![x, y, w, h].every(Number.isFinite)) {
+      missing.push(id)
+      continue
+    }
+    boxes.push({ id, x, y, w, h })
+  }
+  const overlaps = []
+  const tight = []
+  for (let i = 0; i < boxes.length; i += 1) {
+    for (let j = i + 1; j < boxes.length; j += 1) {
+      const a = boxes[i]
+      const b = boxes[j]
+      const overlapX = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)
+      const overlapY = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y)
+      if (overlapX > 0 && overlapY > 0) {
+        overlaps.push({ a: a.id, b: b.id, x: Math.round(overlapX), y: Math.round(overlapY) })
+        continue
+      }
+      // Chebyshev separation: how many pixels of clearance the pair keeps.
+      const distanceX = Math.max(a.x - (b.x + b.w), b.x - (a.x + a.w))
+      const distanceY = Math.max(a.y - (b.y + b.h), b.y - (a.y + a.h))
+      const clearance = Math.max(distanceX, distanceY)
+      if (clearance <= gap) tight.push({ a: a.id, b: b.id, gap: Math.round(clearance) })
+    }
+  }
+  return { overlaps, tight, missing }
+}

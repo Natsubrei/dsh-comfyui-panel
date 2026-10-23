@@ -28,6 +28,13 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
 - `test/ui/` — `npm run ui`: a headless browser check of the live panel, one
   dependency-free DevTools-protocol driver plus the DSH/ComfyUI-specific
   checklist. See `test/ui/README.md`.
+- `scripts/graph-shot.mjs` — `npm run shot -- workflow.json`: render a workflow
+  file to a PNG in a headless browser and report overlapping boxes. The way to
+  see a layout without a panel, and the correct Fit framing lives there.
+- Live workflow record — the panel is canonical; the Host mirrors the graph to
+  the `dsh_comfyui` storage domain (`tables.sessions.<sessionId>.workflow`, with
+  the API `prompt` beside it). Read it when you need the raw UI JSON while the
+  panel is closed.
 - `test/repo-hygiene.mjs` — fails when this machine's paths, account, or
   hostname appear in the tree or in any commit.
 - `.github/workflows/test.yml` — CI: `npm test` on Node 22 and 24, nothing to
@@ -44,7 +51,13 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
 npm test          # checks, host smoke, editor ops, hygiene, market index
 npm run contract  # real DSH runtime; needs checkout at ../deepseek-harness
 npm run ui        # live panel in a headless browser; needs a running dsh web
+npm run shot -- workflow.json   # render a workflow file to a PNG
 ```
+
+A layout change is verified by looking, not by arithmetic: `comfyui_screenshot`
+for the panel's own canvas, `npm run shot` for a workflow file. Both print or
+return a path to open with `read_image`; `comfyui_graph_read layout=true` adds
+the overlapping pairs when only the numbers are in question.
 
 A new route or tool needs a case in `host-smoke.mjs`; a new integration point
 (path, service, scope, tool schema) additionally needs a case in
@@ -85,9 +98,11 @@ working in.
    The gear opens settings only; settings hold configuration, not lifecycle
    buttons.
 4. ✔ On first open the graph is framed in the canvas and the counter shows
-   `synced HH:MM`; while ComfyUI is stopped the canvas is replaced by
-   `ComfyUI is not running` and a Start button. (The stopped state needs a
-   manual run: stop the server from the bar and look.)
+   `synced HH:MM`. The stage has three faces and never spins forever: a stopped
+   server shows `ComfyUI is not running` with Start (plus Server settings), a
+   starting one shows `Starting ComfyUI… Ns`, and a frontend that never hands
+   over `comfyAPI.app` within 45 s shows `The editor did not load` with Reload.
+   (The stopped state needs a manual run: stop the server from the bar and look.)
 5. ✔ Zoom, pan, and resize the panel; `rev` must not change. Edit a widget in
    the editor or let the model do it; the revision goes up by exactly one and a
    short toast names what changed.

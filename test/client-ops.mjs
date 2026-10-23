@@ -16,7 +16,9 @@ await import('../client.js')
 assert.equal(registered.id, 'dsh-comfyui-panel')
 
 const fakeReact = {
-  createElement: () => null,
+  // A tree instead of `null`: the stage overlay is asserted by rendering it,
+  // since "shows a Start button" is the thing a spinner bug hides.
+  createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
   useCallback: fn => fn,
   useEffect: () => {},
   useRef: value => ({ current: value }),
@@ -114,6 +116,37 @@ const run = (graph, operation, LiteGraph = { createNode: () => null }) => applyO
 // add_node rejects a class the editor does not know.
 assert.throws(() => run(makeGraph().graph, { op: 'add_node', type: 'NoSuchNode' }), /Unknown node type/)
 
+// move_node changes `pos` and nothing else. Repositioning used to mean
+// remove+add, which silently dropped every link and widget value on the node.
+{
+  const { graph, nodes } = makeGraph()
+  const node = makeNode(graph, 7, ['positive'], [{ name: 'steps', value: 12 }])
+  node.pos = [0, 0]
+  nodes.set(7, node)
+  const moved = run(graph, { op: 'move_node', id: 7, pos: [300, '120'] })
+  assert.deepEqual(node.pos, [300, 120])
+  assert.deepEqual(moved.pos, [300, 120])
+  assert.equal(node.inputs[0].link, null, 'moving must not touch links')
+  assert.equal(node.widgets[0].value, 12, 'moving must not touch widgets')
+  assert.throws(() => run(graph, { op: 'move_node', id: 7, pos: [1] }), /needs "pos"/)
+  assert.throws(() => run(graph, { op: 'move_node', id: 7, pos: ['a', 2] }), /needs "pos"/)
+  assert.throws(() => run(graph, { op: 'move_node', id: 99, pos: [1, 2] }), /Node 99 not found/)
+}
+
+// A screenshot serializes the editor canvas; a canvas that cannot produce PNG
+// bytes is an error rather than an empty picture.
+{
+  const { captureGraph } = mod.__ops
+  const canvas = { width: 800, height: 600, toDataURL: () => 'data:image/png;base64,iVBORw0KGgo=' }
+  const shot = captureGraph({ canvas: { canvas } })
+  assert.equal(shot.kind, 'screenshot')
+  assert.equal(shot.width, 800)
+  assert.equal(shot.height, 600)
+  assert.match(shot.dataUrl, /^data:image\/png;base64,/)
+  assert.throws(() => captureGraph({}), /canvas is not ready/)
+  assert.throws(() => captureGraph({ canvas: { canvas: { width: 1, height: 1, toDataURL: () => '' } } }), /refused to serialize/)
+}
+
 // Both dictionaries carry the same keys, so a missing translation cannot ship.
 assert.deepEqual(Object.keys(en).sort(), Object.keys(zh).sort())
 
@@ -208,6 +241,154 @@ const stopped = { health: false, owned: false, state: 'stopped', pid: null }
   assert.equal(failedBridge.label, `${en.barRunning} · ${en.error}`)
 }
 
+// The stage overlay. The regression: with ComfyUI stopped, the embedded
+// frontend never exposes `comfyAPI.app`, so the bridge stays `loading` and the
+// panel spun forever over a dead server. The server snapshot has to lead.
+const { overlayPlan } = mod.__ops
+const stage = (service, extra = {}) => overlayPlan({
+  status: 'loading',
+  service,
+  bootSeconds: 0,
+  dir: '/opt/ComfyUI',
+  t: text,
+  ...extra,
+})
+
+// Stopped + still "loading" is the bug: not a spinner, a way to start it.
+{
+  const result = stage(stopped)
+  assert.equal(result.stage, 'stopped')
+  assert.equal(result.title, en.notRunning)
+  assert.equal(result.canStart, true)
+  assert.equal(result.hint, '')
+}
+
+// No directory configured: Start is inert and the reason is on screen, not
+// only in a hover title a touch user never sees.
+{
+  const result = stage(stopped, { dir: '   ' })
+  assert.equal(result.stage, 'stopped')
+  assert.equal(result.canStart, false)
+  assert.equal(result.needDir, true)
+  assert.equal(result.hint, en.serverPick)
+}
+
+// Starting is a progress report, not a clickable Start.
+{
+  const result = stage({ ...stopped, state: 'starting' }, { bootSeconds: 7 })
+  assert.equal(result.stage, 'starting')
+  assert.equal(result.title, en.serverStarting)
+  assert.equal(result.seconds, 7)
+  assert.equal(result.canStart, false)
+}
+
+// Healthy and booting: spinner with elapsed seconds.
+{
+  const result = stage(running, { bootSeconds: 3 })
+  assert.equal(result.stage, 'loading')
+  assert.equal(result.title, en.editorLoading)
+  assert.equal(result.seconds, 3)
+}
+
+// Healthy but the frontend never hands over the editor: say so and offer a way
+// out instead of an unbounded spinner.
+{
+  const result = stage(running, { bootSeconds: 45 })
+  assert.equal(result.stage, 'stalled')
+  assert.equal(result.title, en.editorStalled)
+  assert.equal(result.hint, en.editorStalledHint)
+}
+
+// A ready editor owns the stage; syncing is still the editor.
+{
+  assert.equal(stage(running, { status: 'ready' }).stage, 'none')
+  assert.equal(stage(running, { status: 'syncing' }).stage, 'none')
+  assert.equal(stage(null, { status: 'ready' }).stage, 'none')
+}
+
+// Unknown service (the snapshot has not arrived yet) may still be booting.
+{
+  const result = stage(null)
+  assert.equal(result.stage, 'loading')
+  assert.equal(result.seconds, 0)
+}
+
+// A bridge error with a live server is not an overlay: the editor stays usable
+// and the notice above it explains the failed sync.
+{
+  assert.equal(stage(running, { status: 'error' }).stage, 'none')
+}
+
+// What the user actually sees, rendered: no browser, no hooks, just the tree.
+{
+  const { StageOverlay } = mod.__ops
+  const nodes = node => {
+    if (node === null || node === undefined || typeof node !== 'object') return []
+    if (Array.isArray(node)) return node.flatMap(nodes)
+    return [node, ...(node.children ?? []).flatMap(nodes)]
+  }
+  const render = (result, extra = {}) => nodes(StageOverlay({
+    stage: result,
+    busy: false,
+    t: text,
+    onStart() {},
+    onReload() {},
+    onService() {},
+    ...extra,
+  }))
+  const textOf = node => (Array.isArray(node) ? node.map(textOf).join('') : (node.children ?? []).map(child => (typeof child === 'string' ? child : textOf(child))).join(''))
+  const buttons = tree => tree.filter(node => node.type === 'button')
+
+  // Stopped: the title, the reason, Start, and a way into the settings.
+  {
+    const tree = render(stage(stopped))
+    assert.equal(tree.find(node => node.props.className === 'dsh-comfyui-empty-title').children[0], en.notRunning)
+    const [start, settings] = buttons(tree)
+    assert.equal(textOf(start), en.serverStart)
+    assert.equal(start.props['data-variant'], 'primary')
+    assert.equal(start.props.disabled, false)
+    assert.equal(textOf(settings), en.serverPanel)
+    assert.equal(tree.some(node => node.props.className === 'dsh-comfyui-spinner'), false)
+  }
+
+  // Stopped with no directory: Start is inert, and the hint is visible text.
+  {
+    const tree = render(stage(stopped, { dir: '' }))
+    const start = buttons(tree)[0]
+    assert.equal(start.props.disabled, true)
+    assert.equal(start.props.title, en.serverPick)
+    assert.ok(tree.some(node => node.props.className === 'dsh-comfyui-empty-hint' && node.children[0] === en.serverPick))
+  }
+
+  // A start in flight must not be clickable twice.
+  {
+    const tree = render(stage(stopped), { busy: true })
+    assert.equal(buttons(tree)[0].props.disabled, true)
+  }
+
+  // Stalled: the recovery action is Reload, not Start.
+  {
+    const tree = render(stage(running, { bootSeconds: 90 }))
+    assert.equal(tree.find(node => node.props.className === 'dsh-comfyui-empty-title').children[0], en.editorStalled)
+    assert.equal(textOf(buttons(tree)[0]), en.reload)
+    assert.equal(buttons(tree).length, 2)
+  }
+
+  // Loading and starting keep the spinner, with the elapsed time in the text.
+  {
+    const loading = render(stage(running, { bootSeconds: 3 }))
+    assert.equal(loading.some(node => node.props.className === 'dsh-comfyui-spinner'), true)
+    assert.equal(loading.find(node => node.type === 'span' && node.props.className === undefined).children[0], `${en.editorLoading} 3s`)
+    assert.equal(buttons(loading).length, 0)
+    const starting = render(stage({ ...stopped, state: 'starting' }, { bootSeconds: 7 }))
+    assert.equal(starting.some(node => node.props.className === 'dsh-comfyui-spinner'), true)
+    assert.ok(textOf(starting).includes(`${en.serverStarting} 7s`))
+  }
+
+  // Ready: nothing covers the canvas.
+  assert.equal(render(stage(running, { status: 'ready' })).length, 0)
+}
+
 // The Host has to queue as the iframe's socket, or ComfyUI sends the run's
 // events to nobody the UI is listening to.
 {
@@ -289,6 +470,7 @@ const stopped = { health: false, owned: false, state: 'stopped', pid: null }
   assert.equal(describeOperation({ op: 'set_widget', id: 7, name: 'steps', value: 6 }), '#7.steps=6')
   assert.equal(describeOperation({ op: 'add_node', type: 'KSampler' }, { id: 13, type: 'KSampler' }), '+KSampler #13')
   assert.equal(describeOperation({ op: 'remove_node', id: 9 }), '-9')
+  assert.equal(describeOperation({ op: 'move_node', id: 7 }, { pos: [300, 120] }), '#7 @300,120')
   assert.equal(
     describeOperation({ op: 'connect', from: { id: 4, output: 0 }, to: { id: 7, input: 'model' } }),
     '#4:0→#7.model',

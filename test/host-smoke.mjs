@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply, applySeedControls } from '../index.js'
@@ -255,8 +255,8 @@ assert.equal(asset.headers.get('cache-control'), 'public, max-age=31536000, immu
 
 const workflow = {
   nodes: [
-    { id: 7, type: 'KSampler', title: 'Sampler', inputs: [{ name: 'model', link: 1 }], outputs: [{ name: 'LATENT' }] },
-    { id: 4, type: 'UNETLoader', title: 'UNETLoader', inputs: [], outputs: [{ name: 'MODEL' }] },
+    { id: 7, type: 'KSampler', title: 'Sampler', pos: [420, 40], size: [315, 262], inputs: [{ name: 'model', link: 1 }], outputs: [{ name: 'LATENT' }] },
+    { id: 4, type: 'UNETLoader', title: 'UNETLoader', pos: [0, 40], size: [340, 82], inputs: [], outputs: [{ name: 'MODEL' }] },
   ],
   links: [[1, 4, 0, 7, 0, 'MODEL']],
 }
@@ -359,6 +359,41 @@ assert.equal(readRaw.workflow.nodes.length, 2)
 assert.equal(readRaw.revision, 1)
 assert.equal('ds' in (readRaw.workflow.extra ?? {}), false, 'view state is stripped from the stored workflow')
 
+// The layout read carries the overlap verdict: boxes that share pixels are the
+// one layout fault a `pos` list hides.
+const layout = parse(await s1.tools.get('comfyui_graph_read').execute({ layout: true }, exec))
+assert.equal(layout.nodes.length, 2)
+assert.deepEqual(layout.nodes.find(node => node.id === 4).size, [340, 82])
+assert.deepEqual(layout.overlaps, [])
+assert.deepEqual(layout.tight, [])
+assert.equal('missing' in layout, false)
+{
+  const sOverlap = addAgent(host, 's-overlap')
+  await host.fetches.get('/api/comfyui/state').fetch(new Request(
+    'http://127.0.0.1/api/comfyui/state?sessionId=s-overlap',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: 's-overlap',
+        revision: 1,
+        workflow: {
+          nodes: [
+            { id: 1, type: 'A', pos: [0, 0], size: [100, 50] },
+            { id: 2, type: 'B', pos: [60, 20], size: [100, 50] },
+          ],
+          links: [],
+        },
+        prompt: null,
+      }),
+    },
+  ))
+  const overlapping = parse(await sOverlap.tools.get('comfyui_graph_read').execute({ layout: true }, execOf('s-overlap')))
+  assert.equal(overlapping.overlaps.length, 1)
+  assert.deepEqual([overlapping.overlaps[0].a, overlapping.overlaps[0].b].sort(), [1, 2])
+  assert.ok(overlapping.overlaps[0].x > 0 && overlapping.overlaps[0].y > 0)
+}
+
 const run = parse(await s1.tools.get('comfyui_run').execute({}, exec))
 assert.equal(run.prompt_id, 'p1')
 // Execution events only reach the client that queued the prompt, so a run the
@@ -425,13 +460,70 @@ const answered = await host.fetches.get('/api/comfyui/commands/result').fetch(ne
   {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ sessionId: 's1', id: polled.command.id, ok: true, value: { applied: 1 } }),
+    body: JSON.stringify({ sessionId: 's1', id: polled.command.id, ok: true, value: { applied: 1, nodes: 2, links: 1 } }),
   },
 ))
 assert.equal((await answered.json()).accepted, true)
 const edited = parse(await editPromise)
 assert.equal(edited.applied, 1)
 assert.equal(edited.sessionId, 's1')
+// The panel's end-of-edit counters ride along, so a batch that dropped every
+// link shows up in the tool result instead of the next status read.
+assert.equal(edited.nodes, 2)
+assert.equal(edited.links, 1)
+
+// A screenshot takes the same command channel: the panel serializes its canvas,
+// the Host keeps the bytes and hands back a path.
+{
+  const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex')
+  const pollShot = host.fetches.get('/api/comfyui/commands/poll').fetch(new Request(
+    'http://127.0.0.1/api/comfyui/commands/poll',
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 's1', timeoutMs: 3000 }) },
+  ))
+  await delay(30)
+  const shotPromise = s1.tools.get('comfyui_screenshot').execute({}, exec)
+  const shotCommand = (await (await pollShot).json()).command
+  assert.equal(shotCommand.kind, 'screenshot', 'a screenshot is not an edit: it carries no operations')
+  await host.fetches.get('/api/comfyui/commands/result').fetch(new Request(
+    'http://127.0.0.1/api/comfyui/commands/result',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: 's1',
+        id: shotCommand.id,
+        ok: true,
+        value: { dataUrl: `data:image/png;base64,${png.toString('base64')}`, width: 800, height: 600 },
+      }),
+    },
+  ))
+  const shot = parse(await shotPromise)
+  assert.equal(shot.bytes, png.byteLength)
+  assert.equal(shot.width, 800)
+  assert.equal(shot.height, 600)
+  assert.deepEqual(readFileSync(shot.path), png, 'the written file must be the panel bytes')
+  rmSync(shot.path, { force: true })
+}
+
+// A panel that answers a screenshot without pixels is an error, not an empty file.
+{
+  const pollBad = host.fetches.get('/api/comfyui/commands/poll').fetch(new Request(
+    'http://127.0.0.1/api/comfyui/commands/poll',
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 's1', timeoutMs: 3000 }) },
+  ))
+  await delay(30)
+  const badPromise = s1.tools.get('comfyui_screenshot').execute({}, exec)
+  const badCommand = (await (await pollBad).json()).command
+  await host.fetches.get('/api/comfyui/commands/result').fetch(new Request(
+    'http://127.0.0.1/api/comfyui/commands/result',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 's1', id: badCommand.id, ok: true, value: { kind: 'screenshot' } }),
+    },
+  ))
+  await assert.rejects(badPromise, /did not return a PNG/)
+}
 
 // An older panel (or a record persisted before projections) still reads:
 // widgets are positional, but links resolve to their source.
