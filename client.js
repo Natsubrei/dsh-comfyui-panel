@@ -33,7 +33,7 @@ window.__ModuleLoader__.load({
 
     const en = {
       title: 'ComfyUI',
-      description: 'ComfyUI in the sidebar, sharing one graph with the model.',
+      description: 'ComfyUI in the sidebar, shared with the model',
       loading: 'Starting ComfyUI…',
       ready: 'Connected',
       syncing: 'Syncing…',
@@ -90,7 +90,7 @@ window.__ModuleLoader__.load({
     }
     const zh = {
       title: 'ComfyUI',
-      description: '侧栏里的 ComfyUI，和模型共用同一份工作流。',
+      description: '侧栏里的 ComfyUI，与模型共用一份工作流',
       loading: '正在启动 ComfyUI…',
       ready: '已连接',
       syncing: '同步中…',
