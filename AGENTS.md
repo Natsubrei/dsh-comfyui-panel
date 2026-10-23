@@ -127,6 +127,9 @@ A release is a commit plus an index entry that pins it:
 
 1. Bump `package.json` and add the CHANGELOG section.
 2. Commit, then tag: `git tag v<version> && git push origin main --tags`.
+   This commit cannot pass the pre-commit hook: the index still pins the
+   previous release and `npm test` says so. Commit it with `--no-verify`; step 4
+   turns the suite green again before anything is pushed.
 3. `npm run market` — writes `market/index.json` with `version` pinned to that
    commit and its commit time as `publishTimestamp`, keeping older versions.
 4. `npm test` (validates the index against the real validator), then commit

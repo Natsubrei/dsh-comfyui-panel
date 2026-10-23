@@ -3,13 +3,16 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
-## Unreleased
+## 0.6.8
 
 - Read execution events from the editor's own event bus instead of opening a
   ComfyUI WebSocket of the panel's own. That socket never received anything but
   `status` broadcasts — no prompt queues under its id — so the run record, the
   digest's run segment, `comfyui_progress` and the completion shown in the bar
   all stayed empty while the editor itself ran fine.
+- A run that was joined after its `execution_start` — a reload, or the editor's
+  socket reconnecting mid-generation — now reads as running instead of staying
+  `queued` until the image is already on disk.
 - An edit whose tool call timed out is no longer replayed: `comfyui_edit`
   removes it from the queue when it gives up, and a poll discards any command
   older than 60 s. A panel that reconnected later used to apply the edit with
@@ -20,6 +23,9 @@ truth, and every release is pinned by a commit in `market/index.json`.
 - A sync that a newer one has superseded is dropped before it is posted, so two
   overlapping pushes cannot leave the Host holding the older graph under the
   higher revision until the next forced sync 30 s later.
+- `npm run ui` can open the panel again: its coordinate waits returned `true`
+  instead of a point, so the click went out with no position. It also asserts
+  that an execution event dispatched on the editor's bus reaches the bar.
 
 ## 0.6.7
 
