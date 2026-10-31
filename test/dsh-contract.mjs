@@ -13,7 +13,7 @@
  */
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -80,6 +80,32 @@ const WORKFLOW = {
     },
   ],
   links: [[1, 1, 0, 2, 0, 'MODEL']],
+  groups: [],
+  config: {},
+  extra: {},
+  version: 0.4,
+}
+
+/** A one-node UI workflow, distinct from the two-node session graph. */
+const IMPORT_WORKFLOW = {
+  last_node_id: 1,
+  last_link_id: 0,
+  nodes: [
+    {
+      id: 1,
+      type: 'KSampler',
+      pos: [0, 0],
+      size: [320, 250],
+      flags: {},
+      order: 0,
+      mode: 0,
+      inputs: [],
+      outputs: [],
+      properties: {},
+      widgets_values: [42, 'fixed', 6, 1, 'euler', 'normal', 1],
+    },
+  ],
+  links: [],
   groups: [],
   config: {},
   extra: {},
@@ -188,6 +214,7 @@ async function callTool(name, args, callId) {
 }
 
 let tempDir
+let workflowDir
 try {
   // ── Routes are accepted by the real Connection service ───────────────────
   // Reaching this point means every `connection.fetch.register` path is a
@@ -244,6 +271,12 @@ try {
   assert.equal(graph.projectedFrom, 'workflow')
   assert.deepEqual(graph.nodes.map(node => node.type), ['CheckpointLoaderSimple', 'KSampler'])
 
+  // The workflow file tools resolve paths against the session workspace. The
+  // agent object is mutable and the tool executor reads
+  // `exec.agent.session.header.cwd`, so the test can give it a temp one.
+  workflowDir = await mkdtemp(join(tmpdir(), 'dsh-comfyui-workflows-'))
+  agent.session = { id: SESSION_ID, header: { cwd: workflowDir } }
+
   // A named workflow writes the real domain table, not only the session slot.
   const savedResult = await callTool('comfyui_workflow_save', { name: 'contract' }, 'contract-workflow-save')
   const savedWorkflow = JSON.parse(savedResult.content.find(part => part.type === 'text')?.text)
@@ -255,6 +288,65 @@ try {
   const listedWorkflows = JSON.parse(listedResult.content.find(part => part.type === 'text')?.text)
   assert.equal(listedWorkflows.count, 1)
   assert.equal(listedWorkflows.workflows[0].name, 'contract')
+
+  // ── Workflow files: export and import write real files in the workspace ──
+  const exportPath = join(workflowDir, 'contract.json')
+  const exportedResult = await callTool(
+    'comfyui_workflow_export',
+    { name: 'contract', path: exportPath },
+    'contract-workflow-export',
+  )
+  const exported = JSON.parse(exportedResult.content.find(part => part.type === 'text')?.text)
+  assert.equal(exported.path, exportPath)
+  const exportedFile = JSON.parse(await readFile(exported.path, 'utf8'))
+  assert.equal(exportedFile.nodes.length, 2)
+
+  const importPath = join(workflowDir, 'imported.json')
+  await writeFile(importPath, `${JSON.stringify(IMPORT_WORKFLOW, null, 2)}\n`)
+  const importedResult = await callTool(
+    'comfyui_workflow_import',
+    { path: importPath, name: 'imported' },
+    'contract-workflow-import',
+  )
+  const imported = JSON.parse(importedResult.content.find(part => part.type === 'text')?.text)
+  assert.equal(imported.imported, 'imported')
+  assert.equal(imported.nodes, 1)
+
+  const relistedResult = await callTool('comfyui_workflow_list', {}, 'contract-workflow-list-imported')
+  const relistedWorkflows = JSON.parse(relistedResult.content.find(part => part.type === 'text')?.text)
+  assert.equal(relistedWorkflows.count, 2)
+  assert.deepEqual(
+    relistedWorkflows.workflows.map(workflow => workflow.name).sort(),
+    ['contract', 'imported'],
+  )
+
+  // ── Load: the panel's long-poll takes the command and answers it ─────────
+  // Start the poll first so `panelConnected` sees a waiter; the load tool then
+  // queues the command for that same poll. The result route releases it.
+  const pollPending = post('/api/comfyui/commands/poll', { sessionId: SESSION_ID, timeoutMs: 1000 })
+  const loadPending = callTool('comfyui_workflow_load', { name: 'imported' }, 'contract-workflow-load')
+  const polled = await pollPending
+  assert.equal(polled.status, 200, 'command poll should be routed')
+  const polledBody = await polled.json()
+  assert.equal(polledBody.ok, true)
+  const command = polledBody.command
+  assert.ok(command !== null && typeof command === 'object', 'the poll should take the load command')
+  assert.equal(command.kind, 'workflow')
+  assert.equal(command.workflow.nodes.length, 1)
+
+  const answered = await post('/api/comfyui/commands/result', {
+    sessionId: SESSION_ID,
+    id: command.id,
+    ok: true,
+    value: { applied: 1, nodes: 1, links: 0, operations: [{ op: 'load_workflow' }] },
+  })
+  assert.equal(answered.status, 200, 'command result should be routed')
+  assert.equal((await answered.json()).accepted, true)
+
+  const loadedResult = await loadPending
+  const loaded = JSON.parse(loadedResult.content.find(part => part.type === 'text')?.text)
+  assert.equal(loaded.name, 'imported')
+  assert.equal(loaded.nodes, 1)
 
   // ── The digest lands in the agent's runtime context, not the global one ──
   const assembly = await ctx.systemPrompt.assemble({ scope: agent })
@@ -295,6 +387,7 @@ try {
   assert.ok(tempDir.startsWith(resolve(tmpdir()) + sep))
   console.log('dsh contract test passed')
 } finally {
+  if (workflowDir !== undefined) await rm(workflowDir, { recursive: true, force: true })
   if (tempDir !== undefined) await rm(tempDir, { recursive: true, force: true })
   await pluginFiber.dispose().catch(() => {})
   await scopeFiber.dispose().catch(() => {})
