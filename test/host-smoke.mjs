@@ -113,7 +113,7 @@ function addAgent(host, sessionId) {
 }
 
 /** Storage medium shared across Host instances, like the JSON backend file. */
-function createStorage(state = { sessions: new Map(), settings: new Map() }) {
+function createStorage(state = { sessions: new Map(), workflows: new Map(), settings: new Map() }) {
   const opened = []
   return {
     state,
@@ -543,6 +543,82 @@ assert.equal(edited.links, 1)
     },
   ))
   await assert.rejects(badPromise, /did not return a PNG/)
+}
+
+// Named workflows: save, list, export/import, and load through the command
+// channel. Only the load needs the panel; the rest read the Host's mirrored
+// state, like comfyui_graph_read.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-comfyui-workflows-'))
+  try {
+    const saved = parse(await s1.tools.get('comfyui_workflow_save').execute({ name: 'portrait' }, exec))
+    assert.equal(saved.saved, 'portrait')
+    assert.equal(saved.replaced, false)
+    assert.equal(saved.nodes, 2)
+    assert.equal(saved.persistence.backend, 'storage')
+
+    const again = parse(await s1.tools.get('comfyui_workflow_save').execute({ name: 'portrait' }, exec))
+    assert.equal(again.replaced, true, 'saving the same name replaces that slot')
+
+    const listed = parse(await s1.tools.get('comfyui_workflow_list').execute({}, exec))
+    assert.equal(listed.count, 1)
+    assert.equal(listed.workflows[0].name, 'portrait')
+    assert.equal(listed.workflows[0].nodes, 2)
+
+    const exportedPath = join(dir, 'portrait.json')
+    const exported = parse(await s1.tools.get('comfyui_workflow_export').execute({ name: 'portrait', path: exportedPath }, exec))
+    assert.equal(exported.path, exportedPath)
+    assert.equal(JSON.parse(readFileSync(exportedPath, 'utf8')).nodes.length, 2)
+
+    const importPath = join(dir, 'imported.json')
+    writeFileSync(importPath, JSON.stringify({ nodes: [{ id: 9, type: 'KSampler' }], links: [] }))
+    const imported = parse(await s1.tools.get('comfyui_workflow_import').execute({ path: importPath }, exec))
+    assert.equal(imported.imported, 'imported', 'the name defaults to the file stem')
+    assert.equal(imported.nodes, 1)
+    assert.equal(imported.replaced, false)
+
+    const pollLoad = host.fetches.get('/api/comfyui/commands/poll').fetch(new Request(
+      'http://127.0.0.1/api/comfyui/commands/poll',
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 's1', timeoutMs: 1000 }) },
+    ))
+    await delay(30)
+    const loadPromise = s1.tools.get('comfyui_workflow_load').execute({ name: 'imported' }, exec)
+    const loadCommand = (await (await pollLoad).json()).command
+    assert.equal(loadCommand.kind, 'workflow')
+    assert.equal(loadCommand.workflow.nodes.length, 1)
+    await host.fetches.get('/api/comfyui/commands/result').fetch(new Request(
+      'http://127.0.0.1/api/comfyui/commands/result',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: 's1', id: loadCommand.id, ok: true, value: { applied: 1, nodes: 1, links: 0, operations: [{ op: 'load_workflow' }] } }),
+      },
+    ))
+    const loaded = parse(await loadPromise)
+    assert.equal(loaded.name, 'imported')
+    assert.equal(loaded.nodes, 1)
+
+    // A page with the previous client falls back to "edit with no operations"
+    // and answers success; the tool must not accept that as a load.
+    const pollOld = host.fetches.get('/api/comfyui/commands/poll').fetch(new Request(
+      'http://127.0.0.1/api/comfyui/commands/poll',
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 's1', timeoutMs: 1000 }) },
+    ))
+    await delay(30)
+    const oldPromise = s1.tools.get('comfyui_workflow_load').execute({ name: 'imported' }, exec)
+    const oldCommand = (await (await pollOld).json()).command
+    await host.fetches.get('/api/comfyui/commands/result').fetch(new Request(
+      'http://127.0.0.1/api/comfyui/commands/result',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: 's1', id: oldCommand.id, ok: true, value: { applied: 0, nodes: 1, links: 0 } }),
+      },
+    ))
+    await assert.rejects(oldPromise, /did not confirm/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 }
 
 // A disposed agent must not leave its panel waiting: DSH fires this event on

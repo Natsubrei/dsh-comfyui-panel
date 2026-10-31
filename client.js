@@ -1062,6 +1062,31 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * Replace the editor's graph with a saved UI workflow.
+     *
+     * `loadGraphData` is the same entry ComfyUI's own Load uses: it cleans the
+     * current graph, configures the new one, and runs the frontend's load
+     * hooks. The saved camera is ignored (`restore_view` false) because synced
+     * workflows strip view state; the caller frames the result instead.
+     * @param {any} app - the editor's `comfyAPI.app.app`.
+     * @param {any} workflow - a serialized UI workflow.
+     * @returns {Promise<{nodes: number, links: number}>} the loaded graph's size.
+     */
+    async function applyWorkflowGraph(app, workflow) {
+      if (workflow === null || typeof workflow !== 'object' || Array.isArray(workflow) || !Array.isArray(workflow.nodes)) {
+        throw new Error('The saved workflow is not a ComfyUI UI workflow')
+      }
+      if (typeof app?.loadGraphData !== 'function') {
+        throw new Error('This ComfyUI frontend cannot load a workflow; reload the panel')
+      }
+      await app.loadGraphData(workflow, true, false)
+      const graph = app.rootGraphOrUndefined ?? app.rootGraph ?? app.graph
+      graph?.setDirtyCanvas?.(true, true)
+      const links = graph?.links instanceof Map ? graph.links.size : Object.keys(graph?.links ?? {}).length
+      return { nodes: graph?._nodes?.length ?? workflow.nodes.length, links }
+    }
+
     function ComfyPanel({ sessionId, t }) {
       const iframeRef = useRef(null)
       const appRef = useRef(null)
@@ -1289,8 +1314,23 @@ window.__ModuleLoader__.load({
         return { applied: applied.length, nodes: graph._nodes?.length ?? 0, links, operations: applied }
       }, [syncNow, t])
 
+      const applyWorkflow = useCallback(async (app, workflow) => {
+        const value = await applyWorkflowGraph(app, workflow)
+        // Synced workflows carry no camera, so frame the loaded graph instead
+        // of leaving it wherever the previous workflow was panned to.
+        await fitCanvas(app).catch(() => {})
+        await syncNow(true)
+        return { applied: 1, nodes: value.nodes, links: value.links, operations: [{ op: 'load_workflow' }] }
+      }, [syncNow])
+
+      const runCommand = useCallback(async (app, command) => {
+        if (command.kind === 'screenshot') return captureGraph(app)
+        if (command.kind === 'workflow') return applyWorkflow(app, command.workflow)
+        return applyOperations(app, command.operations ?? [])
+      }, [applyOperations, applyWorkflow])
+
       const commandRef = useRef(null)
-      commandRef.current = applyOperations
+      commandRef.current = runCommand
 
       useEffect(() => {
         if (sessionId === undefined || sessionId === null) return undefined
@@ -1311,9 +1351,7 @@ window.__ModuleLoader__.load({
               try {
                 const app = readApp()
                 if (app === null) throw new Error('The ComfyUI panel is still loading')
-                const value = command.kind === 'screenshot'
-                  ? captureGraph(app)
-                  : await commandRef.current(app, command.operations ?? [])
+                const value = await commandRef.current(app, command)
                 payload = { sessionId, id: command.id, ok: true, value }
               } catch (error) {
                 payload = { sessionId, id: command.id, ok: false, error: error instanceof Error ? error.message : String(error) }
@@ -1651,7 +1689,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale', 'sidebarRightTabs'],
       // Editor operations, dictionaries, and the bar/stage rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, captureGraph, findNode, coerceWidgetValue, frontendClientId, panelApp, mapApiEvent, relayEditorEvents, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, fitCanvasByBounds, viewShowsAll, describeOperation, en, zh },
+      __ops: { applyOperation, captureGraph, applyWorkflowGraph, findNode, coerceWidgetValue, frontendClientId, panelApp, mapApiEvent, relayEditorEvents, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, fitCanvasByBounds, viewShowsAll, describeOperation, en, zh },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')

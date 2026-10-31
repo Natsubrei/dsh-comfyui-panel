@@ -1,5 +1,9 @@
 /**
- * Durable session workflows over the Host's domain KV store.
+ * Durable ComfyUI workflows over the Host's domain KV store.
+ *
+ * Two kinds live side by side: the latest workflow mirrored for each session
+ * (restored on Host restart, so tools work with the panel closed) and the named
+ * workflows the user saved explicitly (`comfyui_workflow_save`).
  *
  * A profile-installed bundle has no package dependencies, so the domain spec
  * is a plain object rather than a `defineDomain()` result. The storage layer
@@ -13,6 +17,7 @@
  */
 
 const TABLE = 'sessions'
+const WORKFLOWS_TABLE = 'workflows'
 const SETTINGS_TABLE = 'settings'
 const SETTINGS_KEY = 'service'
 const DOMAIN = 'dsh_comfyui'
@@ -43,6 +48,33 @@ function parseRecord(value) {
   return value
 }
 
+/** Validate one explicitly saved workflow record. */
+function parseNamedWorkflow(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) invalid('saved workflow must be an object')
+  if (typeof value.name !== 'string' || value.name.length === 0 || value.name.length > 80) {
+    invalid('saved workflow needs a name of 1-80 characters')
+  }
+  if (value.workflow === null || typeof value.workflow !== 'object' || Array.isArray(value.workflow)) {
+    invalid('saved workflow needs a workflow object')
+  }
+  if (value.prompt !== null && (typeof value.prompt !== 'object' || Array.isArray(value.prompt))) {
+    invalid('saved workflow prompt must be an object or null')
+  }
+  if (value.semantic !== null && (typeof value.semantic !== 'object' || Array.isArray(value.semantic))) {
+    invalid('saved workflow semantic must be an object or null')
+  }
+  for (const field of ['revision', 'nodes', 'links']) {
+    if (!Number.isSafeInteger(value[field]) || value[field] < 0) invalid(`saved workflow needs a non-negative ${field}`)
+  }
+  if (typeof value.sourceSessionId !== 'string' || value.sourceSessionId.length === 0) {
+    invalid('saved workflow needs a sourceSessionId')
+  }
+  for (const field of ['createdAt', 'updatedAt']) {
+    if (!Number.isSafeInteger(value[field]) || value[field] <= 0) invalid(`saved workflow needs a ${field}`)
+  }
+  return value
+}
+
 /** Validate the panel-managed service settings record. */
 function parseSettings(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) invalid('service settings must be an object')
@@ -58,6 +90,7 @@ export const WORKFLOW_DOMAIN = {
   version: 1,
   tables: {
     [TABLE]: { valueSchema: { parse: parseRecord } },
+    [WORKFLOWS_TABLE]: { valueSchema: { parse: parseNamedWorkflow } },
     [SETTINGS_TABLE]: { valueSchema: { parse: parseSettings } },
   },
 }
@@ -94,6 +127,8 @@ function resolveFacility(ctx) {
 export function createWorkflowStore(ctx, logger) {
   /** sessionId -> record written before the domain finished opening. */
   const pending = new Map()
+  /** workflow name -> record written before the domain finished opening. */
+  const pendingWorkflows = new Map()
   /** Service settings written before the domain finished opening. */
   let pendingSettings = null
   let domain = null
@@ -113,6 +148,12 @@ export function createWorkflowStore(ctx, logger) {
         })
       }
       pending.clear()
+      for (const [name, record] of pendingWorkflows) {
+        await opened.table(WORKFLOWS_TABLE).put(name, record).catch(error => {
+          logger?.warn(`dsh-comfyui: could not persist saved workflow "${name}": ${String(error)}`)
+        })
+      }
+      pendingWorkflows.clear()
       if (pendingSettings !== null) {
         await opened.table(SETTINGS_TABLE).put(SETTINGS_KEY, pendingSettings).catch(error => {
           logger?.warn(`dsh-comfyui: could not persist service settings: ${String(error)}`)
@@ -168,6 +209,39 @@ export function createWorkflowStore(ctx, logger) {
         return
       }
       await domain.table(SETTINGS_TABLE).put(SETTINGS_KEY, record)
+    },
+    /** Store one explicitly saved workflow under its name, replacing that slot. */
+    async saveWorkflow(record) {
+      if (domain === null) {
+        pendingWorkflows.set(record.name, record)
+        return
+      }
+      await domain.table(WORKFLOWS_TABLE).put(record.name, record)
+    },
+    /**
+     * Read one saved workflow.
+     * @param {string} name - the slot name.
+     * @returns {Promise<any | null>} the record, or null when the slot is empty.
+     */
+    async workflow(name) {
+      const buffered = pendingWorkflows.get(name)
+      if (buffered !== undefined) return buffered
+      await ready
+      if (domain === null) return null
+      return (await domain.table(WORKFLOWS_TABLE).get(name)) ?? null
+    },
+    /**
+     * List every saved workflow, most recently written first.
+     * @returns {Promise<any[]>} the records; callers project the bounded fields.
+     */
+    async workflows() {
+      await ready
+      const found = domain === null
+        ? []
+        : [...domain.table(WORKFLOWS_TABLE).entries()].map(([, record]) => record)
+      const byName = new Map(found.map(record => [record.name, record]))
+      for (const [name, record] of pendingWorkflows) byName.set(name, record)
+      return [...byName.values()].sort((left, right) => right.updatedAt - left.updatedAt)
     },
     /** Close the domain handle; further saves fall back to memory. */
     async close() {

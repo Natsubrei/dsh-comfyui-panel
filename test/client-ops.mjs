@@ -597,4 +597,29 @@ const stage = (service, extra = {}) => overlayPlan({
   assert.equal(panelApp({}), null)
 }
 
+// Loading a saved workflow goes through the frontend's own `loadGraphData`,
+// cleaning the old graph and ignoring the camera the saved file may carry.
+{
+  const { applyWorkflowGraph } = mod.__ops
+  const calls = []
+  const graph = {
+    _nodes: [1, 2, 3],
+    links: new Map([[1, {}], [2, {}]]),
+    setDirtyCanvas() { calls.push('dirty') },
+  }
+  const app = {
+    isGraphReady: true,
+    async loadGraphData(workflow, clean, restore) {
+      calls.push({ nodes: workflow.nodes.length, clean, restore })
+      app.rootGraphOrUndefined = graph
+    },
+  }
+  const value = await applyWorkflowGraph(app, { nodes: [1, 2, 3], links: [] })
+  assert.deepEqual(value, { nodes: 3, links: 2 })
+  assert.deepEqual(calls[0], { nodes: 3, clean: true, restore: false })
+  assert.equal(calls[1], 'dirty')
+  await assert.rejects(applyWorkflowGraph(app, { links: [] }), /not a ComfyUI UI workflow/)
+  await assert.rejects(applyWorkflowGraph({}, { nodes: [] }), /cannot load a workflow/)
+}
+
 console.log('client ops test passed')

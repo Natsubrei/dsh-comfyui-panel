@@ -13,9 +13,9 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
   served as-is; it is not built by tsdown and cannot `import` sibling files at
   runtime.
 - `projection.js` — semantic projection and digest line used by the Host.
-- `storage.js` — the `dsh_comfyui` domain spec (`sessions`, `settings`). Adding
-  a table is compatible; changing a record field needs a version bump and a
-  migration (the domain layer has no migrations).
+- `storage.js` — the `dsh_comfyui` domain spec (`sessions`, `workflows`,
+  `settings`). Adding a table is compatible; changing a record field needs a
+  version bump and a migration (the domain layer has no migrations).
 - `service.js` / `supervisor.js` — panel-managed ComfyUI process control.
 - `docs/comfyui-bridge.md` — the frontend surface the panel depends on
   (`comfyAPI`, string ids, `extra.ds`, the camera, command ids,

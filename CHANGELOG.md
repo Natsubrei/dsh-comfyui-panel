@@ -3,6 +3,23 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
+## Unreleased
+
+- Saved workflows are now a first-class feature. `comfyui_workflow_save` stores
+  the session's synced graph under a name in a new `workflows` table of the
+  `dsh_comfyui` domain, `comfyui_workflow_list` reads the slots back,
+  `comfyui_workflow_load` replaces the open panel's graph through the command
+  channel, and `comfyui_workflow_export` / `comfyui_workflow_import` move UI
+  workflow JSON to and from files under the session workspace. Only `load`
+  needs the panel open; the others work from the Host's mirrored state.
+- `comfyui_workflow_load` waits for the frontend's own `loadGraphData` and the
+  following sync, so the Host's mirrored workflow is the loaded one when the
+  tool returns. A page still running the previous client answers the command as
+  an empty edit, and the tool now reports that instead of claiming success.
+- `npm run contract` mounts the native tool executor the current DSH composition
+  requires and drives tools through the batch API, so the real-runtime check
+  runs again; it also covers saving and listing a named workflow.
+
 ## 0.6.11
 
 - Disposing a session now ends everything its panel was still holding. DSH

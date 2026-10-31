@@ -60,7 +60,7 @@ read on for the panel itself.
   Host sees runs without polling. ComfyUI addresses those events to the socket
   that queued the prompt, so the panel relays the editor's connection instead of
   opening one of its own.
-- Registers seven model tools **on the Agent context of each session that has a
+- Registers twelve model tools **on the Agent context of each session that has a
   synced workflow**. Other sessions see no ComfyUI tools:
   - `comfyui_status` — upstream reachability, panel connection, workflow
     summary, persistence backend, supervisor state, and the latest run.
@@ -81,11 +81,21 @@ read on for the panel itself.
     user sees.
   - `comfyui_node_info` — cached `/object_info` lookup for class types and
     input names.
+  - `comfyui_workflow_save` — store the synced workflow under a name; reusing a
+    name replaces that slot.
+  - `comfyui_workflow_list` — the saved slots with node/link counts and when
+    each was written.
+  - `comfyui_workflow_load` — replace the open panel's graph with a saved
+    workflow and sync it; needs the panel, like `comfyui_edit`.
+  - `comfyui_workflow_export` / `comfyui_workflow_import` — write a UI workflow
+    JSON file from a saved slot (or the session's graph) and read one back into
+    a slot. Paths resolve against the session workspace.
 - Adds one runtime-context digest line to those sessions, e.g.
   `ComfyUI: rev 14 · 9 nodes · 9 links · selected 7 · panel open.`
 - Persists each session's workflow, API prompt, and projection through
   `ctx.storageDomain` (domain `dsh_comfyui`), so a Host restart does not lose
   the graph. Storage failures degrade to memory without blocking the bridge.
+  Named workflows live in the same domain's `workflows` table.
 - Manages the ComfyUI process from the panel. The **Server** section starts,
   stops, and restarts ComfyUI, remembers the checkout directory, and can start
   it together with DSH. It adopts an already-running server instead of
@@ -182,12 +192,13 @@ npm run shot -- workflow.json   # render a workflow file to a PNG
 
 `npm test` covers the proxy, redirect, asset caching, the workflow and event
 bridges, session-scoped tools and digest, the projection fallback, persistence
-across two Host instances, the edit round-trip, the panel-managed
-start/stop/restart of a real child process, and the supervisor's adoption path.
+across two Host instances, the edit and saved-workflow round-trips, the
+panel-managed start/stop/restart of a real child process, and the supervisor's
+adoption path.
 It prints `host smoke test passed`. `npm run contract` mounts the plugin next to
-the real Cordis context, `ToolRuntime`, `SystemPrompt`, and
-`HostConnectionService`, so an invalid Fetch path or a tool schema the registry
-rejects fails locally instead of at install time. `npm test` and
+the real Cordis context, `ToolRuntime`, the native tool executor, `SystemPrompt`,
+and `HostConnectionService`, so an invalid Fetch path or a tool schema the
+registry rejects fails locally instead of at install time. `npm test` and
 `npm run typecheck` are what the pre-commit hook runs; see
 [AGENTS.md](AGENTS.md) for reload and logging steps.
 
@@ -211,6 +222,10 @@ than 16 pixels (exit code 2 when any do). Use it to judge a layout file, or
 
 - Edits require the ComfyUI panel to be open in the same session; the command
   channel is a long-poll and the panel applies operations inside the iframe.
+  `comfyui_workflow_load` has the same requirement; `save`, `list`, `export`,
+  and `import` work with the panel closed.
+- A saved workflow replaces the whole graph; there is no merge, undo, or
+  per-slot revision history. Saving a name overwrites its previous content.
 - `comfyui_edit` does not validate graph semantics; a bad edit is rejected
   when ComfyUI converts the graph to a prompt.
 - Sync is polling-based (about once per second while the tab is visible).

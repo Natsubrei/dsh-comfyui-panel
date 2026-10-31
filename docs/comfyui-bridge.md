@@ -34,8 +34,13 @@ It is a partial view of the real `ComfyApp`; what the plugin uses:
 
 `rootGraph`, `graph`, `canvas`, and `extensionManager` are `undefined` until
 the Vue app has finished setting up, so wait for `comfyAPI.app.app` **and** for
-those members before touching the graph. The panel treats the API appearing as
-"booting" and only reads the graph after `app.rootGraph` exists.
+those members before touching the graph. Reading `rootGraph` too early logs
+`ComfyApp graph accessed before initialization`; the panel asks
+`app.isGraphReady` first (older frontends without it fall back to the previous
+check) and only reads the graph once it answers true. `comfyui_workflow_load`
+calls `app.loadGraphData(workflow, true, false)` — clean the old graph, ignore
+the saved camera because synced workflows strip view state — and waits for it
+before syncing.
 
 The shim itself is a legacy compatibility layer; it is why the plugin pins the
 frontend version for anything beyond this milestone.

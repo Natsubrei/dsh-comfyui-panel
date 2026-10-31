@@ -20,9 +20,9 @@ import http from 'node:http'
 import https from 'node:https'
 import net from 'node:net'
 import tls from 'node:tls'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { digestLine, layoutReport, projectFromWorkflow, sanitizeSemantic, stripViewState } from './projection.js'
 import { createWorkflowStore } from './storage.js'
@@ -598,6 +598,32 @@ export function apply(ctx, rawConfig = {}) {
     }
   }
 
+  /**
+   * Queue one command for a session's panel and wait for its result.
+   *
+   * The panel answers through `commands/result`; a panel that disappears after
+   * claiming the command is bounded by the timeout, and `releaseSession`
+   * rejects the wait when the owning agent goes away. `dropCommand` runs with
+   * the timeout so a panel reconnecting later cannot apply an expired command.
+   *
+   * @param {string} sessionId - the session whose panel should answer.
+   * @param {object} command - command body; its `id` correlates the result.
+   * @param {number} timeoutMs - how long to wait before giving up.
+   * @param {string} what - short noun for the timeout message.
+   * @returns {Promise<{ ok: boolean, value?: any, error?: string | null }>} the panel's answer.
+   */
+  function askPanel(sessionId, command, timeoutMs, what) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingCommands.delete(command.id)
+        dropCommand(sessionId, command.id)
+        reject(new Error(`The ComfyUI panel did not answer the ${what} in time. It may be reloading.`))
+      }, timeoutMs)
+      pendingCommands.set(command.id, { resolve, reject, timer, sessionId })
+      enqueueCommand(sessionId, command)
+    })
+  }
+
   async function bridgeCommandPoll(request) {
     let body
     try {
@@ -710,6 +736,11 @@ export function apply(ctx, rawConfig = {}) {
       add(() => sessionCtx.tools.register(editTool(sessionId)))
       add(() => sessionCtx.tools.register(screenshotTool(sessionId)))
       add(() => sessionCtx.tools.register(nodeInfoTool()))
+      add(() => sessionCtx.tools.register(workflowSaveTool(sessionId)))
+      add(() => sessionCtx.tools.register(workflowListTool()))
+      add(() => sessionCtx.tools.register(workflowLoadTool(sessionId)))
+      add(() => sessionCtx.tools.register(workflowExportTool(sessionId)))
+      add(() => sessionCtx.tools.register(workflowImportTool(sessionId)))
       add(() => sessionCtx.systemPrompt.context({
         name: 'comfyui:workflow',
         order: 220,
@@ -1001,16 +1032,7 @@ export function apply(ctx, rawConfig = {}) {
           throw new Error('The ComfyUI panel is not connected in this session. Open the ComfyUI tab in this session and wait for Connected, then retry.')
         }
         const id = randomUUID()
-        const answer = await new Promise((resolve, reject) => {
-          const timer = setTimeout(() => {
-            pendingCommands.delete(id)
-            // The tool call is over; the command must not outlive it.
-            dropCommand(sessionId, id)
-            reject(new Error('The ComfyUI panel did not answer the edit in time. It may be reloading.'))
-          }, 20000)
-          pendingCommands.set(id, { resolve, reject, timer, sessionId })
-          enqueueCommand(sessionId, { id, operations, at: Date.now() })
-        })
+        const answer = await askPanel(sessionId, { id, operations, at: Date.now() }, 20000, 'edit')
         if (answer.ok !== true) throw new Error(`ComfyUI rejected the edit: ${answer.error ?? 'unknown error'}`)
         const value = answer.value ?? null
         return {
@@ -1053,15 +1075,7 @@ export function apply(ctx, rawConfig = {}) {
           throw new Error('The ComfyUI panel is not connected in this session. Open the ComfyUI tab in this session and wait for Connected, then retry.')
         }
         const id = randomUUID()
-        const answer = await new Promise((resolve, reject) => {
-          const timer = setTimeout(() => {
-            pendingCommands.delete(id)
-            dropCommand(sessionId, id)
-            reject(new Error('The ComfyUI panel did not answer the screenshot in time. It may be reloading.'))
-          }, 15000)
-          pendingCommands.set(id, { resolve, reject, timer, sessionId })
-          enqueueCommand(sessionId, { id, kind: 'screenshot', at: Date.now() })
-        })
+        const answer = await askPanel(sessionId, { id, kind: 'screenshot', at: Date.now() }, 15000, 'screenshot')
         if (answer.ok !== true) throw new Error(`ComfyUI rejected the screenshot: ${answer.error ?? 'unknown error'}`)
         const value = answer.value ?? {}
         const dataUrl = typeof value.dataUrl === 'string' ? value.dataUrl : ''
@@ -1132,6 +1146,297 @@ export function apply(ctx, rawConfig = {}) {
           .filter(name => needle === '' || name.toLowerCase().includes(needle))
           .slice(0, clamp(args?.limit ?? 20, 1, 100))
         return { text: JSON.stringify({ total: Object.keys(data).length, matches: names }, null, 2) }
+      },
+    }
+  }
+
+  // ── Saved workflows ─────────────────────────────────────────────────────
+  // The mirrored session workflow is the canvas the panel last synced; these
+  // tools add named snapshots, a file export/import path, and a way to put a
+  // saved graph back into the editor. Only `load` needs the panel: it edits
+  // the browser's LiteGraph through the same command channel as comfyui_edit.
+
+  /**
+   * Validate a saved-workflow slot name.
+   * @param {unknown} value - the requested name.
+   * @returns {string} the trimmed name.
+   */
+  function workflowName(value) {
+    if (typeof value !== 'string') throw new Error('name is required')
+    const name = value.trim()
+    if (name.length === 0 || name.length > 80) throw new Error('name must be 1-80 characters')
+    if (/[\u0000-\u001f\u007f]/u.test(name)) throw new Error('name must not contain control characters')
+    return name
+  }
+
+  /**
+   * Directory that relative export/import paths resolve against.
+   * @param {{ agent?: { session?: { header?: { cwd?: string } } } }} [exec] - tool execution context.
+   * @returns {string} the session working directory, or the Host's cwd.
+   */
+  function sessionDirectory(exec) {
+    const cwd = exec?.agent?.session?.header?.cwd
+    return typeof cwd === 'string' && cwd.length > 0 ? cwd : process.cwd()
+  }
+
+  /**
+   * Resolve where an export should be written.
+   * @param {unknown} value - the requested `path`, if any.
+   * @param {{ agent?: { session?: { header?: { cwd?: string } } } }} exec - tool execution context.
+   * @param {string} label - fallback name for the default file.
+   * @returns {string} an absolute path.
+   */
+  function workflowFile(value, exec, label) {
+    const directory = sessionDirectory(exec)
+    if (typeof value === 'string' && value.trim().length > 0) return resolve(directory, value.trim())
+    const safe = String(label).replace(/[^\p{L}\p{N}._ -]+/gu, '_').trim() || 'workflow'
+    return join(directory, `comfyui-${safe}.json`)
+  }
+
+  /** Persistence facts shared by the workflow tools. */
+  function persistence() {
+    return { backend: store.backend, ...(store.reason === null ? {} : { reason: store.reason }) }
+  }
+
+  function workflowSaveTool(sessionId) {
+    return {
+      name: 'comfyui_workflow_save',
+      description: 'Save the workflow synced in this session under a name, so it can be loaded later or in another session. Saving an existing name replaces it.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Slot name, 1-80 characters.' },
+        },
+        required: ['name'],
+        additionalProperties: false,
+      },
+      output: textOutput(),
+      async execute(args) {
+        const name = workflowName(args?.name)
+        const state = sessions.get(sessionId)
+        if (state === undefined) {
+          throw new Error('No ComfyUI workflow has synced in this session. Open the ComfyUI tab in this session and wait for Connected.')
+        }
+        const existing = await store.workflow(name)
+        const now = Date.now()
+        await store.saveWorkflow({
+          name,
+          workflow: state.workflow,
+          prompt: state.prompt,
+          semantic: state.semantic,
+          revision: state.revision,
+          nodes: state.nodes,
+          links: state.links,
+          sourceSessionId: sessionId,
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+        })
+        return {
+          text: JSON.stringify({
+            saved: name,
+            replaced: existing !== null,
+            nodes: state.nodes,
+            links: state.links,
+            revision: state.revision,
+            persistence: persistence(),
+          }, null, 2),
+        }
+      },
+    }
+  }
+
+  function workflowListTool() {
+    return {
+      name: 'comfyui_workflow_list',
+      description: 'List the workflows saved with comfyui_workflow_save, most recently saved first.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      output: textOutput(),
+      async execute() {
+        const saved = await store.workflows()
+        const shown = saved.slice(0, 100)
+        return {
+          text: JSON.stringify({
+            persistence: persistence(),
+            count: saved.length,
+            truncated: saved.length > shown.length,
+            workflows: shown.map(record => ({
+              name: record.name,
+              nodes: record.nodes,
+              links: record.links,
+              revision: record.revision,
+              updatedAt: record.updatedAt,
+              sourceSessionId: record.sourceSessionId,
+            })),
+          }, null, 2),
+        }
+      },
+    }
+  }
+
+  function workflowLoadTool(sessionId) {
+    return {
+      name: 'comfyui_workflow_load',
+      description: 'Replace the graph in this session\'s ComfyUI panel with a saved workflow and sync it, discarding unsaved canvas changes. Requires the panel to be open.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'A name from comfyui_workflow_list.' },
+        },
+        required: ['name'],
+        additionalProperties: false,
+      },
+      output: textOutput(),
+      async execute(args) {
+        const name = workflowName(args?.name)
+        const record = await store.workflow(name)
+        if (record === null) {
+          throw new Error(`No saved workflow named "${name}". Call comfyui_workflow_list to see the saved names.`)
+        }
+        if (!panelConnected(sessionId)) {
+          throw new Error('The ComfyUI panel is not connected in this session. Open the ComfyUI tab in this session and wait for Connected, then retry.')
+        }
+        const id = randomUUID()
+        const answer = await askPanel(
+          sessionId,
+          { id, kind: 'workflow', workflow: record.workflow, at: Date.now() },
+          20000,
+          'workflow load',
+        )
+        if (answer.ok !== true) throw new Error(`ComfyUI rejected the workflow load: ${answer.error ?? 'unknown error'}`)
+        const value = answer.value ?? {}
+        // A page holding the previous client treats an unknown kind as an edit
+        // with no operations and returns success; only a panel that ran the
+        // load reports it.
+        const loaded = Array.isArray(value.operations) && value.operations.some(operation => operation?.op === 'load_workflow')
+        if (!loaded) {
+          throw new Error('The panel did not confirm the workflow load. Hard-refresh the page so the panel learns the command, then retry.')
+        }
+        return {
+          text: JSON.stringify({
+            id,
+            sessionId,
+            name,
+            nodes: value.nodes ?? record.nodes,
+            links: value.links ?? record.links,
+            revision: sessions.get(sessionId)?.revision ?? null,
+          }, null, 2),
+        }
+      },
+    }
+  }
+
+  function workflowExportTool(sessionId) {
+    return {
+      name: 'comfyui_workflow_export',
+      description: 'Write a ComfyUI UI workflow JSON file: the named saved workflow, or this session\'s workflow when no name is given. Returns the absolute path.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Saved workflow to write; omit for this session\'s workflow.' },
+          path: { type: 'string', description: 'Absolute path, or relative to the session workspace. Defaults to comfyui-<name>.json there.' },
+        },
+        additionalProperties: false,
+      },
+      output: textOutput(),
+      async execute(args, exec) {
+        const name = args?.name === undefined ? null : workflowName(args.name)
+        let workflow
+        let label
+        let nodes
+        let links
+        if (name === null) {
+          const state = sessions.get(sessionId)
+          if (state === undefined) {
+            throw new Error('No ComfyUI workflow has synced in this session. Open the ComfyUI tab in this session and wait for Connected.')
+          }
+          workflow = state.workflow
+          label = `session-${sessionId.slice(0, 8)}`
+          nodes = state.nodes
+          links = state.links
+        } else {
+          const record = await store.workflow(name)
+          if (record === null) {
+            throw new Error(`No saved workflow named "${name}". Call comfyui_workflow_list to see the saved names.`)
+          }
+          workflow = record.workflow
+          label = name
+          nodes = record.nodes
+          links = record.links
+        }
+        const target = workflowFile(args?.path, exec, label)
+        const text = `${JSON.stringify(workflow, null, 2)}\n`
+        await mkdir(dirname(target), { recursive: true })
+        await writeFile(target, text)
+        return {
+          text: JSON.stringify({
+            path: target,
+            bytes: Buffer.byteLength(text),
+            nodes,
+            links,
+          }, null, 2),
+        }
+      },
+    }
+  }
+
+  function workflowImportTool(sessionId) {
+    return {
+      name: 'comfyui_workflow_import',
+      description: 'Save a ComfyUI UI workflow JSON file under a name, replacing an existing workflow with that name. Open it with comfyui_workflow_load.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Absolute path, or relative to the session workspace.' },
+          name: { type: 'string', description: 'Slot name, 1-80 characters; defaults to the file name without its extension.' },
+        },
+        required: ['path'],
+        additionalProperties: false,
+      },
+      output: textOutput(),
+      async execute(args, exec) {
+        const requested = typeof args?.path === 'string' ? args.path.trim() : ''
+        if (requested.length === 0) throw new Error('path is required')
+        const target = resolve(sessionDirectory(exec), requested)
+        const info = await stat(target).catch(() => null)
+        if (info === null || !info.isFile()) throw new Error(`No file at ${target}`)
+        if (info.size > 12_000_000) throw new Error(`Workflow file is larger than 12 MB: ${target}`)
+        const text = await readFile(target, 'utf8')
+        let workflow
+        try {
+          workflow = JSON.parse(text)
+        } catch {
+          throw new Error(`Not JSON: ${target}`)
+        }
+        if (workflow === null || typeof workflow !== 'object' || Array.isArray(workflow) || !Array.isArray(workflow.nodes)) {
+          throw new Error('Expected a ComfyUI UI workflow (an object with a nodes array), not an API prompt.')
+        }
+        const name = workflowName(args?.name ?? basename(target).replace(/\.[^.]+$/u, ''))
+        const nodes = workflow.nodes.length
+        const links = Array.isArray(workflow.links) ? workflow.links.length : 0
+        const existing = await store.workflow(name)
+        const now = Date.now()
+        await store.saveWorkflow({
+          name,
+          workflow,
+          prompt: null,
+          semantic: null,
+          revision: 0,
+          nodes,
+          links,
+          sourceSessionId: sessionId,
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+        })
+        return {
+          text: JSON.stringify({
+            imported: name,
+            path: target,
+            nodes,
+            links,
+            replaced: existing !== null,
+            persistence: persistence(),
+          }, null, 2),
+        }
       },
     }
   }

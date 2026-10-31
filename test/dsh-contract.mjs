@@ -26,6 +26,7 @@ const ENTRIES = {
   scope: 'packages/core/scope/lib/index.js',
   systemPrompt: 'packages/core/system-prompt/lib/index.js',
   tools: 'packages/core/tools/lib/index.js',
+  executor: 'packages/core/tool-executor-native/lib/index.js',
   connection: 'packages/client/connection/lib/index.js',
 }
 
@@ -92,6 +93,15 @@ const ctx = new Context()
 await ctx.plugin(SystemPrompt, {})
 await ctx.plugin(ToolRuntime)
 
+// `ToolRuntime` only dispatches; a composition that calls `ctx.tools.execute`
+// needs an executor, and the shipped Web app loads the native one.
+const executorModule = await load(ENTRIES.executor)
+const executorFiber = ctx.plugin(Object.assign(
+  inner => { executorModule.apply(inner) },
+  { inject: executorModule.inject },
+))
+await executorFiber.await()
+
 const connectionFiber = ctx.plugin(inner => {
   // The constructor's arguments are a request context list and browser auth;
   // both are irrelevant to exact-Fetch registration and dispatch.
@@ -106,7 +116,7 @@ ctx.provide('webServer', {
 })
 
 /** sessionId -> tableName -> Map. Mirrors the domain KV surface the store uses. */
-const tables = new Map([['sessions', new Map()], ['settings', new Map()]])
+const tables = new Map([['sessions', new Map()], ['workflows', new Map()], ['settings', new Map()]])
 /** @type {any} */
 let openedSpec
 ctx.provide('storageDomain', {
@@ -155,6 +165,28 @@ const post = (path, body) => shared.fetch(new Request(`http://host${path}`, {
   body: JSON.stringify(body),
 }), ctx.connection.browserPeer)
 
+/**
+ * Run one tool through the real native executor.
+ * @param {string} name - registered tool name.
+ * @param {Record<string, unknown>} args - tool arguments.
+ * @param {string} callId - correlation id for the batch.
+ * @returns {Promise<any>} the canonical execution result.
+ */
+async function callTool(name, args, callId) {
+  const batch = await ctx.tools.execute({
+    calls: [{ type: 'tool-call', id: callId, name, arguments: JSON.stringify(args) }],
+    signal: AbortSignal.timeout(5000),
+    agent,
+  })
+  const outcome = batch.results[0]
+  assert.ok(outcome !== undefined, `${name} should settle`)
+  if (outcome.result.isError) {
+    const text = outcome.result.content.map(part => part.text ?? '').join('')
+    throw new Error(`${name} failed: ${text}`)
+  }
+  return outcome.result
+}
+
 let tempDir
 try {
   // ── Routes are accepted by the real Connection service ───────────────────
@@ -191,6 +223,11 @@ try {
     'comfyui_run',
     'comfyui_screenshot',
     'comfyui_status',
+    'comfyui_workflow_export',
+    'comfyui_workflow_import',
+    'comfyui_workflow_list',
+    'comfyui_workflow_load',
+    'comfyui_workflow_save',
   ]
   assert.deepEqual(ctx.tools.schemas(agent).map(tool => tool.name).sort(), expected)
   assert.deepEqual(ctx.tools.schemas().map(tool => tool.name), [],
@@ -199,19 +236,25 @@ try {
   assert.deepEqual(ctx.tools.schemas(outsider).map(tool => tool.name), [],
     'ComfyUI tools must not leak into another session')
 
-  const graphResult = await ctx.tools.execute({
-    signal: AbortSignal.timeout(5000),
-    callId: 'contract-graph-read',
-    name: 'comfyui_graph_read',
-    arguments: {},
-    agent,
-  })
+  const graphResult = await callTool('comfyui_graph_read', {}, 'contract-graph-read')
   const graphText = graphResult.content.find(part => part.type === 'text')?.text
   assert.equal(typeof graphText, 'string', 'comfyui_graph_read should return text')
   const graph = JSON.parse(graphText)
   assert.equal(graph.nodes.length, 2)
   assert.equal(graph.projectedFrom, 'workflow')
   assert.deepEqual(graph.nodes.map(node => node.type), ['CheckpointLoaderSimple', 'KSampler'])
+
+  // A named workflow writes the real domain table, not only the session slot.
+  const savedResult = await callTool('comfyui_workflow_save', { name: 'contract' }, 'contract-workflow-save')
+  const savedWorkflow = JSON.parse(savedResult.content.find(part => part.type === 'text')?.text)
+  assert.equal(savedWorkflow.saved, 'contract')
+  assert.equal(savedWorkflow.nodes, 2)
+  assert.equal(tables.get('workflows').get('contract').nodes, 2)
+
+  const listedResult = await callTool('comfyui_workflow_list', {}, 'contract-workflow-list')
+  const listedWorkflows = JSON.parse(listedResult.content.find(part => part.type === 'text')?.text)
+  assert.equal(listedWorkflows.count, 1)
+  assert.equal(listedWorkflows.workflows[0].name, 'contract')
 
   // ── The digest lands in the agent's runtime context, not the global one ──
   const assembly = await ctx.systemPrompt.assemble({ scope: agent })
@@ -256,4 +299,5 @@ try {
   await pluginFiber.dispose().catch(() => {})
   await scopeFiber.dispose().catch(() => {})
   await connectionFiber.dispose().catch(() => {})
+  await executorFiber.dispose().catch(() => {})
 }
