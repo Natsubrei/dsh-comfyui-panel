@@ -3,7 +3,7 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
-## Unreleased
+## 0.7.1
 
 - Workflows have a name that the panel, the model, and the saved slots agree on.
   The session record carries an optional `name`; the panel bar shows it, the
