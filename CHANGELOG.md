@@ -3,7 +3,7 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
-## Unreleased
+## 0.7.0
 
 - Saved workflows are now a first-class feature. `comfyui_workflow_save` stores
   the session's synced graph under a name in a new `workflows` table of the
