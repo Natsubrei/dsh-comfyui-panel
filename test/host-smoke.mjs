@@ -545,6 +545,37 @@ assert.equal(edited.links, 1)
   await assert.rejects(badPromise, /did not return a PNG/)
 }
 
+// A disposed agent must not leave its panel waiting: DSH fires this event on
+// clear and compaction too, and the same session id comes back with a fresh
+// agent. The queued edit and the tool call end together, or a later poll would
+// hand the old edit to an editor the model no longer believes it touched.
+{
+  const quiet = await host.fetches.get('/api/comfyui/commands/poll').fetch(new Request(
+    'http://127.0.0.1/api/comfyui/commands/poll',
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 's1', timeoutMs: 1000 }) },
+  ))
+  assert.equal((await quiet.json()).command, null)
+  // `panelConnected` still holds for its 15 s window, so this edit is queued
+  // with no waiter to take it.
+  const abandoned = s1.tools.get('comfyui_edit').execute({ operations: [{ op: 'remove_node', id: 7 }] }, exec)
+  await delay(50)
+  assert.equal(parse(await s1.tools.get('comfyui_status').execute({}, exec)).panelConnected, true)
+  host.emit('agent/disposed', { agent: host.agents.get('s1') })
+  await assert.rejects(abandoned, /session closed/)
+  const after = parse(await s1.tools.get('comfyui_status').execute({}, exec))
+  assert.equal(after.panelConnected, false, 'a disposed session has no panel')
+  assert.equal(after.progress.run, null, 'its run record went with it')
+  await assert.rejects(
+    s1.tools.get('comfyui_edit').execute({ operations: [{ op: 'remove_node', id: 7 }] }, exec),
+    /not connected in this session/,
+  )
+  const revived = await host.fetches.get('/api/comfyui/commands/poll').fetch(new Request(
+    'http://127.0.0.1/api/comfyui/commands/poll',
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 's1', timeoutMs: 1000 }) },
+  ))
+  assert.equal((await revived.json()).command, null, 'the abandoned edit must not reach the next agent')
+}
+
 // A command whose tool call has already failed must not be replayed when the
 // panel comes back later: the graph would change and no tool call would own it.
 {

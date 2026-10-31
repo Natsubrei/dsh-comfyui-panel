@@ -433,6 +433,27 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * How often the bar re-reads the Host's server status.
+     *
+     * A start is the one transition the panel cannot see any other way, and the
+     * supervisor flips `starting` to `running` within a second of its probe, so
+     * the usual cadence would leave "Starting ComfyUI…" on screen long after
+     * the editor is usable. Once the server is up only a crash changes the
+     * answer, and the supervisor notices that within 20 s; polling every five
+     * seconds for the rest of the session is a dozen requests a minute for
+     * nothing. A missing or unhealthy probe stays fast, because that is exactly
+     * when the panel has something to show.
+     *
+     * @param {{ state?: string, health?: boolean } | null} service - last snapshot, or null before the first read.
+     * @returns {number} poll interval in milliseconds.
+     */
+    function servicePollMs(service) {
+      if (service === null || service === undefined) return 5000
+      if (service.state === 'starting' || service.state === 'restarting') return 1000
+      return service.health === true ? 30000 : 5000
+    }
+
+    /**
      * The overlay that covers the editor area. Pure markup over an
      * `overlayPlan` result so the stopped / starting / stalled faces can be
      * rendered and asserted in `test/client-ops.mjs` without a browser.
@@ -664,6 +685,24 @@ window.__ModuleLoader__.load({
         // own client id, and the run stays invisible to the UI.
       }
       return null
+    }
+
+    /**
+     * The embedded editor's app, but only once its graph exists.
+     *
+     * Reading `rootGraph` before setup makes the frontend log "ComfyApp graph
+     * accessed before initialization", and the first sync tick lands exactly in
+     * that window. `isGraphReady` answers without touching the getter; older
+     * frontends do not expose it, so an undefined answer falls through and
+     * behaves as before.
+     * @param {any} win - the editor iframe's window (`comfyAPI` is the frontend's own global).
+     * @returns {any | null} the app when its graph is ready, else null.
+     */
+    function panelApp(win) {
+      const app = win?.comfyAPI?.app?.app
+      if (app === undefined || app === null) return null
+      if (app.isGraphReady === false) return null
+      return app
     }
 
     function findNode(graph, id) {
@@ -1056,11 +1095,13 @@ window.__ModuleLoader__.load({
       const serverStarting = service !== null
         && (service.state === 'starting' || service.state === 'restarting')
       const serverStopped = service !== null && service.health === false && !serverStarting
+      // A number, not the snapshot: the interval must not be rebuilt by every
+      // response, or each fetch would schedule the next one immediately.
+      const servicePeriod = servicePollMs(service)
 
       const readApp = useCallback(() => {
-        const win = iframeRef.current?.contentWindow
-        const app = win?.comfyAPI?.app?.app
-        if (app === undefined || app === null) return null
+        const app = panelApp(iframeRef.current?.contentWindow)
+        if (app === null) return null
         appRef.current = app
         return app
       }, [])
@@ -1412,12 +1453,12 @@ window.__ModuleLoader__.load({
         void loadService()
         const timer = setInterval(() => {
           if (!disposed && document.visibilityState === 'visible') void loadService()
-        }, 5000)
+        }, servicePeriod)
         return () => {
           disposed = true
           clearInterval(timer)
         }
-      }, [loadService])
+      }, [loadService, servicePeriod])
 
       const reload = useCallback(() => {
         const frame = iframeRef.current
@@ -1610,7 +1651,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale', 'sidebarRightTabs'],
       // Editor operations, dictionaries, and the bar/stage rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, captureGraph, findNode, coerceWidgetValue, frontendClientId, mapApiEvent, relayEditorEvents, barPlan, overlayPlan, StageOverlay, projectGraph, fitCanvas, fitCanvasByBounds, viewShowsAll, describeOperation, en, zh },
+      __ops: { applyOperation, captureGraph, findNode, coerceWidgetValue, frontendClientId, panelApp, mapApiEvent, relayEditorEvents, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, fitCanvasByBounds, viewShowsAll, describeOperation, en, zh },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')

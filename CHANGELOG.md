@@ -3,6 +3,32 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
+## 0.6.11
+
+- Disposing a session now ends everything its panel was still holding. DSH
+  emits `agent/disposed` on clear and compaction too, and the same session id
+  comes back with a new agent; a queued edit used to wait out its timeout and
+  could be handed to the next panel, changing a graph the model no longer
+  believed it touched. The queued command, the parked long-poll, the run
+  record, and the seed cursors go with the agent; the canvas stays in
+  `sessions` and in storage.
+- A panel edit or screenshot gives up after 20 s / 15 s instead of 45 s / 30 s.
+  The panel answers in milliseconds when it is there, and the old budget only
+  made a closed tab feel like a hang.
+- The bar polls the server status at the pace the state deserves: 1 s while a
+  start is in flight, 30 s once the server runs healthy, 5 s otherwise. A start
+  is the one transition the panel cannot see any other way, and polling for it
+  every five seconds left `Starting ComfyUI…` on screen after the editor was
+  already usable.
+- The first sync tick no longer reads the editor's graph before ComfyUI
+  initializes it. The frontend logs `ComfyApp graph accessed before
+  initialization` and the bar showed a `Bridge error` chip until the next tick;
+  the panel now asks `isGraphReady` first, and an older frontend without that
+  flag behaves as before.
+- `npm run ui` clicks the sidebar tab entry itself instead of a coordinate
+  sampled while the right sidebar was still sliding open, which missed the
+  entry and reported a timeout.
+
 ## 0.6.10
 
 - Unloading the plugin no longer stops a ComfyUI it *adopted* — a server that

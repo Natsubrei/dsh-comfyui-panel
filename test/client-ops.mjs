@@ -571,4 +571,30 @@ const stage = (service, extra = {}) => overlayPlan({
   assert.equal(describeOperation({ op: 'disconnect', to: { id: 7, input: 'model' } }), '#7.model ×')
 }
 
+// The service poll is the one place the panel pays for a transition it cannot
+// observe: fast while a start is in flight or the probe disagrees, slow once
+// the server runs, because a supervisor crash takes 20 s to surface anyway.
+{
+  const { servicePollMs } = mod.__ops
+  assert.equal(servicePollMs(null), 5000, 'an unread status polls at the default pace')
+  assert.equal(servicePollMs({ state: 'starting', health: false }), 1000, 'a start is worth watching closely')
+  assert.equal(servicePollMs({ state: 'restarting', health: false }), 1000)
+  assert.equal(servicePollMs({ state: 'running', health: true }), 30000)
+  assert.equal(servicePollMs({ state: 'running', health: false }), 5000, 'a probe that disagrees stays fast')
+  assert.equal(servicePollMs({ state: 'stopped', health: false }), 5000)
+}
+
+// A frontend whose graph does not exist yet must read as "still booting", not
+// as a bridge error: reading `rootGraph` early makes ComfyUI log an error.
+{
+  const { panelApp } = mod.__ops
+  const ready = { isGraphReady: true }
+  assert.equal(panelApp({ comfyAPI: { app: { app: ready } } }), ready)
+  assert.equal(panelApp({ comfyAPI: { app: { app: { isGraphReady: false } } } }), null)
+  const legacy = {}
+  assert.equal(panelApp({ comfyAPI: { app: { app: legacy } } }), legacy, 'an older frontend has no readiness flag')
+  assert.equal(panelApp(null), null)
+  assert.equal(panelApp({}), null)
+}
+
 console.log('client ops test passed')

@@ -186,7 +186,17 @@ export async function openPanel(browser, { timeout = 90_000, scratch = true } = 
     if (rect.width === 0 && rect.height === 0) return null
     return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
   })()`, { label: `a ${TAB_TITLE} sidebar entry`, timeout: 15_000 })
-  await browser.clickAt(entry.x, entry.y)
+  // The right sidebar slides open, so coordinates sampled mid-transition can
+  // land beside the entry. The entry is a real button: wait until it is laid
+  // out, then click the element instead of the point it happened to have.
+  const clickedEntry = await browser.evaluate(`(() => {
+    const found = [...document.querySelectorAll('${DOM.guide}, ${DOM.tab}')]
+      .find(element => element.textContent.includes(${JSON.stringify(TAB_TITLE)}))
+    if (!found) return false
+    found.click()
+    return true
+  })()`)
+  if (clickedEntry !== true) throw new Error(`could not click the ${TAB_TITLE} sidebar entry at ${String(entry.x)},${String(entry.y)}`)
   await browser.waitFor(`document.querySelector('${DOM.panel}') !== null`, { label: 'the ComfyUI panel', timeout: 15_000 })
   const started = Date.now()
   await browser.waitFor(`(() => { const app = ${APP}; return app !== null })()`, { label: 'the ComfyUI editor API', timeout })

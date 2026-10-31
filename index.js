@@ -116,7 +116,9 @@ export function apply(ctx, rawConfig = {}) {
   })
   ctx.on('agent/disposed', ({ agent }) => {
     const sessionId = agent?.session?.id
-    if (typeof sessionId === 'string') sessionTools.delete(sessionId)
+    if (typeof sessionId !== 'string') return
+    sessionTools.delete(sessionId)
+    releaseSession(sessionId)
   })
 
   ctx.effect(() => ctx.webServer.register({
@@ -565,6 +567,37 @@ export function apply(ctx, rawConfig = {}) {
     if (index !== -1) state.queue.splice(index, 1)
   }
 
+  /**
+   * End everything the Host is still holding for a session whose agent went
+   * away.
+   *
+   * DSH disposes an agent on clear and compaction too, and the same session id
+   * comes back with a fresh agent; the canvas survives in `sessions` (and in
+   * storage), but a long-poll or a tool call parked on the old panel must not
+   * wait out its timeout against an editor nobody owns any more. A queued edit
+   * is dropped with its tool call: handing it to the next panel would change a
+   * graph the model no longer believes it touched.
+   *
+   * @param {string} sessionId - the session whose agent was disposed.
+   */
+  function releaseSession(sessionId) {
+    const state = commandQueues.get(sessionId)
+    if (state !== undefined) {
+      // Resolving a waiter with no command releases the open HTTP request so
+      // the panel's loop can re-arm under the new agent.
+      for (const waiter of [...state.waiters]) waiter.resolve(null)
+      commandQueues.delete(sessionId)
+    }
+    progress.delete(sessionId)
+    seedCursors.delete(sessionId)
+    for (const [id, pending] of [...pendingCommands]) {
+      if (pending.sessionId !== sessionId) continue
+      pendingCommands.delete(id)
+      clearTimeout(pending.timer)
+      pending.reject(new Error('The ComfyUI session closed before the panel answered; open the tab again and retry.'))
+    }
+  }
+
   async function bridgeCommandPoll(request) {
     let body
     try {
@@ -974,8 +1007,8 @@ export function apply(ctx, rawConfig = {}) {
             // The tool call is over; the command must not outlive it.
             dropCommand(sessionId, id)
             reject(new Error('The ComfyUI panel did not answer the edit in time. It may be reloading.'))
-          }, 45000)
-          pendingCommands.set(id, { resolve, timer })
+          }, 20000)
+          pendingCommands.set(id, { resolve, reject, timer, sessionId })
           enqueueCommand(sessionId, { id, operations, at: Date.now() })
         })
         if (answer.ok !== true) throw new Error(`ComfyUI rejected the edit: ${answer.error ?? 'unknown error'}`)
@@ -1025,8 +1058,8 @@ export function apply(ctx, rawConfig = {}) {
             pendingCommands.delete(id)
             dropCommand(sessionId, id)
             reject(new Error('The ComfyUI panel did not answer the screenshot in time. It may be reloading.'))
-          }, 30000)
-          pendingCommands.set(id, { resolve, timer })
+          }, 15000)
+          pendingCommands.set(id, { resolve, reject, timer, sessionId })
           enqueueCommand(sessionId, { id, kind: 'screenshot', at: Date.now() })
         })
         if (answer.ok !== true) throw new Error(`ComfyUI rejected the screenshot: ${answer.error ?? 'unknown error'}`)
