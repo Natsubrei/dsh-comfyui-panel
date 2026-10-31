@@ -622,4 +622,50 @@ const stage = (service, extra = {}) => overlayPlan({
   await assert.rejects(applyWorkflowGraph({}, { nodes: [] }), /cannot load a workflow/)
 }
 
+// The load is not done when the editor shows the graph: the Host has to have
+// it. `syncNow` reports its own failure and returns, so the load must check the
+// result or the tool reports success over a stale mirrored workflow.
+{
+  const { loadWorkflow } = mod.__ops
+  const graph = {
+    _nodes: [1, 2],
+    links: new Map([[1, {}]]),
+    setDirtyCanvas() {},
+  }
+  /** @type {any} */
+  const app = {
+    isGraphReady: true,
+    async loadGraphData(workflow) {
+      app.loadedNodes = workflow.nodes.length
+      app.rootGraphOrUndefined = graph
+    },
+  }
+  const fitted = []
+  let syncCalls = 0
+  const result = await loadWorkflow(app, { nodes: [1, 2], links: [] }, {
+    fit: target => {
+      fitted.push(target)
+      return Promise.resolve(true)
+    },
+    sync: async () => {
+      syncCalls += 1
+      return true
+    },
+  })
+  assert.deepEqual(result, { applied: 1, nodes: 2, links: 1, operations: [{ op: 'load_workflow' }] })
+  assert.deepEqual(fitted, [app], 'the loaded graph is framed')
+  assert.equal(syncCalls, 1)
+  assert.equal(app.loadedNodes, 2)
+
+  // The editor accepted the workflow but the Host did not: the load rejects
+  // rather than returning counts the Host's mirrored graph does not match.
+  await assert.rejects(
+    loadWorkflow(app, { nodes: [1, 2], links: [] }, {
+      fit: async () => true,
+      sync: async () => false,
+    }),
+    /did not receive it/,
+  )
+}
+
 console.log('client ops test passed')

@@ -1087,6 +1087,31 @@ window.__ModuleLoader__.load({
       return { nodes: graph?._nodes?.length ?? workflow.nodes.length, links }
     }
 
+    /**
+     * Load a saved workflow and prove the Host received it.
+     *
+     * `syncNow` reports a failed state POST through the bar and returns, so a
+     * caller that ignores it would tell the model the load succeeded while the
+     * Host still mirrors the previous graph. Here the sync result is load-bearing:
+     * a workflow that loaded but did not reach the Host is an error.
+     * @param {any} app - the editor's `comfyAPI.app.app`.
+     * @param {any} workflow - a serialized UI workflow.
+     * @param {{fit: (app: any) => Promise<unknown>, sync: () => Promise<boolean>}} hooks
+     *   `fit` frames the loaded graph; `sync` reports whether the state POST landed.
+     * @returns {Promise<{applied: number, nodes: number, links: number, operations: {op: string}[]}>}
+     */
+    async function loadWorkflow(app, workflow, { fit, sync }) {
+      const value = await applyWorkflowGraph(app, workflow)
+      // Synced workflows carry no camera, so frame the loaded graph instead of
+      // leaving it wherever the previous workflow was panned to. A framing
+      // failure must not fail the load.
+      await fit(app).catch(() => {})
+      if (!(await sync())) {
+        throw new Error('The workflow loaded, but the Host did not receive it; retry Sync')
+      }
+      return { applied: 1, nodes: value.nodes, links: value.links, operations: [{ op: 'load_workflow' }] }
+    }
+
     function ComfyPanel({ sessionId, t }) {
       const iframeRef = useRef(null)
       const appRef = useRef(null)
@@ -1276,14 +1301,16 @@ window.__ModuleLoader__.load({
         if (app === null) {
           setStatus('loading')
           setMessage(t('bridgeUnavailable'))
-          return
+          return false
         }
         try {
           await push(app, force)
+          return true
         } catch (error) {
           lastJsonRef.current = ''
           setStatus('error')
           setMessage(error instanceof Error ? error.message : String(error))
+          return false
         }
       }, [push, readApp, t])
       syncRef.current = syncNow
@@ -1314,14 +1341,10 @@ window.__ModuleLoader__.load({
         return { applied: applied.length, nodes: graph._nodes?.length ?? 0, links, operations: applied }
       }, [syncNow, t])
 
-      const applyWorkflow = useCallback(async (app, workflow) => {
-        const value = await applyWorkflowGraph(app, workflow)
-        // Synced workflows carry no camera, so frame the loaded graph instead
-        // of leaving it wherever the previous workflow was panned to.
-        await fitCanvas(app).catch(() => {})
-        await syncNow(true)
-        return { applied: 1, nodes: value.nodes, links: value.links, operations: [{ op: 'load_workflow' }] }
-      }, [syncNow])
+      const applyWorkflow = useCallback((app, workflow) => loadWorkflow(app, workflow, {
+        fit: target => fitCanvas(target),
+        sync: () => syncNow(true),
+      }), [syncNow])
 
       const runCommand = useCallback(async (app, command) => {
         if (command.kind === 'screenshot') return captureGraph(app)
@@ -1689,7 +1712,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale', 'sidebarRightTabs'],
       // Editor operations, dictionaries, and the bar/stage rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, captureGraph, applyWorkflowGraph, findNode, coerceWidgetValue, frontendClientId, panelApp, mapApiEvent, relayEditorEvents, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, fitCanvasByBounds, viewShowsAll, describeOperation, en, zh },
+      __ops: { applyOperation, captureGraph, applyWorkflowGraph, loadWorkflow, findNode, coerceWidgetValue, frontendClientId, panelApp, mapApiEvent, relayEditorEvents, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, fitCanvasByBounds, viewShowsAll, describeOperation, en, zh },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')
