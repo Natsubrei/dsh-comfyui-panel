@@ -10,15 +10,20 @@ truth, and every release is pinned by a commit in `market/index.json`.
   `dsh_comfyui` domain, `comfyui_workflow_list` reads the slots back,
   `comfyui_workflow_load` replaces the open panel's graph through the command
   channel, and `comfyui_workflow_export` / `comfyui_workflow_import` move UI
-  workflow JSON to and from files under the session workspace. Only `load`
-  needs the panel open; the others work from the Host's mirrored state.
+  workflow JSON to and from files. Only `load` needs the panel open, and the
+  file tools work in a session that has already synced or restored a workflow.
+- Export and import paths must stay inside the session workspace; a relative
+  path resolves against it and a path that escapes it is rejected instead of
+  letting the tool read or overwrite arbitrary files.
 - `comfyui_workflow_load` waits for the frontend's own `loadGraphData` and the
   following sync, so the Host's mirrored workflow is the loaded one when the
-  tool returns. A page still running the previous client answers the command as
-  an empty edit, and the tool now reports that instead of claiming success.
+  tool returns. A failed state POST rejects the load instead of reporting
+  success over a stale mirror, and a page still running the previous client
+  answers the command as an empty edit, which the tool also reports.
 - `npm run contract` mounts the native tool executor the current DSH composition
   requires and drives tools through the batch API, so the real-runtime check
-  runs again; it also covers saving and listing a named workflow.
+  runs again; it now covers saving, listing, exporting, importing, and loading a
+  named workflow.
 
 ## 0.6.11
 

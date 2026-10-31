@@ -322,8 +322,10 @@ try {
 
   // ── Load: the panel's long-poll takes the command and answers it ─────────
   // Start the poll first so `panelConnected` sees a waiter; the load tool then
-  // queues the command for that same poll. The result route releases it.
+  // queues the command for that same poll. The result route releases it. The
+  // yielded turn lets the poll's body parse settle before the tool checks.
   const pollPending = post('/api/comfyui/commands/poll', { sessionId: SESSION_ID, timeoutMs: 1000 })
+  await new Promise(resolve => setTimeout(resolve, 0))
   const loadPending = callTool('comfyui_workflow_load', { name: 'imported' }, 'contract-workflow-load')
   const polled = await pollPending
   assert.equal(polled.status, 200, 'command poll should be routed')
