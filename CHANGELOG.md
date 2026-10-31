@@ -5,6 +5,16 @@ truth, and every release is pinned by a commit in `market/index.json`.
 
 ## Unreleased
 
+- Workflows have a name that the panel, the model, and the saved slots agree on.
+  The session record carries an optional `name`; the panel bar shows it, the
+  runtime-context digest reads `rev … · "name" · …`, `comfyui_status` includes
+  it, and `comfyui_workflow_list` marks the slot the session is editing.
+  `comfyui_workflow_save` and `comfyui_workflow_load` set it, and the panel
+  reports the name the editor would save under when the user opens or saves a
+  file in ComfyUI. A name only reaches the editor's tab when ComfyUI already
+  holds `<name>.json`, so the panel never points Save at a path that does not
+  exist; a reload of a named session no longer looks like a nameless
+  "Unsaved Workflow".
 - `npm test` now runs the real-runtime contract when a built DeepSeek Harness
   checkout is next to this repository, so a DSH API drift fails the next
   ordinary test run instead of sitting unnoticed until a release. A machine

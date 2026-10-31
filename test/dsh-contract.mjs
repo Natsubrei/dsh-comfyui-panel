@@ -281,13 +281,16 @@ try {
   const savedResult = await callTool('comfyui_workflow_save', { name: 'contract' }, 'contract-workflow-save')
   const savedWorkflow = JSON.parse(savedResult.content.find(part => part.type === 'text')?.text)
   assert.equal(savedWorkflow.saved, 'contract')
+  assert.equal(savedWorkflow.name, 'contract', 'saving a slot names the session after it')
   assert.equal(savedWorkflow.nodes, 2)
   assert.equal(tables.get('workflows').get('contract').nodes, 2)
 
   const listedResult = await callTool('comfyui_workflow_list', {}, 'contract-workflow-list')
   const listedWorkflows = JSON.parse(listedResult.content.find(part => part.type === 'text')?.text)
   assert.equal(listedWorkflows.count, 1)
+  assert.equal(listedWorkflows.current, 'contract')
   assert.equal(listedWorkflows.workflows[0].name, 'contract')
+  assert.equal(listedWorkflows.workflows[0].current, true)
 
   // ── Workflow files: export and import write real files in the workspace ──
   const exportPath = join(workflowDir, 'contract.json')
@@ -353,7 +356,7 @@ try {
   // ── The digest lands in the agent's runtime context, not the global one ──
   const assembly = await ctx.systemPrompt.assemble({ scope: agent })
   const snapshot = renderContextSnapshot(assembly)
-  assert.match(snapshot, /ComfyUI: rev \d+ · 2 nodes · 1 link/)
+  assert.match(snapshot, /ComfyUI: rev \d+ · "imported" · 2 nodes · 1 link/)
   const globalSnapshot = renderContextSnapshot(await ctx.systemPrompt.assemble())
   assert.doesNotMatch(globalSnapshot, /ComfyUI: rev/)
 

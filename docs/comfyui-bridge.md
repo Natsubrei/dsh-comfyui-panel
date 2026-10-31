@@ -32,6 +32,7 @@ It is a partial view of the real `ComfyApp`; what the plugin uses:
 | `app.loadGraphData(workflow, clean = true, restoreView = true)` | replace the editor graph from a serialized workflow; `clean` drops the old graph, `restoreView` restores the saved camera |
 | `app.canvas.canvas` | the 2D canvas element behind the editor; `toDataURL('image/png')` is the screenshot `comfyui_screenshot` returns |
 | `app.canvasInternal` / `app.rootGraphRef` | Vue-level members; `canvasInternal` is the same canvas, `rootGraphRef.value` the same graph |
+| `app.extensionManager.workflow.activeWorkflow` | the open `ComfyWorkflow`; its `filename` drives the tab label and Save target, and the panel reads it as the session's workflow name (see §5) |
 
 `rootGraph`, `graph`, `canvas`, and `extensionManager` are `undefined` until
 the Vue app has finished setting up, so wait for `comfyAPI.app.app` **and** for
@@ -116,7 +117,34 @@ cd <ComfyUI>/.venv/lib/python3.*/site-packages/comfyui_frontend_package/static/a
 grep -l 'Comfy.Canvas.FitView' *.js
 ```
 
-## 5. Execution events follow `server.client_id`
+## 5. The workflow's name
+
+The tab label, and the path Ctrl+S writes to, come from the active workflow's
+`filename`:
+
+```js
+app.extensionManager.workflow.activeWorkflow.filename // 'deepseek-chan-emoji.json' or null
+```
+
+A canvas that was never saved has none, which is why every restored graph reads
+"Unsaved Workflow (2)": the frontend autosaves the unsaved workflow in the
+browser and restores it without a file identity. The Host mirrors the name as
+the session's workflow name, so the panel bar, the digest, `comfyui_status`, and
+the saved-slot list all use one word for one graph.
+
+Two rules keep the two sides from fighting:
+
+- the panel reports the name only when it changed, and a quiet re-sync omits it,
+  so a name a workflow tool set is not cleared by the next idle tick;
+- the Host never invents a file. Before renaming the tab the panel asks the
+  editor's own `api.fetchApi('/userdata?dir=workflows')` and skips any name
+  without `<name>.json`, and it only follows a name the Host *changed* — a
+  steady name cannot overwrite the file the user opened in the meantime.
+
+Verify after an upgrade: open the editor, read the `filename` above, and set it
+to `'probe.json'`; the tab label must follow immediately.
+
+## 6. Execution events follow `server.client_id`
 
 ComfyUI sends `execution_start`, `executing`, `progress`, `executed`, and the
 terminal events to the WebSocket that queued the prompt (`server.client_id`),

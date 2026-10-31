@@ -148,6 +148,9 @@ export function digestLine(state, { connected = false, run = null } = {}) {
     `${state.nodes} node${state.nodes === 1 ? '' : 's'}`,
     `${state.links} link${state.links === 1 ? '' : 's'}`,
   ]
+  // The name is what the panel bar and the saved-slot list agree on, so it
+  // belongs in the one line that tells the model which workflow it is editing.
+  if (typeof state.name === 'string' && state.name.length > 0) parts.splice(1, 0, `"${state.name}"`)
   const selection = state.semantic?.selection ?? []
   if (selection.length > 0) parts.push(`selected ${selection.slice(0, 8).join(', ')}`)
   if (run?.status === 'running') {

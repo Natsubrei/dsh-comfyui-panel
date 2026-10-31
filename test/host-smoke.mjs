@@ -354,12 +354,105 @@ const scrolled = await host.fetches.get('/api/comfyui/state').fetch(new Request(
 ))
 assert.equal((await scrolled.json()).revision, 1, 'view-only canvas state must not bump the revision')
 
+// The workflow name rides with the sync but is metadata, not graph content:
+// renaming a workflow must not look like an edit to the model.
+const named = await host.fetches.get('/api/comfyui/state').fetch(new Request(
+  'http://127.0.0.1/api/comfyui/state?sessionId=s1',
+  {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: 's1',
+      revision: 4,
+      workflow,
+      prompt: { 7: { class_type: 'KSampler', inputs: {} }, 4: { class_type: 'UNETLoader', inputs: {} } },
+      semantic,
+      name: 'portrait',
+    }),
+  },
+))
+const namedBody = await named.json()
+assert.equal(namedBody.name, 'portrait')
+assert.equal(namedBody.revision, 1, 'naming a workflow is not a graph edit')
+
+// The panel sends a name only when the editor's name changed, so a body
+// without one means "keep what the session already has" — the case a tool-set
+// name depends on.
+const quiet = await host.fetches.get('/api/comfyui/state').fetch(new Request(
+  'http://127.0.0.1/api/comfyui/state?sessionId=s1',
+  {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: 's1',
+      revision: 5,
+      workflow,
+      prompt: { 7: { class_type: 'KSampler', inputs: {} }, 4: { class_type: 'UNETLoader', inputs: {} } },
+      semantic,
+    }),
+  },
+))
+assert.equal((await quiet.json()).name, 'portrait', 'a quiet re-sync keeps the name')
+
+const cleared = await host.fetches.get('/api/comfyui/state').fetch(new Request(
+  'http://127.0.0.1/api/comfyui/state?sessionId=s1',
+  {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: 's1',
+      revision: 6,
+      workflow,
+      prompt: { 7: { class_type: 'KSampler', inputs: {} }, 4: { class_type: 'UNETLoader', inputs: {} } },
+      semantic,
+      name: null,
+    }),
+  },
+))
+assert.equal((await cleared.json()).name, null, 'a null name means the canvas has no name')
+
+const rejected = await host.fetches.get('/api/comfyui/state').fetch(new Request(
+  'http://127.0.0.1/api/comfyui/state?sessionId=s1',
+  {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: 's1',
+      revision: 7,
+      workflow,
+      prompt: { 7: { class_type: 'KSampler', inputs: {} }, 4: { class_type: 'UNETLoader', inputs: {} } },
+      semantic,
+      name: 'x'.repeat(81),
+    }),
+  },
+))
+assert.equal(rejected.status, 400, 'an unusable name is a client error, not a silent rename')
+
+const renamed = await host.fetches.get('/api/comfyui/state').fetch(new Request(
+  'http://127.0.0.1/api/comfyui/state?sessionId=s1',
+  {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: 's1',
+      revision: 8,
+      workflow,
+      prompt: { 7: { class_type: 'KSampler', inputs: {} }, 4: { class_type: 'UNETLoader', inputs: {} } },
+      semantic,
+      name: 'portrait',
+    }),
+  },
+))
+assert.equal((await renamed.json()).name, 'portrait')
+
+
 // A session only sees ComfyUI once its own workflow has synced.
 const s1 = addAgent(host, 's1')
 const s2 = addAgent(host, 's2')
 assert.ok(s1.tools.has('comfyui_edit'))
 assert.equal(s2.tools.size, 0, 'a session without a synced workflow must not see ComfyUI tools')
 assert.ok(s1.digest().includes('rev 1'), 'digest names the current revision')
+assert.ok(s1.digest().includes('"portrait"'), 'digest names the workflow')
 assert.ok(s1.digest().includes('selected 7'))
 assert.equal(s1.digest().includes('panel'), true)
 
@@ -567,6 +660,7 @@ assert.equal(edited.links, 1)
     const saved = parse(await s1.tools.get('comfyui_workflow_save').execute({ name: 'portrait' }, workflowExec))
     assert.equal(saved.saved, 'portrait')
     assert.equal(saved.replaced, false)
+    assert.equal(saved.name, 'portrait', 'saving a slot names the session after it')
     assert.equal(saved.nodes, 2)
     assert.equal(saved.persistence.backend, 'storage')
     const stored = storage.state.workflows.get('portrait')
@@ -578,7 +672,9 @@ assert.equal(edited.links, 1)
 
     const listed = parse(await s1.tools.get('comfyui_workflow_list').execute({}, workflowExec))
     assert.equal(listed.count, 1)
+    assert.equal(listed.current, 'portrait', 'the list says which slot the session is editing')
     assert.equal(listed.workflows[0].name, 'portrait')
+    assert.equal(listed.workflows[0].current, true)
     assert.equal(listed.workflows[0].nodes, 2)
     assert.ok(Number.isSafeInteger(listed.workflows[0].createdAt), 'the list exposes when the slot was created')
 
@@ -626,6 +722,7 @@ assert.equal(edited.links, 1)
     const loaded = parse(await loadPromise)
     assert.equal(loaded.name, 'imported')
     assert.equal(loaded.nodes, 1)
+    assert.ok(s1.digest().includes('"imported"'), 'loading a slot names the session after it')
 
     // A page with the previous client falls back to "edit with no operations"
     // and answers success; the tool must not accept that as a load.

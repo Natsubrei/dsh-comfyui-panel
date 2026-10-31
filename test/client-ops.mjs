@@ -668,4 +668,36 @@ const stage = (service, extra = {}) => overlayPlan({
   )
 }
 
+// The editor's name is its file identity: the label ComfyUI shows and the path
+// Save writes to. The panel reports it to the Host, and shows a Host-side name
+// back once the file it names is known to exist (that check lives in
+// `adoptWorkflowName`, which needs a page).
+{
+  const { workflowNameFromEditor, bindWorkflowLabel } = mod.__ops
+  const editor = filename => ({
+    extensionManager: { workflow: { activeWorkflow: { filename } } },
+  })
+
+  assert.equal(workflowNameFromEditor(editor('deepseek-chan-emoji.json')), 'deepseek-chan-emoji')
+  assert.equal(workflowNameFromEditor(editor('sub/folder/pack.v2.json')), 'pack.v2')
+  assert.equal(workflowNameFromEditor(editor(null)), null, 'an unsaved canvas has no name')
+  assert.equal(workflowNameFromEditor(editor('')), null)
+  assert.equal(workflowNameFromEditor({}), null, 'a frontend without a workflow service has no name')
+  assert.equal(workflowNameFromEditor(null), null)
+
+  const unsaved = editor(null)
+  assert.equal(bindWorkflowLabel(unsaved, 'portrait'), true)
+  assert.equal(workflowNameFromEditor(unsaved), 'portrait', 'the tab now names the workflow')
+  assert.equal(unsaved.extensionManager.workflow.activeWorkflow.path, 'portrait.json')
+
+  // A tool load replaces the canvas, so the tab has to move with it: leaving
+  // the old file name would make Save write the loaded graph over the old file.
+  const saved = editor('other.json')
+  assert.equal(bindWorkflowLabel(saved, 'portrait'), true)
+  assert.equal(workflowNameFromEditor(saved), 'portrait')
+
+  assert.equal(bindWorkflowLabel(editor(null), ''), false)
+  assert.equal(bindWorkflowLabel({}, 'portrait'), false, 'no workflow service means nothing to rename')
+}
+
 console.log('client ops test passed')

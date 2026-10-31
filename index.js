@@ -318,6 +318,21 @@ export function apply(ctx, rawConfig = {}) {
     if (workflow === null) return json({ ok: false, error: 'workflow must be an object' }, 400)
     const previous = sessions.get(sessionId)
     const incoming = Number.isSafeInteger(body.revision) ? body.revision : 0
+    // The panel reports the name its editor would save under, but only when
+    // that name changed: a canvas whose frontend has no file yet sends no
+    // `name`, and the Host must keep the name a tool gave the session rather
+    // than clear it on every quiet re-sync.
+    let name = previous?.name ?? null
+    if (body.name !== undefined) {
+      if (body.name === null) {
+        name = null
+      } else {
+        const requested = validWorkflowName(body.name)
+        if (requested === null) return json({ ok: false, error: 'name must be 1-80 characters without control characters' }, 400)
+        name = requested
+      }
+    }
+    const renamed = name !== (previous?.name ?? null)
     let semantic = sanitizeSemantic(body.semantic)
     // A projection that sees no nodes while the raw workflow has some comes
     // from a frontend whose live-node layout this client does not recognize;
@@ -335,6 +350,9 @@ export function apply(ctx, rawConfig = {}) {
       prompt,
       semantic,
       signature,
+      // The name is metadata, not graph content: it never bumps the revision,
+      // because renaming a workflow does not change what the model reads.
+      name,
       // Which socket the embedded frontend is listening on. Execution events
       // only reach the client that queued the prompt, so a run the model
       // starts has to use the panel's id or it never shows up in the UI.
@@ -354,7 +372,7 @@ export function apply(ctx, rawConfig = {}) {
     }
     sessions.set(sessionId, state)
     registerSessionTools(sessionId)
-    if (changed) schedulePersist(sessionId)
+    if (changed || renamed) schedulePersist(sessionId)
     return json({ ok: true, ...summary(state) })
   }
 
@@ -367,6 +385,7 @@ export function apply(ctx, rawConfig = {}) {
       prompt,
       semantic,
       signature: JSON.stringify([workflow, prompt, semantic]),
+      name: typeof record.name === 'string' ? record.name : null,
       revision: record.revision,
       nodes: Array.isArray(workflow.nodes) ? workflow.nodes.length : 0,
       links: Array.isArray(workflow.links) ? workflow.links.length : 0,
@@ -391,6 +410,7 @@ export function apply(ctx, rawConfig = {}) {
         workflow: state.workflow,
         prompt: state.prompt,
         semantic: state.semantic,
+        name: state.name ?? null,
       }).catch(error => ctx.logger?.warn(`dsh-comfyui: could not persist ${sessionId}: ${String(error)}`))
     }, 1500))
   }
@@ -398,6 +418,7 @@ export function apply(ctx, rawConfig = {}) {
   function summary(state) {
     return {
       revision: state.revision,
+      name: state.name ?? null,
       nodes: state.nodes,
       links: state.links,
       types: state.types,
@@ -737,7 +758,7 @@ export function apply(ctx, rawConfig = {}) {
       add(() => sessionCtx.tools.register(screenshotTool(sessionId)))
       add(() => sessionCtx.tools.register(nodeInfoTool()))
       add(() => sessionCtx.tools.register(workflowSaveTool(sessionId)))
-      add(() => sessionCtx.tools.register(workflowListTool()))
+      add(() => sessionCtx.tools.register(workflowListTool(sessionId)))
       add(() => sessionCtx.tools.register(workflowLoadTool(sessionId)))
       add(() => sessionCtx.tools.register(workflowExportTool(sessionId)))
       add(() => sessionCtx.tools.register(workflowImportTool(sessionId)))
@@ -829,6 +850,7 @@ export function apply(ctx, rawConfig = {}) {
             text: JSON.stringify({
               sessionId,
               revision: state.revision,
+              name: state.name ?? null,
               nodes: projected,
               overlaps,
               tight,
@@ -841,6 +863,7 @@ export function apply(ctx, rawConfig = {}) {
             text: JSON.stringify({
               sessionId,
               revision: state.revision,
+              name: state.name ?? null,
               updatedAt: state.updatedAt,
               workflow: state.workflow,
               prompt: state.prompt,
@@ -852,6 +875,7 @@ export function apply(ctx, rawConfig = {}) {
           text: JSON.stringify({
             sessionId,
             revision: state.revision,
+            name: state.name ?? null,
             updatedAt: state.updatedAt,
             projectedFrom: state.semantic === null ? 'workflow' : 'panel',
             ...(state.semantic === null
@@ -1154,15 +1178,31 @@ export function apply(ctx, rawConfig = {}) {
   // the browser's LiteGraph through the same command channel as comfyui_edit.
 
   /**
+   * Validate a workflow name without throwing.
+   *
+   * The bridge accepts one from the panel on every sync, where an unusable
+   * value is a client bug rather than a tool-call error, so the check is
+   * shared with `workflowName` instead of duplicated.
+   * @param {unknown} value - the requested name.
+   * @returns {string | null} the trimmed name, or null when it is not usable.
+   */
+  function validWorkflowName(value) {
+    if (typeof value !== 'string') return null
+    const name = value.trim()
+    if (name.length === 0 || name.length > 80) return null
+    if (/[\u0000-\u001f\u007f]/u.test(name)) return null
+    return name
+  }
+
+  /**
    * Validate a saved-workflow slot name.
    * @param {unknown} value - the requested name.
    * @returns {string} the trimmed name.
    */
   function workflowName(value) {
     if (typeof value !== 'string') throw new Error('name is required')
-    const name = value.trim()
-    if (name.length === 0 || name.length > 80) throw new Error('name must be 1-80 characters')
-    if (/[\u0000-\u001f\u007f]/u.test(name)) throw new Error('name must not contain control characters')
+    const name = validWorkflowName(value)
+    if (name === null) throw new Error('name must be 1-80 characters without control characters')
     return name
   }
 
@@ -1262,10 +1302,15 @@ export function apply(ctx, rawConfig = {}) {
           links: state.links,
           sourceSessionId: sessionId,
         })
+        // The session's canvas is now that slot: adopt the name so the panel
+        // bar, the digest and `comfyui_status` agree with what was saved.
+        state.name = name
+        schedulePersist(sessionId)
         return {
           text: JSON.stringify({
             saved: name,
             replaced,
+            name,
             nodes: state.nodes,
             links: state.links,
             revision: state.revision,
@@ -1278,12 +1323,13 @@ export function apply(ctx, rawConfig = {}) {
 
   /**
    * Build the tool that lists saved workflows.
+   * @param {string} sessionId - the session whose current workflow is flagged.
    * @returns {object} the tool definition.
    */
-  function workflowListTool() {
+  function workflowListTool(sessionId) {
     return {
       name: 'comfyui_workflow_list',
-      description: 'List the workflows saved with comfyui_workflow_save, most recently saved first.',
+      description: 'List the workflows saved with comfyui_workflow_save, most recently saved first. The workflow open in this session is marked current.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       output: textOutput(),
       /**
@@ -1292,13 +1338,16 @@ export function apply(ctx, rawConfig = {}) {
       async execute() {
         const saved = await store.workflows()
         const shown = saved.slice(0, 100)
+        const current = sessions.get(sessionId)?.name ?? null
         return {
           text: JSON.stringify({
+            current,
             persistence: persistence(),
             count: saved.length,
             truncated: saved.length > shown.length,
             workflows: shown.map(record => ({
               name: record.name,
+              current: record.name === current,
               nodes: record.nodes,
               links: record.links,
               revision: record.revision,
@@ -1359,6 +1408,13 @@ export function apply(ctx, rawConfig = {}) {
         if (!loaded) {
           throw new Error('The panel did not confirm the workflow load. Hard-refresh the page so the panel learns the command, then retry.')
         }
+        // The canvas now holds that slot; the name follows it so a later
+        // `comfyui_workflow_save` does not silently rename the session.
+        const state = sessions.get(sessionId)
+        if (state !== undefined) {
+          state.name = name
+          schedulePersist(sessionId)
+        }
         return {
           text: JSON.stringify({
             id,
@@ -1366,7 +1422,7 @@ export function apply(ctx, rawConfig = {}) {
             name,
             nodes: value.nodes ?? record.nodes,
             links: value.links ?? record.links,
-            revision: sessions.get(sessionId)?.revision ?? null,
+            revision: state?.revision ?? null,
           }, null, 2),
         }
       },

@@ -34,6 +34,12 @@ function parseRecord(value) {
   if (typeof value.sessionId !== 'string' || value.sessionId.length === 0 || value.sessionId.length > 200) {
     invalid('workflow record needs a sessionId')
   }
+  // Optional: records written before 0.7.1 have no name, and an unnamed canvas
+  // is a real state, so absence and null both mean "no name".
+  if (value.name !== undefined && value.name !== null
+    && (typeof value.name !== 'string' || value.name.length === 0 || value.name.length > 80)) {
+    invalid('workflow record name must be 1-80 characters')
+  }
   if (!Number.isSafeInteger(value.revision) || value.revision < 0) invalid('workflow record needs a non-negative revision')
   if (!Number.isSafeInteger(value.updatedAt) || value.updatedAt <= 0) invalid('workflow record needs an updatedAt')
   if (value.workflow === null || typeof value.workflow !== 'object' || Array.isArray(value.workflow)) {

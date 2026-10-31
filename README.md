@@ -92,8 +92,14 @@ read on for the panel itself.
     a slot. Paths resolve against the session workspace, and a path outside it
     is rejected.
 - Adds one runtime-context digest line to those sessions, e.g.
-  `ComfyUI: rev 14 · 9 nodes · 9 links · selected 7 · panel open.`
-- Persists each session's workflow, API prompt, and projection through
+  `ComfyUI: rev 14 · "deepseek-chan-emoji" · 9 nodes · 9 links · selected 7 ·
+  panel open.` The quoted part is the workflow's name, and appears only when the
+  graph has one.
+- Keeps one name for one graph. Saving or loading a named workflow names the
+  session, the panel bar shows it, and when `<name>.json` exists in ComfyUI's
+  user data the editor's own tab is renamed too, so the panel and the embedded
+  editor stop disagreeing about which workflow is open.
+- Persists each session's workflow, API prompt, projection, and name through
   `ctx.storageDomain` (domain `dsh_comfyui`), so a Host restart does not lose
   the graph. Storage failures degrade to memory without blocking the bridge.
   Named workflows live in the same domain's `workflows` table.
@@ -263,7 +269,7 @@ than 16 pixels (exit code 2 when any do). Use it to judge a layout file, or
   `graphToPrompt()`; the projection is a read-only view built from the same
   nodes, so the model never sees a second, lossy graph representation as truth.
 - **State lives in the plugin.** Workflows survive restarts through a domain KV
-  record (`sessionId -> { workflow, prompt, semantic, revision }`), capped at
+  record (`sessionId -> { workflow, prompt, semantic, revision, name }`), capped at
   the 20 most recently updated sessions. The model only sees the projection and
   its own edit results.
 - **`revision` tracks edits, not the viewport.** The frontend serializes

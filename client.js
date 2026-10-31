@@ -499,7 +499,10 @@ window.__ModuleLoader__.load({
       const counts = t('stats')
         .replace('{{nodes}}', String(stats.nodes))
         .replace('{{links}}', String(stats.links))
-      const statText = [counts, synced].filter(part => part.length > 0).join(' · ')
+      // The name leads: it is the one fact the panel and the model have to agree
+      // on, and a bar that shows only counts reads the same for every workflow.
+      const name = typeof stats.name === 'string' && stats.name.length > 0 ? stats.name : ''
+      const statText = [name === '' ? '' : `「${name}」`, counts, synced].filter(part => part.length > 0).join(' · ')
       // The revision is bookkeeping for the Host and the model, not a number
       // a ComfyUI user can act on; keep it in the tooltip instead of the bar.
       const statTitle = t('statsTitle')
@@ -530,6 +533,7 @@ window.__ModuleLoader__.load({
         h('span', {
           className: 'dsh-comfyui-stats',
           title: statTitle,
+          'data-workflow-name': name,
           'data-nodes': String(stats.nodes),
           'data-links': String(stats.links),
           'data-revision': String(stats.revision),
@@ -703,6 +707,69 @@ window.__ModuleLoader__.load({
       if (app === undefined || app === null) return null
       if (app.isGraphReady === false) return null
       return app
+    }
+
+    /**
+     * The name the editor would save its workflow under, or null when the
+     * canvas has never been saved.
+     *
+     * ComfyUI derives the tab label, and the path Save writes to, from the
+     * active workflow's `filename`: a temporary canvas has none, which is why
+     * the tab reads "Unsaved Workflow". The Host uses this value as the
+     * session's workflow name, so the two sides name the same graph the same
+     * way.
+     * @param {any} app - the editor's `comfyAPI.app.app`.
+     * @returns {string | null} the file stem, without folders or `.json`.
+     */
+    function workflowNameFromEditor(app) {
+      const workflow = app?.extensionManager?.workflow?.activeWorkflow
+      const filename = typeof workflow?.filename === 'string' ? workflow.filename : ''
+      const base = filename.split(/[\\/]/).pop() ?? ''
+      const name = base.replace(/\.json$/i, '').trim()
+      return name.length > 0 ? name : null
+    }
+
+    /**
+     * Show a Host-side workflow name in the editor's tab.
+     *
+     * ComfyUI derives the tab label, and the path Save writes to, from the
+     * active workflow's `filename`. Renaming therefore has to mean "this
+     * canvas is that saved workflow", which is why the caller only does it for
+     * a name a tool just set and only when `workflows/<name>.json` exists.
+     * @param {any} app - the editor's `comfyAPI.app.app`.
+     * @param {string} name - the name to show; a saved slot or a reported file.
+     * @returns {boolean} whether the label was changed.
+     */
+    function bindWorkflowLabel(app, name) {
+      const workflow = app?.extensionManager?.workflow?.activeWorkflow
+      if (workflow === null || workflow === undefined) return false
+      if (typeof name !== 'string' || name.length === 0) return false
+      workflow.filename = `${name}.json`
+      workflow.path = `${name}.json`
+      return true
+    }
+
+    /**
+     * Whether ComfyUI's user data already holds a workflow file with this name.
+     *
+     * The request goes through the editor's own `api.fetchApi`, the same call
+     * its workflow browser makes: a bare `/api/userdata` would resolve against
+     * the DSH origin instead of the `/comfyui/` proxy prefix.
+     * @param {any} win - the editor iframe's window (`comfyAPI` is its own global).
+     * @param {string} name - the workflow name, without `.json`.
+     * @returns {Promise<boolean>} true when `workflows/<name>.json` is listed.
+     */
+    async function workflowFileExists(win, name) {
+      const api = win?.comfyAPI?.app?.app?.api ?? win?.comfyAPI?.api?.api
+      if (typeof api?.fetchApi !== 'function') return false
+      try {
+        const response = await api.fetchApi('/userdata?dir=workflows')
+        if (response?.ok !== true) return false
+        const list = await response.json()
+        return Array.isArray(list) && list.includes(`${name}.json`)
+      } catch {
+        return false
+      }
     }
 
     function findNode(graph, id) {
@@ -1120,11 +1187,21 @@ window.__ModuleLoader__.load({
       const revisionRef = useRef(0)
       const lastClientIdRef = useRef(null)
       const fittedRef = useRef(false)
+      /**
+       * The editor's workflow name at the last successful sync, or undefined
+       * before the first one. `undefined` means "unknown", not "unnamed": the
+       * first sync reports nothing and learns the Host's name instead.
+       */
+      const lastEditorNameRef = useRef(undefined)
+      /** The Host's name at the last sync, so only a change renames the editor. */
+      const lastHostNameRef = useRef(undefined)
+      /** `name -> whether workflows/<name>.json exists`, so each name is asked once. */
+      const workflowFileCacheRef = useRef(new Map())
       /** Bumped by every push; a slower one must not overtake a newer snapshot. */
       const pushGenRef = useRef(0)
       const [status, setStatus] = useState('loading')
       const [bootSeconds, setBootSeconds] = useState(0)
-      const [stats, setStats] = useState({ nodes: 0, links: 0, revision: 0 })
+      const [stats, setStats] = useState({ nodes: 0, links: 0, revision: 0, name: null })
       const [message, setMessage] = useState('')
       const [run, setRun] = useState(null)
       const [lastSyncAt, setLastSyncAt] = useState(0)
@@ -1201,6 +1278,34 @@ window.__ModuleLoader__.load({
         }
       }, [serviceAutoStart, serviceCwd, t])
 
+      /**
+       * Adopt a name the Host holds for this session.
+       *
+       * The bar always shows it. The editor's tab follows only when the file
+       * really exists, so the panel never invents a save: a name that is only a
+       * slot cannot repoint Save at a path the user cannot find.
+       * @param {any} app - the editor's `comfyAPI.app.app`.
+       * @param {string} name - the Host's name for this session's workflow.
+       * @returns {Promise<boolean>} whether the editor's label changed.
+       */
+      const adoptWorkflowName = useCallback(async (app, name) => {
+        const win = iframeRef.current?.contentWindow
+        if (win === null || win === undefined) return false
+        if (typeof name !== 'string' || name.length === 0) return false
+        const cache = workflowFileCacheRef.current
+        let exists = cache.get(name)
+        if (exists === undefined) {
+          exists = await workflowFileExists(win, name)
+          cache.set(name, exists)
+        }
+        if (!exists) return false
+        if (!bindWorkflowLabel(app, name)) return false
+        // The editor now carries the name, so the next sync must not report it
+        // back as if it were a rename the user just made.
+        lastEditorNameRef.current = name
+        return true
+      }, [])
+
       const push = useCallback(async (app, force = false) => {
         if (sessionId === undefined || sessionId === null) return
         const generation = ++pushGenRef.current
@@ -1230,7 +1335,14 @@ window.__ModuleLoader__.load({
           .map(Number)
           .filter(Number.isInteger)
         const json = `${JSON.stringify(workflow)}|${selection.join(',')}`
-        if (!force && json === lastJsonRef.current) return
+        // The name lives outside the graph JSON, so a rename alone would never
+        // reach the Host. It travels only when it changed, and the first sync
+        // reports a file the editor already had: a quiet re-sync must not clear
+        // a name that a workflow tool gave this session.
+        const editorName = workflowNameFromEditor(app)
+        const firstSync = lastEditorNameRef.current === undefined
+        const renamed = firstSync ? editorName !== null : lastEditorNameRef.current !== editorName
+        if (!force && json === lastJsonRef.current && !renamed) return
         lastJsonRef.current = json
         setStatus('syncing')
         setMessage('')
@@ -1261,7 +1373,15 @@ window.__ModuleLoader__.load({
         const response = await fetch(`${STATE_URL}?sessionId=${encodeURIComponent(sessionId)}`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ sessionId, workflow, prompt, semantic, revision, clientId: frameClient }),
+          body: JSON.stringify({
+            sessionId,
+            workflow,
+            prompt,
+            semantic,
+            revision,
+            clientId: frameClient,
+            ...(renamed ? { name: editorName } : {}),
+          }),
         })
         if (!response.ok) throw new Error(`${t('syncFailed')} HTTP ${response.status}`)
         // The Host keeps the revision monotonic across page reloads, so adopt
@@ -1270,7 +1390,25 @@ window.__ModuleLoader__.load({
         const saved = await response.json().catch(() => null)
         const persisted = Number.isSafeInteger(saved?.revision) ? saved.revision : revision
         revisionRef.current = Math.max(revisionRef.current, persisted)
-        setStats({ nodes, links, revision: revisionRef.current })
+        lastEditorNameRef.current = editorName
+        const hostName = typeof saved?.name === 'string' && saved.name.length > 0 ? saved.name : null
+        // Only a name the Host *changed* is pushed into the editor: a steady
+        // name must not fight a file the user opened in the meantime.
+        const hostRenamed = lastHostNameRef.current !== hostName
+        lastHostNameRef.current = hostName
+        setStats(current => ({
+          nodes,
+          links,
+          revision: revisionRef.current,
+          // An unparseable body says nothing about the name; a body without one
+          // means the Host cleared it.
+          name: saved === null ? current.name : hostName,
+        }))
+        // A tool can name the session (save, load) while the panel is open; the
+        // editor's tab follows when the file it names really exists.
+        if (hostRenamed && hostName !== null && hostName !== editorName) {
+          void adoptWorkflowName(app, hostName)
+        }
         setLastSyncAt(Date.now())
         // A fresh editor opens at ComfyUI's default camera, which leaves parts
         // of the graph off-screen; frame it once, unless the current view
@@ -1294,7 +1432,7 @@ window.__ModuleLoader__.load({
             }
           })()
         }
-      }, [sessionId, t])
+      }, [adoptWorkflowName, sessionId, t])
 
       const syncNow = useCallback(async (force = true) => {
         const app = readApp()
@@ -1527,6 +1665,11 @@ window.__ModuleLoader__.load({
         lastJsonRef.current = ''
         appRef.current = null
         fittedRef.current = false
+        // The new page fetches its own autosaved graph, so the name the old one
+        // carried says nothing about it; re-derive it on the next sync.
+        lastEditorNameRef.current = undefined
+        lastHostNameRef.current = undefined
+        workflowFileCacheRef.current.clear()
         setRun(null)
         setStatus('loading')
         setMessage('')
@@ -1712,7 +1855,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale', 'sidebarRightTabs'],
       // Editor operations, dictionaries, and the bar/stage rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, captureGraph, applyWorkflowGraph, loadWorkflow, findNode, coerceWidgetValue, frontendClientId, panelApp, mapApiEvent, relayEditorEvents, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, fitCanvasByBounds, viewShowsAll, describeOperation, en, zh },
+      __ops: { applyOperation, captureGraph, applyWorkflowGraph, loadWorkflow, findNode, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, workflowFileExists, mapApiEvent, relayEditorEvents, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, fitCanvasByBounds, viewShowsAll, describeOperation, en, zh },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')

@@ -14,8 +14,10 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
   runtime.
 - `projection.js` — semantic projection and digest line used by the Host.
 - `storage.js` — the `dsh_comfyui` domain spec (`sessions`, `workflows`,
-  `settings`). Adding a table is compatible; changing a record field needs a
-  version bump and a migration (the domain layer has no migrations).
+  `settings`). Adding a table is compatible, and so is an optional field that a
+  reader can treat as absent (`sessions.name` is one); changing or dropping an
+  existing field needs a version bump and a migration (the domain layer has no
+  migrations).
 - `service.js` / `supervisor.js` — panel-managed ComfyUI process control.
 - `docs/comfyui-bridge.md` — the frontend surface the panel depends on
   (`comfyAPI`, string ids, `extra.ds`, the camera, command ids,
@@ -33,8 +35,8 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
   see a layout without a panel, and the correct Fit framing lives there.
 - Live workflow record — the panel is canonical; the Host mirrors the graph to
   the `dsh_comfyui` storage domain (`tables.sessions.<sessionId>.workflow`, with
-  the API `prompt` beside it). Read it when you need the raw UI JSON while the
-  panel is closed.
+  the API `prompt` and the workflow `name` beside it). Read it when you need the
+  raw UI JSON while the panel is closed.
 - `test/repo-hygiene.mjs` — fails when this machine's paths, account, or
   hostname appear in the tree or in any commit.
 - `.github/workflows/test.yml` — CI: `npm ci`, `npm run typecheck`, then
@@ -118,7 +120,8 @@ conversation you are working in. What it cannot see — the digest line, the bar
 labels and buttons, the stopped stage — is the manual pass below.
 
 1. Hard-refresh the GUI, open the **ComfyUI** tab, wait for **Connected**.
-2. The header digest should read `ComfyUI: rev … · N nodes · … · panel open.`
+2. The header digest should read `ComfyUI: rev … · "name" · N nodes · … ·
+   panel open.` (the quoted part appears only when the workflow has a name).
 3. The bar reads left to right: status label (`Running` / `Stopped` /
    `External` / `Starting…`), the lifecycle buttons that fit it (Start when
    stopped, Stop + Restart when running and owned), the counters with the
