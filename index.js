@@ -22,7 +22,7 @@ import net from 'node:net'
 import tls from 'node:tls'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { digestLine, layoutReport, projectFromWorkflow, sanitizeSemantic, stripViewState } from './projection.js'
 import { createWorkflowStore } from './storage.js'
@@ -788,10 +788,7 @@ export function apply(ctx, rawConfig = {}) {
             panelConnected: panelConnected(sessionId),
             workflow: state === undefined ? null : summary(state),
             progress: latestProgress(sessionId),
-            persistence: {
-              backend: store.backend,
-              ...(store.reason === null ? {} : { reason: store.reason }),
-            },
+            persistence: persistence(),
             service: service.snapshot(),
           }, null, 2),
         }
@@ -1170,7 +1167,7 @@ export function apply(ctx, rawConfig = {}) {
   }
 
   /**
-   * Directory that relative export/import paths resolve against.
+   * Directory that export/import paths resolve against.
    * @param {{ agent?: { session?: { header?: { cwd?: string } } } }} [exec] - tool execution context.
    * @returns {string} the session working directory, or the Host's cwd.
    */
@@ -1180,24 +1177,61 @@ export function apply(ctx, rawConfig = {}) {
   }
 
   /**
-   * Resolve where an export should be written.
+   * Resolve a path against the session workspace and reject escapes from it.
+   * @param {string} value - the requested path, or a file name for the default.
+   * @param {{ agent?: { session?: { header?: { cwd?: string } } } }} exec - tool execution context.
+   * @returns {string} an absolute path inside the session workspace.
+   */
+  function workspaceFile(value, exec) {
+    const root = resolve(sessionDirectory(exec))
+    const target = resolve(root, value)
+    const edge = relative(root, target)
+    if (edge.startsWith('..') || isAbsolute(edge)) {
+      throw new Error(`path must stay inside the session workspace (${root})`)
+    }
+    return target
+  }
+
+  /**
+   * Resolve where an export should be written, defaulting inside the workspace.
    * @param {unknown} value - the requested `path`, if any.
    * @param {{ agent?: { session?: { header?: { cwd?: string } } } }} exec - tool execution context.
    * @param {string} label - fallback name for the default file.
-   * @returns {string} an absolute path.
+   * @returns {string} an absolute path inside the session workspace.
    */
   function workflowFile(value, exec, label) {
-    const directory = sessionDirectory(exec)
-    if (typeof value === 'string' && value.trim().length > 0) return resolve(directory, value.trim())
+    if (typeof value === 'string' && value.trim().length > 0) return workspaceFile(value.trim(), exec)
     const safe = String(label).replace(/[^\p{L}\p{N}._ -]+/gu, '_').trim() || 'workflow'
-    return join(directory, `comfyui-${safe}.json`)
+    return workspaceFile(`comfyui-${safe}.json`, exec)
   }
 
-  /** Persistence facts shared by the workflow tools. */
+  /**
+   * Write one named workflow slot, preserving its creation time when replaced.
+   * @param {string} name - the validated slot name.
+   * @param {{ workflow: object, revision: number, nodes: number, links: number, sourceSessionId: string }} fields - the workflow facts to store.
+   * @returns {Promise<{ replaced: boolean, record: object }>} whether the slot existed and the record written.
+   */
+  async function saveNamedWorkflow(name, fields) {
+    const existing = await store.workflow(name)
+    const now = Date.now()
+    const record = { name, ...fields, createdAt: existing?.createdAt ?? now, updatedAt: now }
+    await store.saveWorkflow(record)
+    return { replaced: existing !== null, record }
+  }
+
+  /**
+   * Persistence facts shared by the workflow tools.
+   * @returns {{ backend: string, reason?: string | null }} the backend and, when persistence is off, why.
+   */
   function persistence() {
     return { backend: store.backend, ...(store.reason === null ? {} : { reason: store.reason }) }
   }
 
+  /**
+   * Build the tool that saves this session's workflow under a name.
+   * @param {string} sessionId - the session whose workflow is saved.
+   * @returns {object} the tool definition.
+   */
   function workflowSaveTool(sessionId) {
     return {
       name: 'comfyui_workflow_save',
@@ -1211,30 +1245,27 @@ export function apply(ctx, rawConfig = {}) {
         additionalProperties: false,
       },
       output: textOutput(),
+      /**
+       * @param {{ name?: unknown }} args - the slot name.
+       * @returns {Promise<{ text: string }>} the saved slot facts.
+       */
       async execute(args) {
         const name = workflowName(args?.name)
         const state = sessions.get(sessionId)
         if (state === undefined) {
           throw new Error('No ComfyUI workflow has synced in this session. Open the ComfyUI tab in this session and wait for Connected.')
         }
-        const existing = await store.workflow(name)
-        const now = Date.now()
-        await store.saveWorkflow({
-          name,
+        const { replaced } = await saveNamedWorkflow(name, {
           workflow: state.workflow,
-          prompt: state.prompt,
-          semantic: state.semantic,
           revision: state.revision,
           nodes: state.nodes,
           links: state.links,
           sourceSessionId: sessionId,
-          createdAt: existing?.createdAt ?? now,
-          updatedAt: now,
         })
         return {
           text: JSON.stringify({
             saved: name,
-            replaced: existing !== null,
+            replaced,
             nodes: state.nodes,
             links: state.links,
             revision: state.revision,
@@ -1245,12 +1276,19 @@ export function apply(ctx, rawConfig = {}) {
     }
   }
 
+  /**
+   * Build the tool that lists saved workflows.
+   * @returns {object} the tool definition.
+   */
   function workflowListTool() {
     return {
       name: 'comfyui_workflow_list',
       description: 'List the workflows saved with comfyui_workflow_save, most recently saved first.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       output: textOutput(),
+      /**
+       * @returns {Promise<{ text: string }>} the saved slots.
+       */
       async execute() {
         const saved = await store.workflows()
         const shown = saved.slice(0, 100)
@@ -1264,6 +1302,7 @@ export function apply(ctx, rawConfig = {}) {
               nodes: record.nodes,
               links: record.links,
               revision: record.revision,
+              createdAt: record.createdAt,
               updatedAt: record.updatedAt,
               sourceSessionId: record.sourceSessionId,
             })),
@@ -1273,6 +1312,11 @@ export function apply(ctx, rawConfig = {}) {
     }
   }
 
+  /**
+   * Build the tool that loads a saved workflow into this session's panel.
+   * @param {string} sessionId - the session whose panel applies the load.
+   * @returns {object} the tool definition.
+   */
   function workflowLoadTool(sessionId) {
     return {
       name: 'comfyui_workflow_load',
@@ -1286,6 +1330,10 @@ export function apply(ctx, rawConfig = {}) {
         additionalProperties: false,
       },
       output: textOutput(),
+      /**
+       * @param {{ name?: unknown }} args - the saved slot to load.
+       * @returns {Promise<{ text: string }>} the loaded workflow facts.
+       */
       async execute(args) {
         const name = workflowName(args?.name)
         const record = await store.workflow(name)
@@ -1325,6 +1373,11 @@ export function apply(ctx, rawConfig = {}) {
     }
   }
 
+  /**
+   * Build the tool that exports a workflow to a file in the session workspace.
+   * @param {string} sessionId - the session whose workflow may be exported.
+   * @returns {object} the tool definition.
+   */
   function workflowExportTool(sessionId) {
     return {
       name: 'comfyui_workflow_export',
@@ -1333,11 +1386,16 @@ export function apply(ctx, rawConfig = {}) {
         type: 'object',
         properties: {
           name: { type: 'string', description: 'Saved workflow to write; omit for this session\'s workflow.' },
-          path: { type: 'string', description: 'Absolute path, or relative to the session workspace. Defaults to comfyui-<name>.json there.' },
+          path: { type: 'string', description: 'Path inside the session workspace; relative paths resolve there and paths outside it are rejected.' },
         },
         additionalProperties: false,
       },
       output: textOutput(),
+      /**
+       * @param {{ name?: unknown, path?: unknown }} args - the saved slot and output path.
+       * @param {{ agent?: { session?: { header?: { cwd?: string } } } }} exec - tool execution context.
+       * @returns {Promise<{ text: string }>} the written path and counts.
+       */
       async execute(args, exec) {
         const name = args?.name === undefined ? null : workflowName(args.name)
         let workflow
@@ -1379,6 +1437,11 @@ export function apply(ctx, rawConfig = {}) {
     }
   }
 
+  /**
+   * Build the tool that imports a workflow file into a named slot.
+   * @param {string} sessionId - the session whose workspace holds the file.
+   * @returns {object} the tool definition.
+   */
   function workflowImportTool(sessionId) {
     return {
       name: 'comfyui_workflow_import',
@@ -1386,17 +1449,22 @@ export function apply(ctx, rawConfig = {}) {
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: 'Absolute path, or relative to the session workspace.' },
+          path: { type: 'string', description: 'Path inside the session workspace; relative paths resolve there and paths outside it are rejected.' },
           name: { type: 'string', description: 'Slot name, 1-80 characters; defaults to the file name without its extension.' },
         },
         required: ['path'],
         additionalProperties: false,
       },
       output: textOutput(),
+      /**
+       * @param {{ path?: unknown, name?: unknown }} args - the input file and optional slot name.
+       * @param {{ agent?: { session?: { header?: { cwd?: string } } } }} exec - tool execution context.
+       * @returns {Promise<{ text: string }>} the imported slot facts.
+       */
       async execute(args, exec) {
         const requested = typeof args?.path === 'string' ? args.path.trim() : ''
         if (requested.length === 0) throw new Error('path is required')
-        const target = resolve(sessionDirectory(exec), requested)
+        const target = workspaceFile(requested, exec)
         const info = await stat(target).catch(() => null)
         if (info === null || !info.isFile()) throw new Error(`No file at ${target}`)
         if (info.size > 12_000_000) throw new Error(`Workflow file is larger than 12 MB: ${target}`)
@@ -1413,19 +1481,12 @@ export function apply(ctx, rawConfig = {}) {
         const name = workflowName(args?.name ?? basename(target).replace(/\.[^.]+$/u, ''))
         const nodes = workflow.nodes.length
         const links = Array.isArray(workflow.links) ? workflow.links.length : 0
-        const existing = await store.workflow(name)
-        const now = Date.now()
-        await store.saveWorkflow({
-          name,
+        const { replaced } = await saveNamedWorkflow(name, {
           workflow,
-          prompt: null,
-          semantic: null,
           revision: 0,
           nodes,
           links,
           sourceSessionId: sessionId,
-          createdAt: existing?.createdAt ?? now,
-          updatedAt: now,
         })
         return {
           text: JSON.stringify({
@@ -1433,7 +1494,7 @@ export function apply(ctx, rawConfig = {}) {
             path: target,
             nodes,
             links,
-            replaced: existing !== null,
+            replaced,
             persistence: persistence(),
           }, null, 2),
         }

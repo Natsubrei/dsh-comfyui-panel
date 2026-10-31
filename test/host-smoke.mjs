@@ -550,32 +550,52 @@ assert.equal(edited.links, 1)
 // state, like comfyui_graph_read.
 {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-comfyui-workflows-'))
+  const workflowExec = {
+    agent: { session: { id: 's1', header: { cwd: dir } } },
+    signal: new AbortController().signal,
+  }
   try {
-    const saved = parse(await s1.tools.get('comfyui_workflow_save').execute({ name: 'portrait' }, exec))
+    const saved = parse(await s1.tools.get('comfyui_workflow_save').execute({ name: 'portrait' }, workflowExec))
     assert.equal(saved.saved, 'portrait')
     assert.equal(saved.replaced, false)
     assert.equal(saved.nodes, 2)
     assert.equal(saved.persistence.backend, 'storage')
+    const stored = storage.state.workflows.get('portrait')
+    assert.equal('prompt' in stored, false, 'saved workflows do not carry the session API prompt')
+    assert.equal('semantic' in stored, false, 'saved workflows do not carry the session projection')
 
-    const again = parse(await s1.tools.get('comfyui_workflow_save').execute({ name: 'portrait' }, exec))
+    const again = parse(await s1.tools.get('comfyui_workflow_save').execute({ name: 'portrait' }, workflowExec))
     assert.equal(again.replaced, true, 'saving the same name replaces that slot')
 
-    const listed = parse(await s1.tools.get('comfyui_workflow_list').execute({}, exec))
+    const listed = parse(await s1.tools.get('comfyui_workflow_list').execute({}, workflowExec))
     assert.equal(listed.count, 1)
     assert.equal(listed.workflows[0].name, 'portrait')
     assert.equal(listed.workflows[0].nodes, 2)
+    assert.ok(Number.isSafeInteger(listed.workflows[0].createdAt), 'the list exposes when the slot was created')
 
     const exportedPath = join(dir, 'portrait.json')
-    const exported = parse(await s1.tools.get('comfyui_workflow_export').execute({ name: 'portrait', path: exportedPath }, exec))
+    const exported = parse(await s1.tools.get('comfyui_workflow_export').execute({ name: 'portrait', path: 'portrait.json' }, workflowExec))
     assert.equal(exported.path, exportedPath)
     assert.equal(JSON.parse(readFileSync(exportedPath, 'utf8')).nodes.length, 2)
 
+    const defaultExport = parse(await s1.tools.get('comfyui_workflow_export').execute({}, workflowExec))
+    assert.equal(defaultExport.path, join(dir, 'comfyui-session-s1.json'), 'the default export stays in the workspace')
+
     const importPath = join(dir, 'imported.json')
     writeFileSync(importPath, JSON.stringify({ nodes: [{ id: 9, type: 'KSampler' }], links: [] }))
-    const imported = parse(await s1.tools.get('comfyui_workflow_import').execute({ path: importPath }, exec))
+    const imported = parse(await s1.tools.get('comfyui_workflow_import').execute({ path: 'imported.json' }, workflowExec))
     assert.equal(imported.imported, 'imported', 'the name defaults to the file stem')
     assert.equal(imported.nodes, 1)
     assert.equal(imported.replaced, false)
+
+    await assert.rejects(
+      s1.tools.get('comfyui_workflow_export').execute({ path: '../escape.json' }, workflowExec),
+      /inside the session workspace/,
+    )
+    await assert.rejects(
+      s1.tools.get('comfyui_workflow_import').execute({ path: '../escape.json' }, workflowExec),
+      /inside the session workspace/,
+    )
 
     const pollLoad = host.fetches.get('/api/comfyui/commands/poll').fetch(new Request(
       'http://127.0.0.1/api/comfyui/commands/poll',
