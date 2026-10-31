@@ -13,9 +13,18 @@ import { apply, applySeedControls, takeCommand } from '../index.js'
 import { createSupervisor } from '../supervisor.js'
 import { stopsOnUnload } from '../service.js'
 
-const UPSTREAM_PORT = 18188
-const PROXY_PORT = 18189
-const SUPERVISOR_PORT = 18191
+/**
+ * Ports come as a contiguous block of five so several checkouts can run the
+ * suite at once: `DSH_COMFYUI_TEST_PORT=19188 npm test`. The default block is
+ * the historical one.
+ */
+const PORT_BASE = Number(process.env.DSH_COMFYUI_TEST_PORT ?? 18188)
+if (!Number.isSafeInteger(PORT_BASE) || PORT_BASE < 1024 || PORT_BASE > 65531) {
+  throw new Error(`DSH_COMFYUI_TEST_PORT must leave five free ports (1024-65531), got ${String(process.env.DSH_COMFYUI_TEST_PORT)}`)
+}
+const UPSTREAM_PORT = PORT_BASE
+const PROXY_PORT = PORT_BASE + 1
+const SUPERVISOR_PORT = PORT_BASE + 3
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -863,7 +872,7 @@ assert.equal(adopter.snapshot().state, 'stopped')
 
 // A server that was started elsewhere can be adopted by pid: a reloaded plugin
 // finds its surviving child again, and Stop keeps working on it.
-const ATTACHED_PORT = 18192
+const ATTACHED_PORT = PORT_BASE + 4
 const attachedChild = spawn(process.execPath, [
   '-e',
   `require('node:http').createServer((req,res)=>{res.writeHead(200);res.end('{"ok":true}')}).listen(${ATTACHED_PORT},'127.0.0.1')`,
@@ -920,7 +929,7 @@ assert.equal(stopsOnUnload(undefined), false, 'no supervisor at all')
 
 // ── Panel-managed start/stop against a throwaway "ComfyUI" ─────────────────
 
-const PANEL_SERVICE_PORT = 18190
+const PANEL_SERVICE_PORT = PORT_BASE + 2
 const panelRoot = mkdtempSync(join(tmpdir(), 'dsh-comfyui-panel-'))
 writeFileSync(join(panelRoot, 'main.py'), `
 from http.server import BaseHTTPRequestHandler, HTTPServer

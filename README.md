@@ -196,12 +196,16 @@ bridges, session-scoped tools and digest, the projection fallback, persistence
 across two Host instances, the edit and saved-workflow round-trips, the
 panel-managed start/stop/restart of a real child process, and the supervisor's
 adoption path.
-It prints `host smoke test passed`. `npm run contract` mounts the plugin next to
-the real Cordis context, `ToolRuntime`, the native tool executor, `SystemPrompt`,
-and `HostConnectionService`, so an invalid Fetch path or a tool schema the
-registry rejects fails locally instead of at install time. `npm test` and
-`npm run typecheck` are what the pre-commit hook runs; see
-[AGENTS.md](AGENTS.md) for reload and logging steps.
+It prints `host smoke test passed`. The contract also runs as part of
+`npm test` when a built DeepSeek Harness checkout sits at `../deepseek-harness`
+(or `DSH_ROOT`); it misses that checkout in CI, which is why CI skips it. The
+contract mounts the plugin next to the real Cordis context, `ToolRuntime`, the
+native tool executor, `SystemPrompt`, and `HostConnectionService`, so an invalid
+Fetch path or a tool schema the registry rejects fails locally instead of at
+install time. `npm test` and `npm run typecheck` are what the pre-commit hook
+runs; see [AGENTS.md](AGENTS.md) for reload and logging steps. Host smoke binds
+five consecutive ports; set `DSH_COMFYUI_TEST_PORT` to shift that block so two
+checkouts can run the suite at once.
 
 `npm run ui` is the browser check: it opens the GUI in a headless Chromium, puts
 the panel in a throwaway session, and asserts the panel's observable behaviour —

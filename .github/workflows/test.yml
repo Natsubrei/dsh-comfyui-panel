@@ -3,8 +3,8 @@ name: test
 # The plugin ships without runtime dependencies; the checks are plain `node`
 # scripts. TypeScript and @types/node are dev-only, for the `checkJs` pass that
 # catches the calls a mocked test cannot — a wrong argument count, a stale
-# result shape. The real-runtime contract (`npm run contract`) needs a
-# DeepSeek Harness checkout next to this one and stays a local check.
+# result shape. The real-runtime contract needs a DeepSeek Harness checkout next
+# to this one: `npm test` runs it when one is present and skips it here.
 
 on:
   push:

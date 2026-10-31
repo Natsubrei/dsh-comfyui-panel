@@ -52,11 +52,19 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
 ```bash
 npm install       # once: typescript and @types/node for the type check
 npm run typecheck # checkJs over index.js, client.js, the tests and the scripts
-npm test          # checks, host smoke, editor ops, hygiene, market index
+npm test          # checks, host smoke, editor ops, hygiene, market index, contract when available
 npm run contract  # real DSH runtime; needs checkout at ../deepseek-harness
 npm run ui        # live panel in a headless browser; needs a running dsh web
 npm run shot -- workflow.json   # render a workflow file to a PNG
 ```
+
+`npm test` runs the contract too when a built Harness checkout sits at
+`../deepseek-harness` (or `DSH_ROOT`); without one it skips the contract, which
+is why CI runs only `npm test` and the type check. A contract failure on a clean
+checkout means the DSH runtime drifted, not that the change under test broke
+something. `host-smoke` binds a contiguous block of five ports; set
+`DSH_COMFYUI_TEST_PORT=19188 npm test` to shift the block so several checkouts
+(worktrees, a second clone) can run the suite at the same time.
 
 A layout change is verified by looking, not by arithmetic: `comfyui_screenshot`
 for the panel's own canvas, `npm run shot` for a workflow file. Both print or
@@ -68,8 +76,7 @@ A new route or tool needs a case in `host-smoke.mjs`; a new integration point
 `dsh-contract.mjs`. The pre-commit hook runs `npm test`, plus `npm run
 typecheck` when `node_modules` exists; it is enabled with `git config
 core.hooksPath .githooks` (already set in this checkout, and not inherited by a
-fresh clone). `npm run contract` needs the sibling checkout, so CI runs only
-`npm test` and the type check.
+fresh clone).
 
 The type check is only as good as the annotations it reads. A function with no
 `@param` types has `any` parameters, so a call with the wrong number of

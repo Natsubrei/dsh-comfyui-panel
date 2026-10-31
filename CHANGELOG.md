@@ -3,6 +3,16 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
+## Unreleased
+
+- `npm test` now runs the real-runtime contract when a built DeepSeek Harness
+  checkout is next to this repository, so a DSH API drift fails the next
+  ordinary test run instead of sitting unnoticed until a release. A machine
+  without the checkout skips it, as CI does.
+- Host smoke takes its five ports from `DSH_COMFYUI_TEST_PORT` (default 18188),
+  so several checkouts, such as parallel worktrees, can run the full suite
+  without colliding.
+
 ## 0.7.0
 
 - Saved workflows are now a first-class feature. `comfyui_workflow_save` stores
