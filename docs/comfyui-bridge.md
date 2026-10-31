@@ -28,13 +28,14 @@ It is a partial view of the real `ComfyApp`; what the plugin uses:
 | `app.graphToPrompt()` | `{ output }`, the API prompt keyed by node id |
 | `app.extensionManager.command.execute(id)` | run a registered command (see §3) |
 | `app.api.clientId` | the socket id ComfyUI will address execution events to |
-| `app.loadGraphData(workflow)` | replace the editor graph from a serialized workflow |
+| `app.isGraphReady` | `true` once the editor graph exists; reading `rootGraph` earlier logs an error |
+| `app.loadGraphData(workflow, clean = true, restoreView = true)` | replace the editor graph from a serialized workflow; `clean` drops the old graph, `restoreView` restores the saved camera |
 | `app.canvas.canvas` | the 2D canvas element behind the editor; `toDataURL('image/png')` is the screenshot `comfyui_screenshot` returns |
 | `app.canvasInternal` / `app.rootGraphRef` | Vue-level members; `canvasInternal` is the same canvas, `rootGraphRef.value` the same graph |
 
 `rootGraph`, `graph`, `canvas`, and `extensionManager` are `undefined` until
 the Vue app has finished setting up, so wait for `comfyAPI.app.app` **and** for
-those members before touching the graph. Reading `rootGraph` too early logs
+`app.isGraphReady` before touching the graph. Reading `rootGraph` too early logs
 `ComfyApp graph accessed before initialization`; the panel asks
 `app.isGraphReady` first (older frontends without it fall back to the previous
 check) and only reads the graph once it answers true. `comfyui_workflow_load`

@@ -84,12 +84,13 @@ read on for the panel itself.
   - `comfyui_workflow_save` — store the synced workflow under a name; reusing a
     name replaces that slot.
   - `comfyui_workflow_list` — the saved slots with node/link counts and when
-    each was written.
+    each was created and last written.
   - `comfyui_workflow_load` — replace the open panel's graph with a saved
     workflow and sync it; needs the panel, like `comfyui_edit`.
   - `comfyui_workflow_export` / `comfyui_workflow_import` — write a UI workflow
     JSON file from a saved slot (or the session's graph) and read one back into
-    a slot. Paths resolve against the session workspace.
+    a slot. Paths resolve against the session workspace, and a path outside it
+    is rejected.
 - Adds one runtime-context digest line to those sessions, e.g.
   `ComfyUI: rev 14 · 9 nodes · 9 links · selected 7 · panel open.`
 - Persists each session's workflow, API prompt, and projection through
@@ -223,7 +224,9 @@ than 16 pixels (exit code 2 when any do). Use it to judge a layout file, or
 - Edits require the ComfyUI panel to be open in the same session; the command
   channel is a long-poll and the panel applies operations inside the iframe.
   `comfyui_workflow_load` has the same requirement; `save`, `list`, `export`,
-  and `import` work with the panel closed.
+  and `import` work with the panel closed only in a session that has already
+  synced or restored a workflow. Export and import resolve paths against that
+  session's workspace and reject a path outside it.
 - A saved workflow replaces the whole graph; there is no merge, undo, or
   per-slot revision history. Saving a name overwrites its previous content.
 - `comfyui_edit` does not validate graph semantics; a bad edit is rejected

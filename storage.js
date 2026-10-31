@@ -57,12 +57,6 @@ function parseNamedWorkflow(value) {
   if (value.workflow === null || typeof value.workflow !== 'object' || Array.isArray(value.workflow)) {
     invalid('saved workflow needs a workflow object')
   }
-  if (value.prompt !== null && (typeof value.prompt !== 'object' || Array.isArray(value.prompt))) {
-    invalid('saved workflow prompt must be an object or null')
-  }
-  if (value.semantic !== null && (typeof value.semantic !== 'object' || Array.isArray(value.semantic))) {
-    invalid('saved workflow semantic must be an object or null')
-  }
   for (const field of ['revision', 'nodes', 'links']) {
     if (!Number.isSafeInteger(value[field]) || value[field] < 0) invalid(`saved workflow needs a non-negative ${field}`)
   }
