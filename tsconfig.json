@@ -16,6 +16,8 @@
   "include": [
     "types/**/*.d.ts",
     "index.js",
+    "commands.js",
+    "session-store.js",
     "client.js",
     "projection.js",
     "storage.js",

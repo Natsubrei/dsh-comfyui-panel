@@ -8,7 +8,15 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
 
 - `index.js` — Host half: authenticated `/comfyui` HTTP + WebSocket proxy, the
   `/api/comfyui/{state,events,commands/poll,commands/result,service}` bridges,
-  per-session tools, and the runtime-context digest.
+  per-session tools, and the runtime-context digest. Session facts and the
+  command channel live in the two modules below; this file wires them to routes
+  and tools.
+- `session-store.js` — one session's mirrored workflow, run record, seed walk,
+  tool registration and debounced write behind `createSessionStore()`;
+  `release()` is the one place a session's memory ends.
+- `commands.js` — the tool ↔ panel command channel: per-session queue, parked
+  long-polls, pending answers and the 60 s command expiry behind
+  `createCommandChannel()`.
 - `client.js` — the panel module (iframe, projection, Server controls). Plain JS
   served as-is; it is not built by tsdown and cannot `import` sibling files at
   runtime.
