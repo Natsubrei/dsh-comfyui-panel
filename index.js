@@ -24,9 +24,13 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { digestLine, layoutReport, projectFromWorkflow, sanitizeSemantic, stripViewState } from './projection.js'
+import { digestLine, layoutReport, projectFromWorkflow } from './projection.js'
 import { createWorkflowStore } from './storage.js'
 import { createServiceController } from './service.js'
+import { createCommandChannel } from './commands.js'
+import { createSessionStore, validWorkflowName } from './session-store.js'
+
+export { takeCommand } from './commands.js'
 
 /** Required Host services: the HTTP carrier, its auth admission, and the Tool registry. */
 export const inject = ['webServer', 'connection', 'tools']
@@ -37,24 +41,24 @@ export function apply(ctx, rawConfig = {}) {
   const upstream = config.upstream
   const prefix = config.prefix
   const clientId = `dsh-comfyui-${randomUUID()}`
-  /** sessionId -> { workflow, prompt, semantic, revision, nodes, links, types, updatedAt } */
-  const sessions = new Map()
-  /** sessionId -> { latest, runs: Map<promptId, run> } from the panel event socket */
-  const progress = new Map()
-  /** sessionId -> { queue: command[], waiters: waiter[], lastPollAt } */
-  const commandQueues = new Map()
-  /** sessionId -> Map<nodeId, { from, used }>: how far increment/decrement walked past the seed the editor shows */
-  const seedCursors = new Map()
-  /** command id -> { resolve, timer } while comfyui_edit waits for the panel */
-  const pendingCommands = new Map()
-  /** sessionId -> disposer of the tools + digest registered on that session's Agent */
-  const sessionTools = new Map()
-  /** sessionId -> pending debounce timer for the workflow store */
-  const persistTimers = new Map()
   /** cached /object_info for comfyui_node_info */
   let objectInfoCache = { at: 0, data: null }
 
   const store = createWorkflowStore(ctx, ctx.logger)
+  const commands = createCommandChannel()
+  const sessionStore = createSessionStore({
+    logger: ctx.logger,
+    releaseCommands: sessionId => commands.release(sessionId),
+    persist: (sessionId, state) => store.save({
+      sessionId,
+      revision: state.revision,
+      updatedAt: state.updatedAt,
+      workflow: state.workflow,
+      prompt: state.prompt,
+      semantic: state.semantic,
+      name: state.name ?? null,
+    }),
+  })
   const service = createServiceController({
     upstream,
     config: config.supervise,
@@ -82,8 +86,8 @@ export function apply(ctx, rawConfig = {}) {
     void store.ready.then(({ sessions: records, settings: serviceSettings }) => {
       if (disposed) return
       for (const record of records) {
-        if (sessions.has(record.sessionId)) continue
-        sessions.set(record.sessionId, stateFromRecord(record))
+        if (sessionStore.get(record.sessionId) !== undefined) continue
+        sessionStore.restore(record)
         registerSessionTools(record.sessionId)
       }
       if (records.length > 0) ctx.logger?.info(`dsh-comfyui: restored ${records.length} workflow(s) from storage`)
@@ -100,10 +104,7 @@ export function apply(ctx, rawConfig = {}) {
     }).catch(error => ctx.logger?.warn(`dsh-comfyui: could not restore workflows: ${String(error)}`))
     return () => {
       disposed = true
-      for (const timer of persistTimers.values()) clearTimeout(timer)
-      persistTimers.clear()
-      for (const dispose of sessionTools.values()) dispose()
-      sessionTools.clear()
+      sessionStore.close()
       void store.close()
     }
   }, 'dsh-comfyui: workflow persistence')
@@ -112,13 +113,12 @@ export function apply(ctx, rawConfig = {}) {
   // open while the first message is being sent) or long after (resume).
   ctx.on('agent/created', ({ agent }) => {
     const sessionId = agent?.session?.id
-    if (typeof sessionId === 'string' && sessions.has(sessionId)) registerSessionTools(sessionId)
+    if (typeof sessionId === 'string' && sessionStore.get(sessionId) !== undefined) registerSessionTools(sessionId)
   })
   ctx.on('agent/disposed', ({ agent }) => {
     const sessionId = agent?.session?.id
     if (typeof sessionId !== 'string') return
-    sessionTools.delete(sessionId)
-    releaseSession(sessionId)
+    sessionStore.release(sessionId)
   })
 
   ctx.effect(() => ctx.webServer.register({
@@ -295,7 +295,7 @@ export function apply(ctx, rawConfig = {}) {
     const url = new URL(request.url)
     if (request.method === 'GET') {
       const sessionId = url.searchParams.get('sessionId') ?? ''
-      const state = sessions.get(sessionId)
+      const state = sessionStore.get(sessionId)
       if (state === undefined) {
         return json({ ok: true, found: false, sessionId })
       }
@@ -311,108 +311,10 @@ export function apply(ctx, rawConfig = {}) {
     }
     const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
     if (sessionId.length === 0) return json({ ok: false, error: 'sessionId is required' }, 400)
-    // View-only canvas state (zoom/pan) is not an edit; drop it before the
-    // content comparison so a scroll or resize cannot bump the revision.
-    const workflow = isObject(body.workflow) ? stripViewState(body.workflow) : null
-    const prompt = isObject(body.prompt) ? body.prompt : null
-    if (workflow === null) return json({ ok: false, error: 'workflow must be an object' }, 400)
-    const previous = sessions.get(sessionId)
-    const incoming = Number.isSafeInteger(body.revision) ? body.revision : 0
-    // The panel reports the name its editor would save under, but only when
-    // that name changed: a canvas whose frontend has no file yet sends no
-    // `name`, and the Host must keep the name a tool gave the session rather
-    // than clear it on every quiet re-sync.
-    let name = previous?.name ?? null
-    if (body.name !== undefined) {
-      if (body.name === null) {
-        name = null
-      } else {
-        const requested = validWorkflowName(body.name)
-        if (requested === null) return json({ ok: false, error: 'name must be 1-80 characters without control characters' }, 400)
-        name = requested
-      }
-    }
-    const renamed = name !== (previous?.name ?? null)
-    let semantic = sanitizeSemantic(body.semantic)
-    // A projection that sees no nodes while the raw workflow has some comes
-    // from a frontend whose live-node layout this client does not recognize;
-    // prefer the raw fallback over claiming the graph is empty.
-    if (semantic !== null && semantic.nodes.length === 0
-      && Array.isArray(workflow.nodes) && workflow.nodes.length > 0) {
-      semantic = null
-    }
-    // The panel re-syncs on a timer even when nothing changed. Compare content
-    // so `revision` means "a change was synced" and idle re-syncs stay cheap.
-    const signature = JSON.stringify([workflow, prompt, semantic])
-    const changed = previous === undefined || previous.signature !== signature
-    const state = {
-      workflow,
-      prompt,
-      semantic,
-      signature,
-      // The name is metadata, not graph content: it never bumps the revision,
-      // because renaming a workflow does not change what the model reads.
-      name,
-      // Which socket the embedded frontend is listening on. Execution events
-      // only reach the client that queued the prompt, so a run the model
-      // starts has to use the panel's id or it never shows up in the UI.
-      // Kept in memory only: it changes with the page, not with the workflow.
-      clientId: sanitizeClientId(body.clientId) ?? previous?.clientId ?? null,
-      // The panel's counter restarts with the page while the Host may hold a
-      // higher persisted revision; keep the descriptive revision monotonic.
-      revision: changed
-        ? Math.max(incoming, (previous?.revision ?? 0) + 1)
-        : (previous?.revision ?? incoming),
-      nodes: Array.isArray(workflow.nodes) ? workflow.nodes.length : 0,
-      links: Array.isArray(workflow.links) ? workflow.links.length : 0,
-      types: Array.isArray(workflow.nodes)
-        ? [...new Set(workflow.nodes.map(node => node?.type).filter(type => typeof type === 'string'))].slice(0, 64)
-        : [],
-      updatedAt: changed ? Date.now() : (previous?.updatedAt ?? Date.now()),
-    }
-    sessions.set(sessionId, state)
+    const synced = sessionStore.sync(sessionId, body)
+    if (synced.ok === false) return json({ ok: false, error: synced.error }, 400)
     registerSessionTools(sessionId)
-    if (changed || renamed) schedulePersist(sessionId)
-    return json({ ok: true, ...summary(state) })
-  }
-
-  function stateFromRecord(record) {
-    const workflow = record.workflow
-    const prompt = record.prompt ?? null
-    const semantic = sanitizeSemantic(record.semantic)
-    return {
-      workflow,
-      prompt,
-      semantic,
-      signature: JSON.stringify([workflow, prompt, semantic]),
-      name: typeof record.name === 'string' ? record.name : null,
-      revision: record.revision,
-      nodes: Array.isArray(workflow.nodes) ? workflow.nodes.length : 0,
-      links: Array.isArray(workflow.links) ? workflow.links.length : 0,
-      types: Array.isArray(workflow.nodes)
-        ? [...new Set(workflow.nodes.map(node => node?.type).filter(type => typeof type === 'string'))].slice(0, 64)
-        : [],
-      updatedAt: record.updatedAt,
-    }
-  }
-
-  /** Debounced persistence: the panel syncs about once per second while editing. */
-  function schedulePersist(sessionId) {
-    if (persistTimers.has(sessionId)) return
-    persistTimers.set(sessionId, setTimeout(() => {
-      persistTimers.delete(sessionId)
-      const state = sessions.get(sessionId)
-      if (state === undefined) return
-      void store.save({
-        sessionId,
-        revision: state.revision,
-        updatedAt: state.updatedAt,
-        workflow: state.workflow,
-        prompt: state.prompt,
-        semantic: state.semantic,
-        name: state.name ?? null,
-      }).catch(error => ctx.logger?.warn(`dsh-comfyui: could not persist ${sessionId}: ${String(error)}`))
-    }, 1500))
+    return json({ ok: true, ...summary(synced.state) })
   }
 
   function summary(state) {
@@ -448,9 +350,8 @@ export function apply(ctx, rawConfig = {}) {
     if (sessionId.length === 0) return json({ ok: false, error: 'sessionId is required' }, 400)
     const event = normalizeEvent(body?.event)
     if (event === null) return json({ ok: false, error: 'event.kind is not a known ComfyUI event' }, 400)
-    recordEvent(sessionId, event)
-    const bucket = progress.get(sessionId)
-    return json({ ok: true, latest: bucket?.latest ?? null })
+    sessionStore.recordEvent(sessionId, event)
+    return json({ ok: true, latest: sessionStore.latestRun(sessionId).latest })
   }
 
   const EVENT_KINDS = new Set([
@@ -482,168 +383,11 @@ export function apply(ctx, rawConfig = {}) {
     }
   }
 
-  function recordEvent(sessionId, event) {
-    let bucket = progress.get(sessionId)
-    if (bucket === undefined) {
-      bucket = { latest: null, runs: new Map() }
-      progress.set(sessionId, bucket)
-    }
-    bucket.latest = event
-    if (event.promptId === null) return
-    let run = bucket.runs.get(event.promptId)
-    if (run === undefined) {
-      run = {
-        promptId: event.promptId,
-        status: 'queued',
-        startedAt: null,
-        updatedAt: event.at,
-        node: null,
-        value: null,
-        max: null,
-        error: null,
-      }
-      bucket.runs.set(event.promptId, run)
-    }
-    run.updatedAt = event.at
-    if (event.kind === 'execution_start') {
-      run.status = 'running'
-      run.startedAt ??= event.at
-    } else if (event.kind === 'execution_success') {
-      run.status = 'success'
-      run.value = null
-      run.max = null
-    } else if (event.kind === 'execution_error') {
-      run.status = 'error'
-      run.error = event.error
-    } else if (event.kind === 'execution_interrupted') {
-      run.status = 'interrupted'
-    } else if (event.kind === 'executing') {
-      // A run can be joined after `execution_start` went out: the panel was
-      // reloading, or the editor's socket reconnected mid-run. Anything that
-      // only happens during a run proves it is running, so the record does not
-      // keep claiming "queued" until the success event arrives.
-      if (run.status === 'queued') {
-        run.status = 'running'
-        run.startedAt ??= event.at
-      }
-      run.node = event.node
-    } else if (event.kind === 'progress' || event.kind === 'executed') {
-      if (run.status === 'queued') {
-        run.status = 'running'
-        run.startedAt ??= event.at
-      }
-      run.node = event.node ?? run.node
-      if (event.kind === 'progress') {
-        run.value = event.value
-        run.max = event.max
-      }
-    }
-    while (bucket.runs.size > 20) {
-      const oldest = bucket.runs.keys().next().value
-      bucket.runs.delete(oldest)
-    }
-  }
-
-  function latestProgress(sessionId) {
-    const bucket = progress.get(sessionId)
-    if (bucket === undefined || bucket.latest === null) return { latest: null, run: null }
-    const run = bucket.latest.promptId === null ? null : (bucket.runs.get(bucket.latest.promptId) ?? null)
-    return { latest: bucket.latest, run }
-  }
-
   // ── Command channel ─────────────────────────────────────────────────────
   // `comfyui_edit` queues an edit for the session. The panel's long-poll picks
   // it up, applies it inside the iframe, and posts the result back, because the
-  // editor can only be mutated in the browser.
-
-  function commandState(sessionId) {
-    let state = commandQueues.get(sessionId)
-    if (state === undefined) {
-      state = { queue: [], waiters: [], lastPollAt: 0 }
-      commandQueues.set(sessionId, state)
-    }
-    return state
-  }
-
-  function enqueueCommand(sessionId, command) {
-    const state = commandState(sessionId)
-    const waiter = state.waiters.shift()
-    if (waiter !== undefined) waiter.resolve(command)
-    else state.queue.push(command)
-  }
-
-  /**
-   * Drop a command the panel never picked up.
-   *
-   * A tool that has already failed must not reach the editor later: the panel
-   * can reconnect minutes after `comfyui_edit` reported that it never answered,
-   * and applying the edit then would change a graph the model no longer
-   * believes it touched — with the result discarded, because the waiter is
-   * gone. The queue and the tool call have to expire together.
-   */
-  function dropCommand(sessionId, id) {
-    const state = commandQueues.get(sessionId)
-    if (state === undefined) return
-    const index = state.queue.findIndex(command => command.id === id)
-    if (index !== -1) state.queue.splice(index, 1)
-  }
-
-  /**
-   * End everything the Host is still holding for a session whose agent went
-   * away.
-   *
-   * DSH disposes an agent on clear and compaction too, and the same session id
-   * comes back with a fresh agent; the canvas survives in `sessions` (and in
-   * storage), but a long-poll or a tool call parked on the old panel must not
-   * wait out its timeout against an editor nobody owns any more. A queued edit
-   * is dropped with its tool call: handing it to the next panel would change a
-   * graph the model no longer believes it touched.
-   *
-   * @param {string} sessionId - the session whose agent was disposed.
-   */
-  function releaseSession(sessionId) {
-    const state = commandQueues.get(sessionId)
-    if (state !== undefined) {
-      // Resolving a waiter with no command releases the open HTTP request so
-      // the panel's loop can re-arm under the new agent.
-      for (const waiter of [...state.waiters]) waiter.resolve(null)
-      commandQueues.delete(sessionId)
-    }
-    progress.delete(sessionId)
-    seedCursors.delete(sessionId)
-    for (const [id, pending] of [...pendingCommands]) {
-      if (pending.sessionId !== sessionId) continue
-      pendingCommands.delete(id)
-      clearTimeout(pending.timer)
-      pending.reject(new Error('The ComfyUI session closed before the panel answered; open the tab again and retry.'))
-    }
-  }
-
-  /**
-   * Queue one command for a session's panel and wait for its result.
-   *
-   * The panel answers through `commands/result`; a panel that disappears after
-   * claiming the command is bounded by the timeout, and `releaseSession`
-   * rejects the wait when the owning agent goes away. `dropCommand` runs with
-   * the timeout so a panel reconnecting later cannot apply an expired command.
-   *
-   * @param {string} sessionId - the session whose panel should answer.
-   * @param {object} command - command body; its `id` correlates the result.
-   * @param {number} timeoutMs - how long to wait before giving up.
-   * @param {string} what - short noun for the timeout message.
-   * @returns {Promise<{ ok: boolean, value?: any, error?: string | null }>} the panel's answer.
-   */
-  function askPanel(sessionId, command, timeoutMs, what) {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        pendingCommands.delete(command.id)
-        dropCommand(sessionId, command.id)
-        reject(new Error(`The ComfyUI panel did not answer the ${what} in time. It may be reloading.`))
-      }, timeoutMs)
-      pendingCommands.set(command.id, { resolve, reject, timer, sessionId })
-      enqueueCommand(sessionId, command)
-    })
-  }
+  // editor can only be mutated in the browser. The queue itself lives in
+  // `commands.js`; these routes only decode the HTTP bodies.
 
   async function bridgeCommandPoll(request) {
     let body
@@ -654,28 +398,8 @@ export function apply(ctx, rawConfig = {}) {
     }
     const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
     if (sessionId.length === 0) return json({ ok: false, error: 'sessionId is required' }, 400)
-    const timeoutMs = clamp(Number.isFinite(body?.timeoutMs) ? body.timeoutMs : 20000, 1000, 25000)
-    const state = commandState(sessionId)
-    state.lastPollAt = Date.now()
-    // `takeCommand` skips anything the tool has given up on, so a panel that
-    // polls after a timeout gets nothing instead of a stale edit.
-    const live = takeCommand(state.queue)
-    if (live !== null) return json({ ok: true, command: live })
-    return new Promise(resolve => {
-      let settled = false
-      const finish = value => {
-        if (settled) return
-        settled = true
-        clearTimeout(timer)
-        const index = state.waiters.indexOf(waiter)
-        if (index !== -1) state.waiters.splice(index, 1)
-        resolve(value)
-      }
-      const timer = setTimeout(() => finish(json({ ok: true, command: null })), timeoutMs)
-      const waiter = { resolve: command => finish(json({ ok: true, command })) }
-      state.waiters.push(waiter)
-      request.signal?.addEventListener('abort', () => finish(json({ ok: false, error: 'poll aborted' }, 499)))
-    })
+    const polled = await commands.poll(sessionId, { timeoutMs: body?.timeoutMs, signal: request.signal })
+    return json(polled.body, polled.status)
   }
 
   async function bridgeCommandResult(request) {
@@ -686,16 +410,8 @@ export function apply(ctx, rawConfig = {}) {
       return json({ ok: false, error: 'invalid JSON body' }, 400)
     }
     const id = typeof body?.id === 'string' ? body.id : ''
-    const pending = pendingCommands.get(id)
-    if (pending === undefined) return json({ ok: true, accepted: false })
-    pendingCommands.delete(id)
-    clearTimeout(pending.timer)
-    pending.resolve({
-      ok: body?.ok !== false,
-      value: body?.value ?? null,
-      error: typeof body?.error === 'string' ? body.error.slice(0, 2000) : null,
-    })
-    return json({ ok: true, accepted: true })
+    const accepted = commands.answer(id, { ok: body?.ok, value: body?.value, error: body?.error })
+    return json({ ok: true, accepted })
   }
 
   // ── Service bridge ──────────────────────────────────────────────────────
@@ -738,7 +454,7 @@ export function apply(ctx, rawConfig = {}) {
   // unrelated sessions never see ComfyUI capabilities.
 
   function registerSessionTools(sessionId) {
-    if (sessionTools.has(sessionId)) return
+    if (sessionStore.hasTools(sessionId)) return
     let agent
     try {
       agent = ctx.get('agents')?.get(sessionId)
@@ -765,9 +481,9 @@ export function apply(ctx, rawConfig = {}) {
       add(() => sessionCtx.systemPrompt.context({
         name: 'comfyui:workflow',
         order: 220,
-        text: () => digestLine(sessions.get(sessionId), {
-          connected: panelConnected(sessionId),
-          run: latestProgress(sessionId).run,
+        text: () => digestLine(sessionStore.get(sessionId), {
+          connected: commands.connected(sessionId),
+          run: sessionStore.latestRun(sessionId).run,
         }),
       }))
     } catch (error) {
@@ -785,7 +501,7 @@ export function apply(ctx, rawConfig = {}) {
       ctx.logger?.warn(`dsh-comfyui: cannot own tools for session ${sessionId}: ${String(error)}`)
       return
     }
-    sessionTools.set(sessionId, dispose)
+    sessionStore.trackTools(sessionId, dispose)
   }
 
   function statusTool(sessionId) {
@@ -795,7 +511,7 @@ export function apply(ctx, rawConfig = {}) {
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       output: textOutput(),
       async execute() {
-        const state = sessions.get(sessionId)
+        const state = sessionStore.get(sessionId)
         const health = await fetchJson('/system_stats', 2500).catch(error => ({
           ok: false, status: 0, data: null, error: error.message,
         }))
@@ -806,9 +522,9 @@ export function apply(ctx, rawConfig = {}) {
             connected: health.ok === true,
             system: health.ok === true ? health.data : null,
             error: health.ok === true ? undefined : (health.error ?? `HTTP ${health.status}`),
-            panelConnected: panelConnected(sessionId),
+            panelConnected: commands.connected(sessionId),
             workflow: state === undefined ? null : summary(state),
-            progress: latestProgress(sessionId),
+            progress: sessionStore.latestRun(sessionId),
             persistence: persistence(),
             service: service.snapshot(),
           }, null, 2),
@@ -831,7 +547,7 @@ export function apply(ctx, rawConfig = {}) {
       },
       output: textOutput(),
       async execute(args) {
-        const state = sessions.get(sessionId)
+        const state = sessionStore.get(sessionId)
         if (state === undefined) {
           throw new Error('No ComfyUI workflow has synced in this session. Open the ComfyUI tab in this session and wait for Connected.')
         }
@@ -908,14 +624,14 @@ export function apply(ctx, rawConfig = {}) {
       },
       output: textOutput(),
       async execute(args, exec) {
-        const state = sessions.get(sessionId)
+        const state = sessionStore.get(sessionId)
         if (state === undefined) throw new Error('No ComfyUI workflow has synced in this session. Open the ComfyUI tab in this session first.')
         if (state.prompt === null) throw new Error('The synced workflow has no API prompt yet. Wait for the ComfyUI panel to finish syncing.')
         // The panel keeps showing the seed it had, so an `increment` would walk
         // from the same number on every run and reproduce the image. The cursor
         // carries where the previous runs left off; compute on a copy so a
         // prompt ComfyUI rejects does not advance it.
-        const cursor = new Map(seedCursors.get(sessionId) ?? [])
+        const cursor = sessionStore.seedCursor(sessionId)
         const { prompt, seeds } = applySeedControls(state.workflow, state.prompt, Math.random, cursor)
         const response = await fetchJson('/prompt', 15000, {
           method: 'POST',
@@ -935,7 +651,7 @@ export function apply(ctx, rawConfig = {}) {
         const promptId = response.data?.prompt_id
         if (typeof promptId !== 'string') throw new Error(`ComfyUI returned no prompt_id: ${JSON.stringify(response.data)}`)
         // Only a queued prompt moves the seed walk forward.
-        if (cursor.size > 0) seedCursors.set(sessionId, cursor)
+        if (cursor.size > 0) sessionStore.commitSeedCursor(sessionId, cursor)
         if (args?.wait !== true) {
           return { text: JSON.stringify({ prompt_id: promptId, queued: true, sessionId, revision: state.revision, seeds }, null, 2) }
         }
@@ -965,9 +681,9 @@ export function apply(ctx, rawConfig = {}) {
       },
       output: textOutput(),
       async execute(args) {
-        const bucket = progress.get(sessionId)
+        const latest = sessionStore.latestRun(sessionId)
         const wanted = typeof args?.promptId === 'string' && args.promptId.length > 0 ? args.promptId : null
-        const run = wanted === null ? latestProgress(sessionId).run : (bucket?.runs.get(wanted) ?? null)
+        const run = wanted === null ? latest.run : sessionStore.runFor(sessionId, wanted)
         const queue = await fetchJson('/queue', 2500).catch(error => ({
           ok: false, status: 0, data: null, error: error.message,
         }))
@@ -979,8 +695,8 @@ export function apply(ctx, rawConfig = {}) {
         return {
           text: JSON.stringify({
             sessionId,
-            panelConnected: panelConnected(sessionId),
-            hasPanelEvents: bucket !== undefined && bucket.latest !== null,
+            panelConnected: commands.connected(sessionId),
+            hasPanelEvents: latest.latest !== null,
             run,
             history,
             queue: queue.ok === true
@@ -1049,11 +765,11 @@ export function apply(ctx, rawConfig = {}) {
       async execute(args) {
         const operations = Array.isArray(args?.operations) ? args.operations : []
         if (operations.length === 0) throw new Error('operations must contain at least one edit')
-        if (!panelConnected(sessionId)) {
+        if (!commands.connected(sessionId)) {
           throw new Error('The ComfyUI panel is not connected in this session. Open the ComfyUI tab in this session and wait for Connected, then retry.')
         }
         const id = randomUUID()
-        const answer = await askPanel(sessionId, { id, operations, at: Date.now() }, 20000, 'edit')
+        const answer = await commands.ask(sessionId, { id, operations, at: Date.now() }, { timeoutMs: 20000, what: 'edit' })
         if (answer.ok !== true) throw new Error(`ComfyUI rejected the edit: ${answer.error ?? 'unknown error'}`)
         const value = answer.value ?? null
         return {
@@ -1092,11 +808,11 @@ export function apply(ctx, rawConfig = {}) {
       },
       output: textOutput(),
       async execute() {
-        if (!panelConnected(sessionId)) {
+        if (!commands.connected(sessionId)) {
           throw new Error('The ComfyUI panel is not connected in this session. Open the ComfyUI tab in this session and wait for Connected, then retry.')
         }
         const id = randomUUID()
-        const answer = await askPanel(sessionId, { id, kind: 'screenshot', at: Date.now() }, 15000, 'screenshot')
+        const answer = await commands.ask(sessionId, { id, kind: 'screenshot', at: Date.now() }, { timeoutMs: 15000, what: 'screenshot' })
         if (answer.ok !== true) throw new Error(`ComfyUI rejected the screenshot: ${answer.error ?? 'unknown error'}`)
         const value = answer.value ?? {}
         const dataUrl = typeof value.dataUrl === 'string' ? value.dataUrl : ''
@@ -1176,23 +892,6 @@ export function apply(ctx, rawConfig = {}) {
   // tools add named snapshots, a file export/import path, and a way to put a
   // saved graph back into the editor. Only `load` needs the panel: it edits
   // the browser's LiteGraph through the same command channel as comfyui_edit.
-
-  /**
-   * Validate a workflow name without throwing.
-   *
-   * The bridge accepts one from the panel on every sync, where an unusable
-   * value is a client bug rather than a tool-call error, so the check is
-   * shared with `workflowName` instead of duplicated.
-   * @param {unknown} value - the requested name.
-   * @returns {string | null} the trimmed name, or null when it is not usable.
-   */
-  function validWorkflowName(value) {
-    if (typeof value !== 'string') return null
-    const name = value.trim()
-    if (name.length === 0 || name.length > 80) return null
-    if (/[\u0000-\u001f\u007f]/u.test(name)) return null
-    return name
-  }
 
   /**
    * Validate a saved-workflow slot name.
@@ -1291,7 +990,7 @@ export function apply(ctx, rawConfig = {}) {
        */
       async execute(args) {
         const name = workflowName(args?.name)
-        const state = sessions.get(sessionId)
+        const state = sessionStore.get(sessionId)
         if (state === undefined) {
           throw new Error('No ComfyUI workflow has synced in this session. Open the ComfyUI tab in this session and wait for Connected.')
         }
@@ -1304,8 +1003,7 @@ export function apply(ctx, rawConfig = {}) {
         })
         // The session's canvas is now that slot: adopt the name so the panel
         // bar, the digest and `comfyui_status` agree with what was saved.
-        state.name = name
-        schedulePersist(sessionId)
+        sessionStore.rename(sessionId, name)
         return {
           text: JSON.stringify({
             saved: name,
@@ -1338,7 +1036,7 @@ export function apply(ctx, rawConfig = {}) {
       async execute() {
         const saved = await store.workflows()
         const shown = saved.slice(0, 100)
-        const current = sessions.get(sessionId)?.name ?? null
+        const current = sessionStore.get(sessionId)?.name ?? null
         return {
           text: JSON.stringify({
             current,
@@ -1389,15 +1087,14 @@ export function apply(ctx, rawConfig = {}) {
         if (record === null) {
           throw new Error(`No saved workflow named "${name}". Call comfyui_workflow_list to see the saved names.`)
         }
-        if (!panelConnected(sessionId)) {
+        if (!commands.connected(sessionId)) {
           throw new Error('The ComfyUI panel is not connected in this session. Open the ComfyUI tab in this session and wait for Connected, then retry.')
         }
         const id = randomUUID()
-        const answer = await askPanel(
+        const answer = await commands.ask(
           sessionId,
           { id, kind: 'workflow', workflow: record.workflow, at: Date.now() },
-          20000,
-          'workflow load',
+          { timeoutMs: 20000, what: 'workflow load' },
         )
         if (answer.ok !== true) throw new Error(`ComfyUI rejected the workflow load: ${answer.error ?? 'unknown error'}`)
         const value = answer.value ?? {}
@@ -1410,11 +1107,8 @@ export function apply(ctx, rawConfig = {}) {
         }
         // The canvas now holds that slot; the name follows it so a later
         // `comfyui_workflow_save` does not silently rename the session.
-        const state = sessions.get(sessionId)
-        if (state !== undefined) {
-          state.name = name
-          schedulePersist(sessionId)
-        }
+        const state = sessionStore.get(sessionId)
+        if (state !== undefined) sessionStore.rename(sessionId, name)
         return {
           text: JSON.stringify({
             id,
@@ -1459,7 +1153,7 @@ export function apply(ctx, rawConfig = {}) {
         let nodes
         let links
         if (name === null) {
-          const state = sessions.get(sessionId)
+          const state = sessionStore.get(sessionId)
           if (state === undefined) {
             throw new Error('No ComfyUI workflow has synced in this session. Open the ComfyUI tab in this session and wait for Connected.')
           }
@@ -1574,18 +1268,6 @@ export function apply(ctx, rawConfig = {}) {
     }
   }
 
-  /**
-   * Whether this session's panel is listening for commands. A long-poll stays
-   * open for up to 20 s, so an idle waiter counts as connected even when the
-   * last request started earlier than the freshness window.
-   */
-  function panelConnected(sessionId) {
-    const state = commandQueues.get(sessionId)
-    if (state === undefined) return false
-    if (state.waiters.length > 0) return true
-    return Date.now() - state.lastPollAt <= 15000
-  }
-
   function targetUrl(requestUrl) {
     const suffix = requestUrl.startsWith(prefix) ? requestUrl.slice(prefix.length) || '/' : '/'
     const queryIndex = suffix.indexOf('?')
@@ -1643,30 +1325,6 @@ export function apply(ctx, rawConfig = {}) {
   }
 }
 
-/** How long a queued command may wait for a panel before it is dropped. */
-const COMMAND_TTL_MS = 60_000
-
-/**
- * Take the next command a panel can still act on.
- *
- * The queue is read through this rather than shifted directly because a command
- * whose tool call has already failed must not be applied later: a panel that
- * reconnects minutes afterwards would change the user's graph for an edit the
- * model reported as never delivered, and the result would be discarded.
- *
- * @param queue - commands in arrival order, each stamped with `at`.
- * @param now - current time; injectable so the expiry is testable.
- * @returns the oldest live command, or `null` when every one has expired.
- */
-export function takeCommand(queue, now = Date.now()) {
-  while (queue.length > 0) {
-    const command = queue.shift()
-    const at = Number.isFinite(command?.at) ? command.at : now
-    if (now - at <= COMMAND_TTL_MS) return command
-  }
-  return null
-}
-
 function normalizeConfig(raw) {
   const upstream = new URL(raw?.upstream ?? 'http://127.0.0.1:8188')
   if (upstream.protocol !== 'http:' && upstream.protocol !== 'https:') {
@@ -1717,11 +1375,6 @@ function queryOf(requestUrl) {
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-/** A ComfyUI socket id (hex uuid, or the panel's own), when it looks like one. */
-function sanitizeClientId(value) {
-  return typeof value === 'string' && /^[0-9a-z]{8,64}$/i.test(value) ? value : null
 }
 
 const SEED_CONTROLS = new Set(['fixed', 'randomize', 'increment', 'decrement'])
