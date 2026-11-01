@@ -7,8 +7,8 @@
  *
  * It runs against a live `dsh web` and needs no test-only routes: everything is
  * read from the panel's own DOM (`data-nodes`, `data-revision`, …) and from the
- * embedded editor's public objects. The session it creates is a new draft, so a
- * run never touches a conversation you care about.
+ * embedded editor's public objects. It uses a blank draft — created when none is
+ * open — so a run never touches a conversation that has content.
  *
  * Usage:
  *   node test/ui/panel.mjs --url 'http://127.0.0.1:3080/?token=…'
@@ -23,9 +23,10 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Browser, sleep } from './browser.mjs'
 
-/** Panel elements the check needs. All are stable, locale-free hooks. */
+/** Shell and panel elements the check needs. All are stable, locale-free hooks. */
 export const DOM = {
   panel: '.dsh-comfyui-panel',
+  hero: '[data-slot^="conversation.hero"]',
   frame: '.dsh-comfyui-frame',
   stats: '.dsh-comfyui-stats',
   expand: '[data-sidebar-right-expand]',
@@ -152,21 +153,32 @@ export async function openPanel(browser, { timeout = 90_000, scratch = true } = 
   })
   const before = await browser.evaluate(`document.querySelector('${DOM.session}')?.getAttribute('data-conversation-session') ?? null`)
   if (scratch) {
-    // A click on "New session" may reopen the blank draft the GUI was already
-    // showing; a second click always starts a fresh one. Never proceed in a
-    // session that might hold someone's conversation.
-    let opened = false
-    for (let attempt = 0; attempt < 2 && !opened; attempt += 1) {
-      await clickButtonText(browser, /^(new session|新建会话)$/iu, 'New session')
-      opened = await browser.waitFor(
-        `(() => {
-          const id = document.querySelector('${DOM.session}')?.getAttribute('data-conversation-session') ?? null
-          return id !== null && id !== ${JSON.stringify(before)} ? id : null
-        })()`,
-        { label: 'the new draft session', timeout: 10_000 },
-      ).catch(() => false) !== false
+    // The GUI reuses a blank draft that is already open instead of creating a
+    // session, so clicking "New session" can leave the id alone. A conversation
+    // rendered in its empty state — the hero slots, no turns — is that draft:
+    // it carries a real id and nothing to disturb, so it serves as the scratch
+    // session. Let the shell restore a real conversation's turns before asking.
+    await sleep(1500)
+    const blank = await browser.evaluate(`document.querySelector('${DOM.hero}') !== null`)
+    if (blank === true) {
+      console.error('panel check: using the blank draft the GUI already had open')
+    } else {
+      // A click on "New session" may reopen the blank draft the GUI was already
+      // showing; a second click starts a fresh one. Never proceed in a session
+      // that might hold someone's conversation.
+      let opened = false
+      for (let attempt = 0; attempt < 2 && !opened; attempt += 1) {
+        await clickButtonText(browser, /^(new session|新建会话)$/iu, 'New session')
+        opened = await browser.waitFor(
+          `(() => {
+            const id = document.querySelector('${DOM.session}')?.getAttribute('data-conversation-session') ?? null
+            return id !== null && id !== ${JSON.stringify(before)} ? id : null
+          })()`,
+          { label: 'the new draft session', timeout: 10_000 },
+        ).catch(() => false) !== false
+      }
+      if (!opened) throw new Error('could not start a scratch session; pass --reuse-session to run in the current one')
     }
-    if (!opened) throw new Error('could not start a scratch session; pass --reuse-session to run in the current one')
   }
   const sessionId = await browser.attribute(DOM.session, 'data-conversation-session')
   if (await browser.evaluate(`document.querySelector('${DOM.panel}') !== null`)) {

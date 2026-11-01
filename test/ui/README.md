@@ -44,11 +44,12 @@ exit code is non-zero when a check fails.
 
 ## What it touches
 
-The check starts a **new draft session** and mounts the panel there, so it never
-edits a conversation you care about. The draft is disposable: the same click in
-the GUI is what "New session" does. With `--reuse-session` it stays in whatever
-session is already open, which is useful for inspecting a session you prepared
-yourself.
+The check uses a **blank draft session** and mounts the panel there, so it never
+edits a conversation that has content. When the GUI already has a blank draft
+open it reuses it — clicking "New session" on an open draft returns to the same
+one — and otherwise it clicks New session to make one. The draft is disposable.
+With `--reuse-session` it stays in whatever session is open, blank or not, which
+is useful for inspecting a session you prepared yourself.
 
 The check does not queue a run. `comfyui_run` needs a model tool call, and the
 panel's run events follow the socket that queued the prompt, so a run is checked

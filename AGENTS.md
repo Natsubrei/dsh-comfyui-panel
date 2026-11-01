@@ -123,9 +123,10 @@ editor boots, counters match the graph on screen, zooming is not an edit, a
 widget edit bumps the revision once, editor events reach the bar, the Host
 learned the socket id, and Fit frames the graph. It needs a running `dsh web`
 and an installed Chromium (`test/ui/README.md` has the address, cookie and
-library it wants), and it opens a **new draft session**, so it never touches the
-conversation you are working in. What it cannot see — the digest line, the bar's
-labels and buttons, the stopped stage — is the manual pass below.
+library it wants), and it uses a **blank draft session** — created, or the one
+already open — so it never touches a conversation that has content. What it
+cannot see — the digest line, the bar's labels and buttons, the stopped stage —
+is the manual pass below.
 
 1. Hard-refresh the GUI, open the **ComfyUI** tab, wait for **Connected**.
 2. The header digest should read `ComfyUI: rev … · "name" · N nodes · … ·
