@@ -1179,26 +1179,229 @@ window.__ModuleLoader__.load({
       return { applied: 1, nodes: value.nodes, links: value.links, operations: [{ op: 'load_workflow' }] }
     }
 
+    /**
+     * The editor surface one sync reads, bound to the app it was read from.
+     *
+     * A push needs exactly these seven facts and nothing else from the iframe,
+     * which is what lets test/client-ops.mjs drive the loop with a fake editor.
+     * @param {any} app - the editor's `comfyAPI.app.app`.
+     * @param {Window | null | undefined} win - the editor iframe's window, for the socket id.
+     * @returns {any} the adapter `createSync` consumes.
+     */
+    function editorAdapter(app, win) {
+      const graph = app.rootGraph ?? app.graph
+      return {
+        graph: () => graph,
+        serialize: () => graph.serialize(),
+        selection: () => Object.keys(app.canvas?.selected_nodes ?? {})
+          .map(Number)
+          .filter(Number.isInteger),
+        name: () => workflowNameFromEditor(app),
+        clientId: () => frontendClientId(win, app),
+        project: () => projectGraph(app),
+        toPrompt: () => app.graphToPrompt(),
+      }
+    }
+
+    /**
+     * The sync loop with no browser around it.
+     *
+     * A push used to mix serialization, the camera strip, the generation
+     * guard, the name rule, prompt conversion, the POST body, revision
+     * adoption and React state updates. Everything but the transport and the
+     * rendering lives here, so the same decisions run against a fake editor
+     * and a fake `post` in test/client-ops.mjs.
+     * @param {object} options - the loop's collaborators.
+     * @param {string | null | undefined} options.sessionId - the session every push reports under; a missing id posts nothing.
+     * @param {() => any | null} options.editor - returns the adapter for the editor to sync now, or null before the panel has booted it.
+     * @param {(payload: any) => Promise<any | null>} options.post - sends one state body and resolves to its parsed response, or null when the body cannot be parsed.
+     * @param {() => number} options.now - the clock for the last-sync stamp.
+     * @param {() => void} [options.onPost] - called once a push decides to post, before the prompt conversion, so the caller can show its pending state.
+     * @param {() => string} [options.bridgeError] - the message for a push whose editor exposes no graph.
+     * @returns {{push: (force?: boolean) => Promise<any>, snapshot: () => any, reset: () => void, adopt: (name: string) => void}}
+     *   `push` reports the decision; `snapshot` reads what the last successful
+     *   push left; `reset` forgets the signature and names, as an iframe reload
+     *   must; `adopt` remembers a name the panel itself put into the editor so
+     *   the next push does not report it as a user rename.
+     */
+    function createSync({ sessionId, editor, post, now, onPost, bridgeError }) {
+      let revision = 0
+      let lastJson = ''
+      let lastClientId = null
+      /** @type {string | null | undefined} */
+      let lastEditorName
+      /** @type {string | null | undefined} */
+      let lastHostName
+      /** @type {string | null} */
+      let displayName = null
+      let lastNodes = 0
+      let lastLinks = 0
+      let lastAt = 0
+      /** Bumped by every push; a slower one must not overtake a newer snapshot. */
+      let generation = 0
+
+      /**
+       * What the last successful sync left behind, for a caller that has no
+       * state of its own.
+       * @returns {{revision: number, name: string | null, nodes: number, links: number, at: number}} the remembered snapshot.
+       */
+      function snapshot() {
+        return { revision, name: displayName, nodes: lastNodes, links: lastLinks, at: lastAt }
+      }
+
+      /**
+       * Forget the last signature and both names, so the next push reports them
+       * again. A reloaded editor is a different editor, even when its
+       * autosaved graph serializes the same.
+       * @returns {void}
+       */
+      function reset() {
+        lastJson = ''
+        lastEditorName = undefined
+        lastHostName = undefined
+      }
+
+      /**
+       * Remember a name the panel bound into the editor's tab, so the next push
+       * does not report the panel's own rename as one the user just made.
+       * @param {string} name - the name the editor now carries.
+       * @returns {void}
+       */
+      function adopt(name) {
+        lastEditorName = name
+      }
+
+      /**
+       * Post one editor snapshot to the Host unless it is unchanged.
+       * @param {boolean} [force] - post even when the graph and the name are unchanged.
+       * @returns {Promise<any>} `{posted, revision, name, nodes, links, at, adoptName}`.
+       */
+      async function push(force = false) {
+        if (sessionId === undefined || sessionId === null) return { posted: false, ...snapshot() }
+        try {
+          return await pushOnce(force)
+        } catch (error) {
+          // The signature no longer matches what the Host holds, so the next
+          // tick has to retry this graph instead of skipping it as unchanged.
+          lastJson = ''
+          throw error
+        }
+      }
+
+      /**
+       * The body of one push, after the session check.
+       * @param {boolean} force - post even when nothing changed.
+       * @returns {Promise<any>} what the caller should render.
+       */
+      async function pushOnce(force) {
+        const started = ++generation
+        const view = editor()
+        if (view === null || view === undefined) throw new Error(bridgeError?.() ?? 'The editor is not ready')
+        const graph = view.graph()
+        if (graph === null || graph === undefined || typeof graph.serialize !== 'function') {
+          throw new Error(bridgeError?.() ?? 'The editor is not ready')
+        }
+        // ComfyUI addresses execution events to the client that queued the
+        // prompt, so the Host has to queue as this iframe or the run never
+        // appears in the panel's own queue, previews, or history. Both sources
+        // matter: the editor's socket id, and the window that assigned it.
+        const clientId = view.clientId()
+        if (clientId !== lastClientId) {
+          lastClientId = clientId
+          force = true
+        }
+        const workflow = JSON.parse(JSON.stringify(view.serialize()))
+        // The frontend stamps `extra.ds` (zoom and pan) on every serialization,
+        // so scrolling, zooming, or resizing the panel would otherwise look
+        // like an edit and grow the revision the model reads.
+        if (workflow.extra !== null && typeof workflow.extra === 'object') {
+          delete workflow.extra.ds
+          if (Object.keys(workflow.extra).length === 0) delete workflow.extra
+        }
+        const selection = view.selection()
+        const json = `${JSON.stringify(workflow)}|${selection.join(',')}`
+        // The name lives outside the graph JSON, so a rename alone would never
+        // reach the Host. It travels only when it changed, and the first sync
+        // reports a file the editor already had: a quiet re-sync must not clear
+        // a name that a workflow tool gave this session.
+        const editorName = view.name()
+        const firstSync = lastEditorName === undefined
+        const renamed = firstSync ? editorName !== null : lastEditorName !== editorName
+        if (!force && json === lastJson && !renamed) return { posted: false, ...snapshot() }
+        lastJson = json
+        onPost?.()
+        let semantic = null
+        try {
+          semantic = view.project()
+        } catch {
+          // A projection failure must not block the raw workflow sync.
+        }
+        let prompt = null
+        try {
+          const converted = await view.toPrompt()
+          prompt = converted?.output ?? null
+        } catch {
+          // A graph that cannot be converted yet (missing links, empty graph)
+          // still syncs; the run tool will report the missing prompt.
+        }
+        // A newer push started while this one was converting the graph. Its
+        // snapshot is later than ours, so posting this one would make the Host
+        // store an older workflow under a higher revision — and nothing would
+        // correct it, because `lastJson` already holds the newer json and the
+        // next tick sees no change.
+        if (started !== generation) return { posted: false, ...snapshot() }
+        revision += 1
+        const nodes = Array.isArray(workflow.nodes) ? workflow.nodes.length : 0
+        const links = Array.isArray(workflow.links) ? workflow.links.length : 0
+        const saved = await post({
+          sessionId,
+          workflow,
+          prompt,
+          semantic,
+          revision,
+          clientId,
+          ...(renamed ? { name: editorName } : {}),
+        })
+        // The Host keeps the revision monotonic across page reloads, so adopt
+        // its number: showing the page-local counter made the panel say rev 14
+        // while the same workflow read rev 49 from the model side.
+        const persisted = Number.isSafeInteger(saved?.revision) ? saved.revision : revision
+        revision = Math.max(revision, persisted)
+        lastEditorName = editorName
+        const hostName = typeof saved?.name === 'string' && saved.name.length > 0 ? saved.name : null
+        // Only a name the Host *changed* is pushed into the editor: a steady
+        // name must not fight a file the user opened in the meantime.
+        const hostRenamed = lastHostName !== hostName
+        lastHostName = hostName
+        // An unparseable body says nothing about the name; a body without one
+        // means the Host cleared it.
+        if (saved !== null && saved !== undefined) displayName = hostName
+        lastNodes = nodes
+        lastLinks = links
+        lastAt = now()
+        return {
+          posted: true,
+          revision,
+          name: displayName,
+          nodes,
+          links,
+          at: lastAt,
+          adoptName: hostRenamed && hostName !== null && hostName !== editorName ? hostName : null,
+        }
+      }
+
+      return { push, snapshot, reset, adopt }
+    }
+
     function ComfyPanel({ sessionId, t }) {
       const iframeRef = useRef(null)
       const appRef = useRef(null)
-      const lastJsonRef = useRef('')
       const lastForcedAtRef = useRef(0)
-      const revisionRef = useRef(0)
-      const lastClientIdRef = useRef(null)
+      /** Set by an iframe load: the next tick must post even if it looks unchanged. */
+      const forceNextRef = useRef(false)
       const fittedRef = useRef(false)
-      /**
-       * The editor's workflow name at the last successful sync, or undefined
-       * before the first one. `undefined` means "unknown", not "unnamed": the
-       * first sync reports nothing and learns the Host's name instead.
-       */
-      const lastEditorNameRef = useRef(undefined)
-      /** The Host's name at the last sync, so only a change renames the editor. */
-      const lastHostNameRef = useRef(undefined)
       /** `name -> whether workflows/<name>.json exists`, so each name is asked once. */
       const workflowFileCacheRef = useRef(new Map())
-      /** Bumped by every push; a slower one must not overtake a newer snapshot. */
-      const pushGenRef = useRef(0)
       const [status, setStatus] = useState('loading')
       const [bootSeconds, setBootSeconds] = useState(0)
       const [stats, setStats] = useState({ nodes: 0, links: 0, revision: 0, name: null })
@@ -1232,6 +1435,50 @@ window.__ModuleLoader__.load({
         appRef.current = app
         return app
       }, [])
+
+      const readEditor = useCallback(() => {
+        const app = readApp()
+        return app === null ? null : editorAdapter(app, iframeRef.current?.contentWindow)
+      }, [readApp])
+
+      // One loop per session: it owns the last signature, both names and the
+      // revision, which have to survive every re-render.
+      const loopRef = useRef(null)
+      // Kept in refs so the loop always calls the current locale-bound `post`
+      // and translator without being rebuilt when the locale changes.
+      const tRef = useRef(t)
+      tRef.current = t
+      const postRef = useRef(null)
+      const post = useCallback(async payload => {
+        const response = await fetch(`${STATE_URL}?sessionId=${encodeURIComponent(sessionId)}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        if (!response.ok) throw new Error(`${t('syncFailed')} HTTP ${response.status}`)
+        return response.json().catch(() => null)
+      }, [sessionId, t])
+      postRef.current = post
+      if (loopRef.current === null || loopRef.current.sessionId !== sessionId) {
+        loopRef.current = {
+          sessionId,
+          sync: createSync({
+            sessionId,
+            editor: readEditor,
+            post: payload => postRef.current(payload),
+            now: () => Date.now(),
+            onPost: () => {
+              // A post makes this graph the known one, so an iframe load's
+              // pending invalidation is satisfied.
+              forceNextRef.current = false
+              setStatus('syncing')
+              setMessage('')
+            },
+            bridgeError: () => tRef.current('bridgeUnavailable'),
+          }),
+        }
+      }
+      const loop = loopRef.current.sync
 
       const loadService = useCallback(async () => {
         try {
@@ -1302,118 +1549,31 @@ window.__ModuleLoader__.load({
         if (!bindWorkflowLabel(app, name)) return false
         // The editor now carries the name, so the next sync must not report it
         // back as if it were a rename the user just made.
-        lastEditorNameRef.current = name
+        loopRef.current?.sync.adopt(name)
         return true
       }, [])
 
-      const push = useCallback(async (app, force = false) => {
-        if (sessionId === undefined || sessionId === null) return
-        const generation = ++pushGenRef.current
-        const graph = app.rootGraph ?? app.graph
-        if (graph === undefined || graph === null || typeof graph.serialize !== 'function') {
-          throw new Error(t('bridgeUnavailable'))
-        }
-        // ComfyUI addresses execution events to the client that queued the
-        // prompt, so the Host has to queue as this iframe or the run never
-        // appears in the panel's own queue, previews, or history. Both
-        // arguments matter: the editor's `api` and the iframe window holding
-        // the id its socket registered with.
-        const frameClient = frontendClientId(iframeRef.current?.contentWindow, app)
-        if (frameClient !== lastClientIdRef.current) {
-          lastClientIdRef.current = frameClient
-          force = true
-        }
-        const workflow = JSON.parse(JSON.stringify(graph.serialize()))
-        // The frontend stamps `extra.ds` (zoom and pan) on every serialization,
-        // so scrolling, zooming, or resizing the panel would otherwise look
-        // like an edit and grow the revision the model reads.
-        if (workflow.extra !== null && typeof workflow.extra === 'object') {
-          delete workflow.extra.ds
-          if (Object.keys(workflow.extra).length === 0) delete workflow.extra
-        }
-        const selection = Object.keys(app.canvas?.selected_nodes ?? {})
-          .map(Number)
-          .filter(Number.isInteger)
-        const json = `${JSON.stringify(workflow)}|${selection.join(',')}`
-        // The name lives outside the graph JSON, so a rename alone would never
-        // reach the Host. It travels only when it changed, and the first sync
-        // reports a file the editor already had: a quiet re-sync must not clear
-        // a name that a workflow tool gave this session.
-        const editorName = workflowNameFromEditor(app)
-        const firstSync = lastEditorNameRef.current === undefined
-        const renamed = firstSync ? editorName !== null : lastEditorNameRef.current !== editorName
-        if (!force && json === lastJsonRef.current && !renamed) return
-        lastJsonRef.current = json
-        setStatus('syncing')
-        setMessage('')
-        let semantic = null
-        try {
-          semantic = projectGraph(app)
-        } catch {
-          // A projection failure must not block the raw workflow sync.
-        }
-        let prompt = null
-        try {
-          const converted = await app.graphToPrompt()
-          prompt = converted?.output ?? null
-        } catch {
-          // A graph that cannot be converted yet (missing links, empty graph)
-          // still syncs; the run tool will report the missing prompt.
-        }
-        // A newer push started while this one was converting the graph. Its
-        // snapshot is later than ours, so posting this one would make the Host
-        // store an older workflow under a higher revision — and nothing would
-        // correct it, because `lastJsonRef` already holds the newer json and the
-        // next tick sees no change.
-        if (generation !== pushGenRef.current) return
-        revisionRef.current += 1
-        const revision = revisionRef.current
-        const nodes = Array.isArray(workflow.nodes) ? workflow.nodes.length : 0
-        const links = Array.isArray(workflow.links) ? workflow.links.length : 0
-        const response = await fetch(`${STATE_URL}?sessionId=${encodeURIComponent(sessionId)}`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            sessionId,
-            workflow,
-            prompt,
-            semantic,
-            revision,
-            clientId: frameClient,
-            ...(renamed ? { name: editorName } : {}),
-          }),
-        })
-        if (!response.ok) throw new Error(`${t('syncFailed')} HTTP ${response.status}`)
-        // The Host keeps the revision monotonic across page reloads, so adopt
-        // its number: showing the page-local counter made the panel say rev 14
-        // while the same workflow read rev 49 from the model side.
-        const saved = await response.json().catch(() => null)
-        const persisted = Number.isSafeInteger(saved?.revision) ? saved.revision : revision
-        revisionRef.current = Math.max(revisionRef.current, persisted)
-        lastEditorNameRef.current = editorName
-        const hostName = typeof saved?.name === 'string' && saved.name.length > 0 ? saved.name : null
-        // Only a name the Host *changed* is pushed into the editor: a steady
-        // name must not fight a file the user opened in the meantime.
-        const hostRenamed = lastHostNameRef.current !== hostName
-        lastHostNameRef.current = hostName
-        setStats(current => ({
-          nodes,
-          links,
-          revision: revisionRef.current,
-          // An unparseable body says nothing about the name; a body without one
-          // means the Host cleared it.
-          name: saved === null ? current.name : hostName,
-        }))
+      /**
+       * Render one push's decision.
+       *
+       * These updates used to sit inside the push callback; keeping them here
+       * leaves the loop free of React while both callers (the timer and the
+       * manual sync) still show the same result.
+       * @param {any} app - the editor the push read.
+       * @param {any} result - the object `sync.push` resolved with.
+       * @returns {void}
+       */
+      const applySync = useCallback((app, result) => {
+        if (result.posted !== true) return
+        setStats({ nodes: result.nodes, links: result.links, revision: result.revision, name: result.name })
         // A tool can name the session (save, load) while the panel is open; the
         // editor's tab follows when the file it names really exists.
-        if (hostRenamed && hostName !== null && hostName !== editorName) {
-          void adoptWorkflowName(app, hostName)
-        }
-        setLastSyncAt(Date.now())
+        if (result.adoptName !== null) void adoptWorkflowName(app, result.adoptName)
+        setLastSyncAt(result.at)
+        setStatus('ready')
         // A fresh editor opens at ComfyUI's default camera, which leaves parts
         // of the graph off-screen; frame it once, unless the current view
         // already shows every node.
-        setStatus('ready')
         if (!fittedRef.current && visibleRect(app.canvas) !== null
           && nodeBounds(app.rootGraph ?? app.graph) !== null) {
           // Run the same fit ComfyUI's own zoom-to-fit button runs, only when
@@ -1432,7 +1592,7 @@ window.__ModuleLoader__.load({
             }
           })()
         }
-      }, [adoptWorkflowName, sessionId, t])
+      }, [adoptWorkflowName])
 
       const syncNow = useCallback(async (force = true) => {
         const app = readApp()
@@ -1442,15 +1602,14 @@ window.__ModuleLoader__.load({
           return false
         }
         try {
-          await push(app, force)
+          applySync(app, await loop.push(force))
           return true
         } catch (error) {
-          lastJsonRef.current = ''
           setStatus('error')
           setMessage(error instanceof Error ? error.message : String(error))
           return false
         }
-      }, [push, readApp, t])
+      }, [applySync, loop, readApp, t])
       syncRef.current = syncNow
 
       const applyOperations = useCallback(async (app, operations) => {
@@ -1630,11 +1789,12 @@ window.__ModuleLoader__.load({
             return
           }
           try {
-            const force = Date.now() - lastForcedAtRef.current > 30000
-            if (force) lastForcedAtRef.current = Date.now()
-            await push(app, force)
+            const due = Date.now() - lastForcedAtRef.current > 30000
+            if (due) lastForcedAtRef.current = Date.now()
+            const force = forceNextRef.current || due
+            forceNextRef.current = false
+            applySync(app, await loop.push(force))
           } catch (error) {
-            lastJsonRef.current = ''
             setStatus('error')
             setMessage(error instanceof Error ? error.message : String(error))
           }
@@ -1645,7 +1805,7 @@ window.__ModuleLoader__.load({
           disposed = true
           clearInterval(timer)
         }
-      }, [push, readApp, sessionId])
+      }, [applySync, loop, readApp, sessionId])
 
       useEffect(() => {
         let disposed = false
@@ -1662,13 +1822,11 @@ window.__ModuleLoader__.load({
       const reload = useCallback(() => {
         const frame = iframeRef.current
         if (frame === null) return
-        lastJsonRef.current = ''
+        // The new page fetches its own autosaved graph, so the signature and
+        // the name the old one carried say nothing about it.
+        loopRef.current?.sync.reset()
         appRef.current = null
         fittedRef.current = false
-        // The new page fetches its own autosaved graph, so the name the old one
-        // carried says nothing about it; re-derive it on the next sync.
-        lastEditorNameRef.current = undefined
-        lastHostNameRef.current = undefined
         workflowFileCacheRef.current.clear()
         setRun(null)
         setStatus('loading')
@@ -1828,7 +1986,7 @@ window.__ModuleLoader__.load({
             src: PANEL_URL,
             allow: 'clipboard-read; clipboard-write; fullscreen',
             onLoad: () => {
-              lastJsonRef.current = ''
+              forceNextRef.current = true
               appRef.current = null
               fittedRef.current = false
               setStatus('loading')
@@ -1855,7 +2013,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale', 'sidebarRightTabs'],
       // Editor operations, dictionaries, and the bar/stage rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, captureGraph, applyWorkflowGraph, loadWorkflow, findNode, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, workflowFileExists, mapApiEvent, relayEditorEvents, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, fitCanvasByBounds, viewShowsAll, describeOperation, en, zh },
+      __ops: { applyOperation, captureGraph, applyWorkflowGraph, loadWorkflow, findNode, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, workflowFileExists, mapApiEvent, relayEditorEvents, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, fitCanvasByBounds, viewShowsAll, describeOperation, en, zh, createSync },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')

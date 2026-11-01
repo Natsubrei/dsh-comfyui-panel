@@ -700,4 +700,176 @@ const stage = (service, extra = {}) => overlayPlan({
   assert.equal(bindWorkflowLabel({}, 'portrait'), false, 'no workflow service means nothing to rename')
 }
 
+// The sync loop used to be a 127-line callback reachable only through a
+// browser: the request body, the name rule, the generation guard and the
+// Host's revision all met there and nothing covered them. `createSync` takes
+// the editor adapter and the POST transport, so a fake editor and a fake
+// `post` drive the same decisions here.
+{
+  const { createSync } = mod.__ops
+
+  const makeState = (workflow = {
+    nodes: [{ id: 1, type: 'Test' }],
+    links: [],
+    extra: { ds: { scale: 1, offset: [0, 0] } },
+  }) => ({
+    workflow,
+    selection: [],
+    name: null,
+    clientId: '0123456789abcdef',
+    prompt: { output: { 1: { class_type: 'Test' } } },
+  })
+
+  const makeSync = (state, responses = []) => {
+    const calls = []
+    const sync = createSync({
+      sessionId: 'session-1',
+      editor: () => ({
+        graph: () => ({ serialize: () => state.workflow }),
+        serialize: () => state.workflow,
+        selection: () => state.selection,
+        name: () => state.name,
+        clientId: () => state.clientId,
+        project: () => ({ nodes: [], linkCount: 0, selection: state.selection }),
+        toPrompt: () => Promise.resolve(state.prompt),
+      }),
+      post: async payload => {
+        calls.push(payload)
+        const next = responses.shift()
+        if (next instanceof Error) throw next
+        return next ?? { revision: payload.revision, name: state.name }
+      },
+      now: () => 1700000000000,
+    })
+    return { sync, calls }
+  }
+
+  // A quiet tick posts nothing. An unchanged graph and name must not bump the
+  // revision, and the zoom/pan the frontend stamps into `extra.ds` is not an
+  // edit: that is the difference between a panel that sits still and one that
+  // grows the rev every 1.2 s.
+  {
+    const state = makeState()
+    const { sync, calls } = makeSync(state)
+    assert.equal((await sync.push(true)).posted, true)
+    assert.equal(calls.length, 1)
+    assert.equal((await sync.push(false)).posted, false)
+    state.workflow.extra.ds.scale = 3
+    assert.equal((await sync.push(false)).posted, false)
+    assert.equal(calls.length, 1, 'an unchanged graph and name post nothing')
+    state.selection = [1]
+    assert.equal((await sync.push(false)).posted, true, 'a selection change is still a sync')
+  }
+
+  // A rename lives outside the graph JSON, so it needs its own post: this is
+  // the regression where saving a workflow under a new name never reached the
+  // Host. Only the change travels, and only once.
+  {
+    const state = makeState()
+    const { sync, calls } = makeSync(state)
+    await sync.push(true)
+    state.name = 'portrait'
+    const renamed = await sync.push(false)
+    assert.equal(renamed.posted, true)
+    assert.equal(calls.length, 2)
+    assert.equal(calls[1].name, 'portrait')
+    assert.deepEqual(calls[1].workflow, calls[0].workflow, 'the workflow itself did not change')
+    assert.equal((await sync.push(false)).posted, false, 'a steady name is not sent again')
+    assert.equal(calls.length, 2)
+  }
+
+  // `extra.ds` is the camera. It must never reach the Host or every zoom and
+  // pan would look like a graph edit, and an `extra` it leaves empty must be
+  // dropped rather than posted as `{}`.
+  {
+    const posted = async workflow => {
+      const { sync, calls } = makeSync(makeState(workflow))
+      await sync.push(true)
+      return calls[0]
+    }
+    const kept = await posted({ nodes: [], links: [], extra: { ds: { scale: 2 }, marker: 'keep' } })
+    assert.deepEqual(kept.workflow.extra, { marker: 'keep' })
+    const onlyCamera = await posted({ nodes: [], links: [], extra: { ds: { scale: 2 } } })
+    assert.equal('extra' in onlyCamera.workflow, false, 'an extra with only the camera is dropped')
+    assert.deepEqual(
+      Object.keys(kept).sort(),
+      ['clientId', 'prompt', 'revision', 'semantic', 'sessionId', 'workflow'],
+      'the state body keeps its exact fields; no name is added when it did not change',
+    )
+  }
+
+  // Two pushes overlap while the first is still converting the graph. The
+  // older snapshot must not post once a newer one started, or the Host would
+  // store an older workflow under a higher revision and nothing would correct
+  // it: the next tick already holds the newer json and sees no change.
+  {
+    /** @type {((value: any) => void) | undefined} */
+    let release
+    let blocked = true
+    let calls = 0
+    const state = makeState()
+    const sync = createSync({
+      sessionId: 'session-1',
+      editor: () => ({
+        graph: () => ({ serialize: () => state.workflow }),
+        serialize: () => state.workflow,
+        selection: () => state.selection,
+        name: () => state.name,
+        clientId: () => state.clientId,
+        project: () => ({}),
+        toPrompt: () => {
+          if (!blocked) return Promise.resolve(state.prompt)
+          blocked = false
+          return new Promise(resolve => { release = resolve })
+        },
+      }),
+      post: async payload => {
+        calls += 1
+        return { revision: payload.revision, name: null }
+      },
+      now: () => 1,
+    })
+    const older = sync.push(true)
+    const newer = sync.push(true)
+    release?.(state.prompt)
+    assert.equal((await older).posted, false, 'the stale push posts nothing')
+    assert.equal((await newer).posted, true)
+    assert.equal(calls, 1)
+  }
+
+  // The Host keeps the revision monotonic across page reloads, and the panel
+  // has to adopt it: a page-local counter once showed rev 14 while the same
+  // workflow read rev 49 from the model side.
+  {
+    const state = makeState()
+    const { sync, calls } = makeSync(state, [
+      { revision: 49, name: null },
+      { revision: 49, name: null },
+    ])
+    const first = await sync.push(true)
+    assert.equal(first.revision, 49)
+    assert.equal(sync.snapshot().revision, 49)
+    await sync.push(true)
+    assert.equal(calls[1].revision, 50, 'the next body grows from the adopted number')
+    assert.equal(sync.snapshot().revision, 50)
+  }
+
+  // A rejected POST is not a successful sync: it reports no sync time or
+  // name, and the signature is forgotten so the next tick retries the same
+  // graph instead of skipping it as unchanged.
+  {
+    const state = makeState()
+    const { sync, calls } = makeSync(state, [
+      new Error('Could not send the workflow to the Host. HTTP 500'),
+      { revision: 3, name: null },
+    ])
+    await assert.rejects(sync.push(true), /HTTP 500/)
+    assert.equal(sync.snapshot().at, 0, 'a rejected post claims no sync time')
+    assert.equal(sync.snapshot().name, null, 'or a name it never got back')
+    assert.equal(sync.snapshot().revision, 1, 'the local counter still advances before the POST, as before')
+    assert.equal((await sync.push(false)).posted, true, 'the forgotten signature makes the next tick retry')
+    assert.equal(calls.length, 2)
+  }
+}
+
 console.log('client ops test passed')
