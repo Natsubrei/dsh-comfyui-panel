@@ -1,5 +1,6 @@
-node_modules/
+node_modules
 .dl_parts/
+.worktrees/
 *.log
 .DS_Store
 # Screenshots and the report written by `npm run ui`.

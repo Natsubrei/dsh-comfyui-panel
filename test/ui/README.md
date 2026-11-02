@@ -42,6 +42,32 @@ check says so when it sees a URL without `?token=…`.
 Screenshots of each state land in `.ui-out/` together with `report.txt`; the
 exit code is non-zero when a check fails.
 
+## Debugging the editor
+
+The check drives the real frontend, so the same page is the fastest way to see
+what the editor is actually doing. With the panel mounted:
+
+```js
+const win = document.querySelector('.dsh-comfyui-frame').contentWindow
+const app = win.comfyAPI.app.app
+const svc = app.extensionManager.workflow
+```
+
+- `svc.getWorkflowByPath('workflows/<name>.json')` finds a saved workflow. The
+  path is the identity, under `workflows/`; `filename` carries no extension.
+- `await svc.openWorkflow(wf)` switches the tab but does **not** repaint the
+  canvas.
+- `await app.loadGraphData(json, true, true, wf)` does load it, change tracker
+  included. Fetch the JSON with `app.api.fetchApi('/userdata/workflows%2F<name>.json')`:
+  the slash must be encoded, the unencoded form is a 404.
+- `wf.changeTracker.captureCanvasState()` is what recomputes the modified dot.
+  The frontend calls it on `mouseup` and `keyup`, which is why the dot can
+  appear on the first canvas click and not on open.
+- The dot means `!graphEqual(initialState, activeState)`: nodes, links, groups,
+  definitions and `extra` are compared, node `order` and the camera in
+  `extra.ds` are not. A node that stores a wildcard slot type (`*`) and
+  resolves it on load therefore marks its workflow modified on every open.
+
 ## What it touches
 
 The check uses a **blank draft session** and mounts the panel there, so it never
