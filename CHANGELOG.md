@@ -12,6 +12,13 @@ truth, and every release is pinned by a commit in `market/index.json`.
 - New `comfyui_cancel` tool interrupts the run this session queued, or a given
   prompt id, through `POST /interrupt`; a prompt that already finished is a
   no-op. Saving a run's output is still missing.
+- `comfyui_run` no longer goes dark when the panel closes. The Host polls
+  `/queue` and `/history/{id}` for every prompt the tool queued, writes the
+  state into the session's run record, and `comfyui_progress` returns it as
+  `hostRun` with the output file names. A queue read that fails keeps the last
+  status and retries; after 30 minutes the tracker stops and reports `lost`.
+  Panel step progress still needs the panel, and the tracker ends with the
+  plugin.
 
 ## 0.7.2
 

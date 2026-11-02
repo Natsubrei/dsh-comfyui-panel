@@ -71,12 +71,16 @@ read on for the panel itself.
     (`name -> "<sourceNodeId>:<slot>"`). `layout=true` returns the canvas boxes
     plus an overlap verdict, `full=true` the raw UI workflow and API prompt.
   - `comfyui_run` — submit the synced API prompt and return the `prompt_id`;
-    optionally wait for history. The output PNG carries the UI workflow, so
-    dragging it back into ComfyUI restores the graph.
+    optionally wait for history. The Host keeps tracking the run after the
+    call returns, with or without the panel, and the output PNG carries the UI
+    workflow, so dragging it back into ComfyUI restores the graph.
   - `comfyui_cancel` — interrupt the run this session queued, or a given prompt
     id; a prompt that already finished is a no-op.
   - `comfyui_progress` — panel events (current node, step progress, errors),
-    the run record, and a live `/queue` snapshot.
+    the run record, the live `/queue` snapshot, and `hostRun`: the Host's own
+    tracking of a run started by `comfyui_run`, including the terminal status
+    and output file names. `hostRun` keeps working after the panel closes,
+    while step progress still needs the panel.
   - `comfyui_edit` — add, remove, move, and reconnect nodes and set widget
     values inside the open panel through a Host → panel command channel. One
     batch is applied in order and answers with the node and link counts it left
@@ -263,9 +267,14 @@ than 16 pixels (exit code 2 when any do). Use it to judge a layout file, or
   run this session queued; `comfyui_run` only queues it.
 - The panel is an iframe, so it does not inherit DSH theme tokens; this is a
   deliberate exception for UI-workflow fidelity and third-party node UIs.
-- Execution events are relayed from the editor's own bus, so progress and errors
-  exist only while the panel is mounted; a run started before the panel opened
-  shows its queue entry but no step progress.
+- Execution events are relayed from the editor's own bus, so step progress and
+  error details exist only while the panel is mounted. The Host still tracks a
+  run that `comfyui_run` queued until that run ends, and `comfyui_progress`
+  reports the queue position, terminal status, and output file names in
+  `hostRun` with the panel closed; a run started from the panel's own Queue
+  button before the panel opened shows its queue entry but no step progress.
+  The Host stops watching after 30 minutes and reports `lost`, which means the
+  run's end was not observed, not that it failed.
 - A ComfyUI the plugin only adopted stays running when the plugin unloads: it did
   not start that process, and after a reload it cannot tell its own survivor from
   a server you launched by hand. Stop it from the panel first if you want it
