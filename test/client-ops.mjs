@@ -773,6 +773,8 @@ const stage = (service, extra = {}) => overlayPlan({
     assert.equal(renamed.posted, true)
     assert.equal(calls.length, 2)
     assert.equal(calls[1].name, 'portrait')
+    assert.equal(calls[1].file, 'portrait', 'every body names the file the editor holds')
+    assert.equal(calls[0].file, null, 'a file-less editor reports null, which lets the Host drop a stale name')
     assert.deepEqual(calls[1].workflow, calls[0].workflow, 'the workflow itself did not change')
     assert.equal((await sync.push(false)).posted, false, 'a steady name is not sent again')
     assert.equal(calls.length, 2)
@@ -793,7 +795,7 @@ const stage = (service, extra = {}) => overlayPlan({
     assert.equal('extra' in onlyCamera.workflow, false, 'an extra with only the camera is dropped')
     assert.deepEqual(
       Object.keys(kept).sort(),
-      ['clientId', 'prompt', 'revision', 'semantic', 'sessionId', 'workflow'],
+      ['clientId', 'file', 'prompt', 'revision', 'semantic', 'sessionId', 'workflow'],
       'the state body keeps its exact fields; no name is added when it did not change',
     )
   }

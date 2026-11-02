@@ -139,7 +139,12 @@ Two rules keep the two sides from fighting:
 - the Host never invents a file. Before renaming the tab the panel asks the
   editor's own `api.fetchApi('/userdata?dir=workflows')` and skips any name
   without `<name>.json`, and it only follows a name the Host *changed* — a
-  steady name cannot overwrite the file the user opened in the meantime.
+  steady name cannot overwrite the file the user opened in the meantime;
+- the panel reports `file` — the workflow file its editor holds, `null` when it
+  holds none — on every sync. A name that came from a file is dropped when the
+  editor stops holding it, so a frontend that fell back to its default graph
+  cannot keep calling itself by the old workflow's name. A name a workflow tool
+  gave the canvas is kept, because it names the canvas, not a file.
 
 Verify after an upgrade: open the editor, read the `filename` above, and set it
 to `'probe.json'`; the tab label must follow immediately.

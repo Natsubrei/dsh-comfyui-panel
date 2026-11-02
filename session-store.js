@@ -16,6 +16,7 @@ import { sanitizeSemantic, stripViewState } from './projection.js'
  * @property {any} semantic - the panel's projection, or null.
  * @property {string} signature - content hash used to decide whether a sync was an edit.
  * @property {string | null} name - the name the panel's editor would save under.
+ * @property {'file' | 'tool' | null} nameSource - how the name was attached: the editor's workflow file, a workflow tool, or unknown.
  * @property {string | null} [clientId] - the panel's ComfyUI socket id.
  * @property {number} revision - the descriptive revision the model reads.
  * @property {number} nodes - node count of `workflow`.
@@ -28,6 +29,7 @@ import { sanitizeSemantic, stripViewState } from './projection.js'
  * @property {any} [prompt]
  * @property {any} [semantic]
  * @property {any} [name]
+ * @property {any} [file]
  * @property {any} [clientId]
  * @property {any} [revision]
  *
@@ -39,6 +41,7 @@ import { sanitizeSemantic, stripViewState } from './projection.js'
  * @property {any} [prompt]
  * @property {any} [semantic]
  * @property {unknown} [name]
+ * @property {'file' | 'tool' | null} [nameSource]
  *
  * @typedef {object} PanelEvent
  * @property {string} kind
@@ -137,13 +140,34 @@ export function createSessionStore({ persist, releaseCommands, logger }) {
     // `name`, and the Host must keep the name a tool gave the session rather
     // than clear it on every quiet re-sync.
     let name = previous?.name ?? null
+    let nameSource = previous?.nameSource ?? null
     if (body?.name !== undefined) {
       if (body.name === null) {
         name = null
+        nameSource = null
       } else {
         const requested = validWorkflowName(body.name)
         if (requested === null) return { ok: false, error: 'name must be 1-80 characters without control characters' }
         name = requested
+        nameSource = 'file'
+      }
+    }
+    // The panel reports the file the editor has open on every sync. A name that
+    // came from a file stops describing the canvas as soon as the editor no
+    // longer holds that file — the frontend fell back to a default graph, or the
+    // user closed it — so the name goes with it. A name a workflow tool gave
+    // this canvas survives: a tool names the canvas, not a file.
+    if (body?.file !== undefined) {
+      if (body.file === null) {
+        if (nameSource === 'file') {
+          name = null
+          nameSource = null
+        }
+      } else {
+        const file = validWorkflowName(body.file)
+        if (file === null) return { ok: false, error: 'file must be 1-80 characters without control characters' }
+        name = file
+        nameSource = 'file'
       }
     }
     const renamed = name !== (previous?.name ?? null)
@@ -168,6 +192,7 @@ export function createSessionStore({ persist, releaseCommands, logger }) {
       // The name is metadata, not graph content: it never bumps the revision,
       // because renaming a workflow does not change what the model reads.
       name,
+      nameSource,
       // Which socket the embedded frontend is listening on. Execution events
       // only reach the client that queued the prompt, so a run the model
       // starts has to use the panel's id or it never shows up in the UI.
@@ -199,6 +224,7 @@ export function createSessionStore({ persist, releaseCommands, logger }) {
     const state = sessions.get(sessionId)
     if (state === undefined) return
     state.name = name
+    state.nameSource = 'tool'
     schedulePersist(sessionId)
   }
 
@@ -229,6 +255,9 @@ export function createSessionStore({ persist, releaseCommands, logger }) {
       semantic,
       signature: JSON.stringify([workflow, prompt, semantic]),
       name: typeof record.name === 'string' ? record.name : null,
+      // Records written before this field existed carry no source, and an
+      // unknown source must never be cleared automatically.
+      nameSource: record.nameSource === 'file' || record.nameSource === 'tool' ? record.nameSource : null,
       revision: record.revision,
       nodes: Array.isArray(workflow.nodes) ? workflow.nodes.length : 0,
       links: Array.isArray(workflow.links) ? workflow.links.length : 0,

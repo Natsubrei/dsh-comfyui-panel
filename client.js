@@ -1360,6 +1360,10 @@ window.__ModuleLoader__.load({
           semantic,
           revision,
           clientId,
+          // The file the editor has open, on every push: the Host drops a name
+          // that no longer describes the canvas, and a quiet re-sync would
+          // otherwise leave the old one attached.
+          file: editorName,
           ...(renamed ? { name: editorName } : {}),
         })
         // The Host keeps the revision monotonic across page reloads, so adopt

@@ -269,8 +269,9 @@ than 16 pixels (exit code 2 when any do). Use it to judge a layout file, or
   `graphToPrompt()`; the projection is a read-only view built from the same
   nodes, so the model never sees a second, lossy graph representation as truth.
 - **State lives in the plugin.** Workflows survive restarts through a domain KV
-  record (`sessionId -> { workflow, prompt, semantic, revision, name }`), capped at
-  the 20 most recently updated sessions. The model only sees the projection and
+  record (`sessionId -> { workflow, prompt, semantic, revision, name, nameSource }`,
+  where `nameSource` says whether the name came from the editor's workflow file
+  or from a tool), capped at the 20 most recently updated sessions. The model only sees the projection and
   its own edit results.
 - **`revision` tracks edits, not the viewport.** The frontend serializes
   `extra.ds` (zoom/pan) into every workflow, so the Host strips it before

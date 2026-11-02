@@ -57,6 +57,7 @@ export function apply(ctx, rawConfig = {}) {
       prompt: state.prompt,
       semantic: state.semantic,
       name: state.name ?? null,
+      nameSource: state.nameSource ?? null,
     }),
   })
   const service = createServiceController({

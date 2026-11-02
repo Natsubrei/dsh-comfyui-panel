@@ -914,6 +914,34 @@ assert.equal(edited.links, 1)
   assert.equal(channels.connected('s-gone'), false)
 }
 
+// A name is only as good as the file behind it. The panel reports the file its
+// editor holds on every sync, so a name that came from a file is dropped when
+// the editor stops holding it — the frontend fell back to a default graph —
+// while a name a tool gave the canvas survives the same report.
+{
+  const store = createSessionStore({
+    logger: { warn() {} },
+    releaseCommands: () => {},
+    persist: () => {},
+  })
+  const graph = { nodes: [{ id: 1, type: 'KSampler' }], links: [] }
+  store.sync('s-file', { revision: 1, file: 'emoji', workflow: graph })
+  assert.equal(store.get('s-file').name, 'emoji')
+  assert.equal(store.get('s-file').nameSource, 'file')
+  store.sync('s-file', { revision: 2, file: null, workflow: { nodes: [{ id: 2, type: 'UNETLoader' }], links: [] } })
+  assert.equal(store.get('s-file').name, null, 'the name goes when the editor holds no file')
+  store.sync('s-file', { revision: 3, file: null, workflow: graph })
+  store.rename('s-file', 'slot')
+  store.sync('s-file', { revision: 4, file: null, workflow: graph })
+  assert.equal(store.get('s-file').name, 'slot', 'a name a tool gave the canvas survives a file-less editor')
+  assert.equal(store.get('s-file').nameSource, 'tool')
+  assert.deepEqual(
+    store.sync('s-file', { workflow: graph, file: '' }),
+    { ok: false, error: 'file must be 1-80 characters without control characters' },
+  )
+  store.close()
+}
+
 // An older panel (or a record persisted before projections) still reads:
 // widgets are positional, but links resolve to their source.
 const legacyPost = await host.fetches.get('/api/comfyui/state').fetch(new Request(

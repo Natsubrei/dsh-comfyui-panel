@@ -40,6 +40,13 @@ function parseRecord(value) {
     && (typeof value.name !== 'string' || value.name.length === 0 || value.name.length > 80)) {
     invalid('workflow record name must be 1-80 characters')
   }
+  // Optional: how the name was attached. 'file' is a name the editor reported
+  // for a workflow file; 'tool' is a name a workflow tool gave the canvas. A
+  // record without it predates the distinction and is never cleared by a sync.
+  if (value.nameSource !== undefined && value.nameSource !== null
+    && value.nameSource !== 'file' && value.nameSource !== 'tool') {
+    invalid('workflow record nameSource must be "file" or "tool"')
+  }
   if (!Number.isSafeInteger(value.revision) || value.revision < 0) invalid('workflow record needs a non-negative revision')
   if (!Number.isSafeInteger(value.updatedAt) || value.updatedAt <= 0) invalid('workflow record needs an updatedAt')
   if (value.workflow === null || typeof value.workflow !== 'object' || Array.isArray(value.workflow)) {
