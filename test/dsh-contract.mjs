@@ -243,6 +243,7 @@ try {
 
   // ── Tools are accepted by the real registry and scoped to the session ────
   const expected = [
+    'comfyui_cancel',
     'comfyui_edit',
     'comfyui_graph_read',
     'comfyui_node_info',

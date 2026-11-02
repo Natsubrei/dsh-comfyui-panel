@@ -155,6 +155,8 @@ const parse = value => JSON.parse(value.text)
 
 /** Bodies the proxy forwarded to /prompt, newest last. */
 const queuedBodies = []
+/** Bodies the proxy forwarded to /interrupt, newest last. */
+const interruptedBodies = []
 /** Cookie headers the proxy forwarded, newest last. */
 const upstreamCookies = []
 
@@ -183,6 +185,20 @@ const upstream = http.createServer((req, res) => {
       }
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ prompt_id: 'p1', number: 1, node_errors: {} }))
+    })
+    return
+  }
+  if (req.url === '/interrupt' && req.method === 'POST') {
+    const chunks = []
+    req.on('data', chunk => chunks.push(chunk))
+    req.on('end', () => {
+      try {
+        interruptedBodies.push(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+      } catch {
+        interruptedBodies.push(null)
+      }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('{}')
     })
     return
   }
@@ -552,6 +568,72 @@ assert.equal(run.prompt_id, 'p1')
 // Execution events only reach the client that queued the prompt, so a run the
 // model starts has to use the panel's socket or it is invisible in the UI.
 assert.equal(queuedBodies.at(-1)?.client_id, '0f3c2b1a9d8e7f60')
+
+// SaveImage writes every extra_pnginfo key into a PNG text chunk, so the run
+// carries the UI workflow (not the API prompt) and the output PNG restores the
+// graph when dragged back into ComfyUI.
+const runBody = queuedBodies.at(-1)
+assert.ok(Array.isArray(runBody?.extra_data?.extra_pnginfo?.workflow?.nodes), 'the run carries the UI workflow')
+assert.ok(runBody.extra_data.extra_pnginfo.workflow.nodes.length > 0)
+assert.equal(runBody.extra_data.dsh_session_id, 's1')
+assert.equal('prompt' in runBody.extra_data.extra_pnginfo, false, 'the API prompt stays out of the PNG metadata')
+
+const cancelled = parse(await s1.tools.get('comfyui_cancel').execute({ promptId: run.prompt_id }, exec))
+assert.deepEqual(cancelled, { cancelled: true, promptId: run.prompt_id })
+assert.equal(interruptedBodies.at(-1)?.prompt_id, run.prompt_id)
+
+// Without a prompt id, cancel targets the run this session's panel last
+// reported, which is the one the model just queued.
+{
+  const sCancel = addAgent(host, 's-cancel')
+  const synced = await host.fetches.get('/api/comfyui/state').fetch(new Request(
+    'http://127.0.0.1/api/comfyui/state?sessionId=s-cancel',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: 's-cancel',
+        revision: 1,
+        workflow,
+        prompt: { 7: { class_type: 'KSampler', inputs: {} }, 4: { class_type: 'UNETLoader', inputs: {} } },
+        semantic,
+      }),
+    },
+  ))
+  assert.equal(synced.status, 200)
+  const queued = parse(await sCancel.tools.get('comfyui_run').execute({}, execOf('s-cancel')))
+  const evented = await host.fetches.get('/api/comfyui/events').fetch(new Request(
+    'http://127.0.0.1/api/comfyui/events',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 's-cancel', event: { kind: 'execution_start', promptId: queued.prompt_id } }),
+    },
+  ))
+  assert.equal(evented.status, 200)
+  const defaulted = parse(await sCancel.tools.get('comfyui_cancel').execute({}, execOf('s-cancel')))
+  assert.deepEqual(defaulted, { cancelled: true, promptId: queued.prompt_id })
+  assert.equal(interruptedBodies.at(-1)?.prompt_id, queued.prompt_id)
+}
+
+// A session that synced a workflow but never ran anything has no run to
+// cancel, and must not fall back to a global interrupt.
+{
+  const sNoRun = addAgent(host, 's-no-run')
+  const synced = await host.fetches.get('/api/comfyui/state').fetch(new Request(
+    'http://127.0.0.1/api/comfyui/state?sessionId=s-no-run',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 's-no-run', revision: 1, workflow, prompt: {}, semantic }),
+    },
+  ))
+  assert.equal(synced.status, 200)
+  await assert.rejects(
+    sNoRun.tools.get('comfyui_cancel').execute({}, execOf('s-no-run')),
+    /No ComfyUI run to cancel/,
+  )
+}
 
 // Without a reported socket the Host falls back to its own client id.
 {

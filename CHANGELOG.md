@@ -3,6 +3,16 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
+## Unreleased
+
+- `comfyui_run` attaches the session's UI workflow to `/prompt` as
+  `extra_data.extra_pnginfo.workflow`, so `SaveImage` writes it into the PNG's
+  text metadata and dragging the image back into ComfyUI restores the graph.
+  The API prompt is not attached.
+- New `comfyui_cancel` tool interrupts the run this session queued, or a given
+  prompt id, through `POST /interrupt`; a prompt that already finished is a
+  no-op. Saving a run's output is still missing.
+
 ## 0.7.2
 
 - The panel path is fixed at `/comfyui`. A profile patch that sets another
