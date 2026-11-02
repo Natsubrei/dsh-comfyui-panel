@@ -3,6 +3,16 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
+## Unreleased
+
+- `comfyui_run` no longer goes dark when the panel closes. The Host polls
+  `/queue` and `/history/{id}` for every prompt the tool queued, writes the
+  state into the session's run record, and `comfyui_progress` returns it as
+  `hostRun` with the output file names. A queue read that fails keeps the last
+  status and retries; after 30 minutes the tracker stops and reports `lost`.
+  Panel step progress still needs the panel, and the tracker ends with the
+  plugin.
+
 ## 0.7.2
 
 - The panel path is fixed at `/comfyui`. A profile patch that sets another

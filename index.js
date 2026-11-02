@@ -29,6 +29,7 @@ import { createWorkflowStore } from './storage.js'
 import { createServiceController, frontendReport } from './service.js'
 import { createCommandChannel } from './commands.js'
 import { createSessionStore, validWorkflowName } from './session-store.js'
+import { createRunTracker, TERMINAL_RUN_STATUSES } from './run-tracker.js'
 
 export { takeCommand } from './commands.js'
 
@@ -65,6 +66,20 @@ export function apply(ctx, rawConfig = {}) {
     config: config.supervise,
     probe: async () => (await readSystemStats()).ok === true,
     logger: ctx.logger,
+  })
+  // A queued prompt's execution events only reach the panel's socket, so the
+  // Host follows the runs it started itself. `trackedRuns` maps a prompt back
+  // to its session because the tracker reports records, not sessions.
+  /** @type {Map<string, string>} */
+  const trackedRuns = new Map()
+  const tracker = createRunTracker({
+    fetchJson,
+    onChange: record => {
+      const sessionId = trackedRuns.get(record.promptId)
+      if (sessionId === undefined) return
+      if (sessionStore.hasTools(sessionId)) sessionStore.mergeRun(sessionId, record)
+      if (TERMINAL_RUN_STATUSES.has(record.status)) trackedRuns.delete(record.promptId)
+    },
   })
 
   ctx.logger?.info(`dsh-comfyui: upstream ${upstream.href}, panel ${prefix}/`)
@@ -105,6 +120,7 @@ export function apply(ctx, rawConfig = {}) {
     }).catch(error => ctx.logger?.warn(`dsh-comfyui: could not restore workflows: ${String(error)}`))
     return () => {
       disposed = true
+      tracker.stop()
       sessionStore.close()
       void store.close()
     }
@@ -119,6 +135,11 @@ export function apply(ctx, rawConfig = {}) {
   ctx.on('agent/disposed', ({ agent }) => {
     const sessionId = agent?.session?.id
     if (typeof sessionId !== 'string') return
+    // The tracker keeps polling to its own budget, but a disposed agent's run
+    // record must not come back: `release` is the end of the session's memory.
+    for (const [promptId, owner] of trackedRuns) {
+      if (owner === sessionId) trackedRuns.delete(promptId)
+    }
     sessionStore.release(sessionId)
   })
 
@@ -483,6 +504,16 @@ export function apply(ctx, rawConfig = {}) {
   // once a workflow has synced for it (or was restored from storage), so
   // unrelated sessions never see ComfyUI capabilities.
 
+  /**
+   * Start the Host's own poll for a prompt this session queued.
+   * @param {string} sessionId - the session that queued it.
+   * @param {string} promptId - the id ComfyUI returned.
+   */
+  function trackRun(sessionId, promptId) {
+    trackedRuns.set(promptId, sessionId)
+    tracker.watch(sessionId, promptId)
+  }
+
   function registerSessionTools(sessionId) {
     if (sessionStore.hasTools(sessionId)) return
     let agent
@@ -642,7 +673,7 @@ export function apply(ctx, rawConfig = {}) {
   function runTool(sessionId) {
     return {
       name: 'comfyui_run',
-      description: 'Queue the workflow synced in this session, honouring each seed widget\'s control-after-generate (randomize/increment/decrement). Returns the prompt id and the seed values used; increment and decrement continue from the previous run even though the editor keeps showing its own seed. Set wait=true to poll /history until it settles.',
+      description: 'Queue the workflow synced in this session, honouring each seed widget\'s control-after-generate (randomize/increment/decrement). Returns the prompt id and the seed values used; increment and decrement continue from the previous run even though the editor keeps showing its own seed. The Host keeps tracking the run after this call returns, so comfyui_progress still works when the panel is closed. Set wait=true to poll /history until it settles.',
       parameters: {
         type: 'object',
         properties: {
@@ -679,6 +710,7 @@ export function apply(ctx, rawConfig = {}) {
         }
         const promptId = response.data?.prompt_id
         if (typeof promptId !== 'string') throw new Error(`ComfyUI returned no prompt_id: ${JSON.stringify(response.data)}`)
+        trackRun(sessionId, promptId)
         // Only a queued prompt moves the seed walk forward.
         if (cursor.size > 0) sessionStore.commitSeedCursor(sessionId, cursor)
         if (args?.wait !== true) {
@@ -702,7 +734,7 @@ export function apply(ctx, rawConfig = {}) {
   function progressTool(sessionId) {
     return {
       name: 'comfyui_progress',
-      description: 'Report the latest ComfyUI execution state for this session: panel events (current node, step progress, errors), the run record, and the live queue snapshot.',
+      description: 'Report the latest ComfyUI execution state for this session: panel events (current node, step progress, errors), the run record, the live queue snapshot, and `hostRun` — the Host\'s own tracking of a run started by comfyui_run, which keeps working after the panel closes and carries the output files.',
       parameters: {
         type: 'object',
         properties: { promptId: { type: 'string', description: 'Optional prompt id to inspect; defaults to the latest run.' } },
@@ -712,7 +744,13 @@ export function apply(ctx, rawConfig = {}) {
       async execute(args) {
         const latest = sessionStore.latestRun(sessionId)
         const wanted = typeof args?.promptId === 'string' && args.promptId.length > 0 ? args.promptId : null
-        const run = wanted === null ? latest.run : sessionStore.runFor(sessionId, wanted)
+        const before = wanted === null ? latest.run : sessionStore.runFor(sessionId, wanted)
+        // Poll now rather than waiting for the tracker's timer: the tool answer
+        // must describe the run at the moment it was called.
+        const hostRun = before === null
+          ? null
+          : await tracker.refresh(before.promptId).catch(() => null)
+        const run = wanted === null ? sessionStore.latestRun(sessionId).run : sessionStore.runFor(sessionId, wanted)
         const queue = await fetchJson('/queue', 2500).catch(error => ({
           ok: false, status: 0, data: null, error: error.message,
         }))
@@ -727,6 +765,7 @@ export function apply(ctx, rawConfig = {}) {
             panelConnected: commands.connected(sessionId),
             hasPanelEvents: latest.latest !== null,
             run,
+            hostRun,
             history,
             queue: queue.ok === true
               ? {

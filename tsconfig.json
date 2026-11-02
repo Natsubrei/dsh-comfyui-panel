@@ -18,6 +18,7 @@
     "index.js",
     "commands.js",
     "session-store.js",
+    "run-tracker.js",
     "client.js",
     "projection.js",
     "storage.js",

@@ -157,6 +157,14 @@ const parse = value => JSON.parse(value.text)
 const queuedBodies = []
 /** Cookie headers the proxy forwarded, newest last. */
 const upstreamCookies = []
+/** What the mock reports from /queue; the tracker test scripts a run here. */
+const mockQueue = { queue_running: [], queue_pending: [] }
+/** What the mock reports from /history/{id}; the tracker test adds the settled run. */
+const mockHistory = {
+  p1: { status: { status_str: 'success', completed: true, messages: [] }, outputs: {} },
+}
+/** The prompt id the next /prompt call returns. */
+let promptIdToReturn = 'p1'
 
 const upstream = http.createServer((req, res) => {
   upstreamCookies.push(req.headers.cookie ?? '')
@@ -182,7 +190,7 @@ const upstream = http.createServer((req, res) => {
         queuedBodies.push(null)
       }
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ prompt_id: 'p1', number: 1, node_errors: {} }))
+      res.end(JSON.stringify({ prompt_id: promptIdToReturn, number: 1, node_errors: {} }))
     })
     return
   }
@@ -205,12 +213,13 @@ const upstream = http.createServer((req, res) => {
   }
   if (req.url === '/queue') {
     res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ queue_running: [], queue_pending: [] }))
+    res.end(JSON.stringify(mockQueue))
     return
   }
-  if (req.url === '/history/p1') {
+  if (req.url.startsWith('/history/')) {
+    const promptId = decodeURIComponent(req.url.slice('/history/'.length))
     res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ p1: { status: { status_str: 'success', completed: true }, outputs: {} } }))
+    res.end(JSON.stringify(mockHistory[promptId] === undefined ? {} : { [promptId]: mockHistory[promptId] }))
     return
   }
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
@@ -594,6 +603,52 @@ const joined = parse(await s1.tools.get('comfyui_progress').execute({ promptId: 
 assert.equal(joined.run.status, 'running', 'a progress event proves the run started')
 assert.ok(Number.isFinite(joined.run.startedAt), 'the record counts from the first event it saw')
 
+// A run the Host queued is tracked without the panel. comfyui_progress drives
+// the poller, so the answer is immediate; the second call sees the history and
+// the output file even though no panel is mounted to relay execution events.
+{
+  const hostSession = 's-host-run'
+  const synced = await host.fetches.get('/api/comfyui/state').fetch(new Request(
+    `http://127.0.0.1/api/comfyui/state?sessionId=${hostSession}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: hostSession,
+        revision: 1,
+        workflow,
+        prompt: { 7: { class_type: 'KSampler', inputs: {} } },
+        semantic,
+      }),
+    },
+  ))
+  assert.equal(synced.status, 200)
+  const hostScope = addAgent(host, hostSession)
+  promptIdToReturn = 'p-host'
+  mockQueue.queue_running = [[1, 'p-host', [], { dsh_session_id: hostSession }, []]]
+  try {
+    const queued = parse(await hostScope.tools.get('comfyui_run').execute({}, execOf(hostSession)))
+    assert.equal(queued.prompt_id, 'p-host')
+    const running = parse(await hostScope.tools.get('comfyui_progress').execute({}, execOf(hostSession)))
+    assert.equal(running.panelConnected, false)
+    assert.equal(running.hostRun.promptId, 'p-host')
+    assert.equal(running.hostRun.status, 'running', 'the Host reads the queue when no panel is there')
+    assert.equal(running.run.status, 'running', 'the host record is the latest run without panel events')
+
+    mockQueue.queue_running = []
+    mockHistory['p-host'] = {
+      status: { status_str: 'success', completed: true, messages: [] },
+      outputs: { 7: { images: [{ filename: 'dsh-run_0001_.png', subfolder: '', type: 'output' }] } },
+    }
+    const finished = parse(await hostScope.tools.get('comfyui_progress').execute({}, execOf(hostSession)))
+    assert.equal(finished.hostRun.status, 'completed')
+    assert.equal(finished.hostRun.outputs[7].images[0].filename, 'dsh-run_0001_.png')
+  } finally {
+    promptIdToReturn = 'p1'
+    mockQueue.queue_running = []
+  }
+}
+
 const nodeInfo = parse(await s1.tools.get('comfyui_node_info').execute({ type: 'KSampler' }, exec))
 assert.ok(nodeInfo.input.required.model)
 const searched = parse(await s1.tools.get('comfyui_node_info').execute({ search: 'ksam' }, exec))
@@ -897,6 +952,21 @@ assert.equal(edited.links, 1)
   assert.equal(store.latestRun('s-store').run.status, 'running')
   assert.equal(store.runFor('s-store', 'p7').status, 'running')
   assert.equal(store.runFor('s-store', 'p-missing'), null)
+  // A run the Host tracked lives beside the panel's record for the same
+  // session. The panel's run stays the one latestRun reports while it exists;
+  // the host record is still addressable and is what latestRun falls back to
+  // when no panel event ever arrived.
+  store.mergeRun('s-store', {
+    promptId: 'p-host', status: 'queued', startedAt: null, updatedAt: Date.now(), node: null, value: null, max: null, error: null, outputs: null,
+  })
+  assert.equal(store.latestRun('s-store').run.promptId, 'p7', 'a panel-reported run stays the visible one')
+  assert.equal(store.runFor('s-store', 'p-host').status, 'queued')
+  store.mergeRun('s-store', {
+    promptId: 'p-host', status: 'completed', startedAt: null, updatedAt: Date.now(), node: null, value: null, max: null, error: null, outputs: { 7: { images: [{ filename: 'p-host.png' }] } },
+  })
+  assert.equal(store.latestRun('s-store').run.promptId, 'p7')
+  assert.equal(store.runFor('s-store', 'p-host').outputs[7].images[0].filename, 'p-host.png')
+  assert.equal(store.runFor('s-store', 'p7').outputs, undefined, 'a panel run is not given host outputs')
   const cursor = store.seedCursor('s-store')
   cursor.set('8', { from: 5, used: 6 })
   store.commitSeedCursor('s-store', cursor)
@@ -912,6 +982,7 @@ assert.equal(edited.links, 1)
   await assert.rejects(parked, /session closed/)
   assert.ok(store.get('s-store'), 'the canvas survives: a resumed agent still reads it')
   assert.equal(store.latestRun('s-store').run, null, 'the run record goes with the agent')
+  assert.equal(store.runFor('s-store', 'p-host'), null, 'a tracked run goes with the agent too')
   assert.equal(store.seedCursor('s-store').size, 0, 'the seed walk goes with the agent')
   assert.equal(store.hasTools('s-store'), false)
   assert.equal(channels.connected('s-store'), false)

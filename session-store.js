@@ -62,6 +62,13 @@ import { sanitizeSemantic, stripViewState } from './projection.js'
  * @property {number | null} value
  * @property {number | null} max
  * @property {string | null} error
+ * @property {any} [outputs] - the history outputs when the Host tracked the run itself.
+ *
+ * @typedef {object} RunBucket
+ * @property {PanelEvent | null} latest - the last event the panel reported.
+ * @property {Map<string, RunRecord>} runs - runs built from those events.
+ * @property {Map<string, RunRecord>} hostRuns - runs the Host polled itself.
+ * @property {string | null} hostLatest - the newest host-tracked prompt.
  *
  * @typedef {Map<string, { from: number, used: number }>} SeedCursor
  *
@@ -71,6 +78,7 @@ import { sanitizeSemantic, stripViewState } from './projection.js'
  * @property {(sessionId: string, body: StateSyncBody) => { ok: true, state: SessionState } | { ok: false, error: string }} sync
  * @property {(sessionId: string, name: string) => void} rename
  * @property {(sessionId: string, event: PanelEvent) => void} recordEvent
+ * @property {(sessionId: string, record: RunRecord) => void} mergeRun
  * @property {(sessionId: string) => { latest: PanelEvent | null, run: RunRecord | null }} latestRun
  * @property {(sessionId: string, promptId: string) => RunRecord | null} runFor
  * @property {(sessionId: string) => SeedCursor} seedCursor
@@ -94,7 +102,7 @@ import { sanitizeSemantic, stripViewState } from './projection.js'
 export function createSessionStore({ persist, releaseCommands, logger }) {
   /** @type {Map<string, SessionState>} */
   const sessions = new Map()
-  /** @type {Map<string, { latest: PanelEvent | null, runs: Map<string, RunRecord> }>} */
+  /** @type {Map<string, RunBucket>} */
   const progress = new Map()
   /** @type {Map<string, SeedCursor>} */
   const seedCursors = new Map()
@@ -276,7 +284,7 @@ export function createSessionStore({ persist, releaseCommands, logger }) {
   function recordEvent(sessionId, event) {
     let bucket = progress.get(sessionId)
     if (bucket === undefined) {
-      bucket = { latest: null, runs: new Map() }
+      bucket = { latest: null, runs: new Map(), hostRuns: new Map(), hostLatest: null }
       progress.set(sessionId, bucket)
     }
     bucket.latest = event
@@ -336,24 +344,69 @@ export function createSessionStore({ persist, releaseCommands, logger }) {
   }
 
   /**
+   * Fold a host-tracked run into the session, beside the panel's own records.
+   *
+   * The panel stays canonical where it reported the same prompt: a run built
+   * from its events keeps its node and step fields, and `runFor` returns it.
+   * The host record fills `latestRun` only when the panel reported no run, so a
+   * closed panel does not make a session look like it never started one.
+   *
+   * @param {string} sessionId - the session that queued the run.
+   * @param {RunRecord} record - the tracker's current record.
+   */
+  function mergeRun(sessionId, record) {
+    if (!isObject(record) || typeof record.promptId !== 'string' || record.promptId.length === 0) return
+    let bucket = progress.get(sessionId)
+    if (bucket === undefined) {
+      bucket = { latest: null, runs: new Map(), hostRuns: new Map(), hostLatest: null }
+      progress.set(sessionId, bucket)
+    }
+    const previous = bucket.hostRuns.get(record.promptId)
+    bucket.hostRuns.set(record.promptId, {
+      promptId: record.promptId,
+      status: typeof record.status === 'string' ? record.status : (previous?.status ?? 'queued'),
+      startedAt: typeof record.startedAt === 'number' ? record.startedAt : (previous?.startedAt ?? null),
+      updatedAt: typeof record.updatedAt === 'number' ? record.updatedAt : Date.now(),
+      node: record.node ?? previous?.node ?? null,
+      value: record.value ?? previous?.value ?? null,
+      max: record.max ?? previous?.max ?? null,
+      error: record.error ?? null,
+      outputs: record.outputs ?? previous?.outputs ?? null,
+    })
+    // "Latest" means the most recently started run, so only the first record
+    // for a prompt can claim it: a slow poll for an older run must not make
+    // that run the default again. Every watch emits its queued record before
+    // the next watch starts, which keeps this order equal to start order.
+    if (previous === undefined) bucket.hostLatest = record.promptId
+    while (bucket.hostRuns.size > 20) {
+      const oldest = bucket.hostRuns.keys().next().value
+      bucket.hostRuns.delete(oldest)
+    }
+    if (!bucket.hostRuns.has(bucket.hostLatest)) bucket.hostLatest = null
+  }
+
+  /**
    * The last event the panel reported, with the run it belongs to.
    * @param {string} sessionId - the session to read.
    * @returns {{ latest: PanelEvent | null, run: RunRecord | null }} the latest event and its run.
    */
   function latestRun(sessionId) {
     const bucket = progress.get(sessionId)
-    if (bucket === undefined || bucket.latest === null) return { latest: null, run: null }
-    const run = bucket.latest.promptId === null ? null : (bucket.runs.get(bucket.latest.promptId) ?? null)
+    if (bucket === undefined) return { latest: null, run: null }
+    let run = bucket.latest?.promptId == null ? null : (bucket.runs.get(bucket.latest.promptId) ?? null)
+    if (run === null && bucket.hostLatest !== null) run = bucket.hostRuns.get(bucket.hostLatest) ?? null
     return { latest: bucket.latest, run }
   }
 
   /**
    * @param {string} sessionId - the session to read.
    * @param {string} promptId - the run to look up.
-   * @returns {RunRecord | null} that run, when the panel reported one.
+   * @returns {RunRecord | null} that run, when the panel or the Host reported one.
    */
   function runFor(sessionId, promptId) {
-    return progress.get(sessionId)?.runs.get(promptId) ?? null
+    const bucket = progress.get(sessionId)
+    if (bucket === undefined) return null
+    return bucket.runs.get(promptId) ?? bucket.hostRuns.get(promptId) ?? null
   }
 
   /**
@@ -431,6 +484,7 @@ export function createSessionStore({ persist, releaseCommands, logger }) {
     sync,
     rename,
     recordEvent,
+    mergeRun,
     latestRun,
     runFor,
     seedCursor,
