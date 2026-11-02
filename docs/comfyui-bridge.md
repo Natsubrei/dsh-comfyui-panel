@@ -140,6 +140,11 @@ Two rules keep the two sides from fighting:
   editor's own `api.fetchApi('/userdata?dir=workflows')` and skips any name
   without `<name>.json`, and it only follows a name the Host *changed* — a
   steady name cannot overwrite the file the user opened in the meantime;
+- the tab is renamed with the frontend's own convention: `filename = <name>`
+  (no extension) and `path = workflows/<name>.json`. The store indexes a
+  workflow by that path, so any other shape makes `getWorkflowByPath` miss it —
+  which freezes its modified dot — and can send Save to a different file than
+  the tab names;
 - the panel reports `file` — the workflow file its editor holds, `null` when it
   holds none — on every sync. A name that came from a file is dropped when the
   editor stops holding it, so a frontend that fell back to its default graph

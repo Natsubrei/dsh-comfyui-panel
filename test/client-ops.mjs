@@ -688,7 +688,7 @@ const stage = (service, extra = {}) => overlayPlan({
   const unsaved = editor(null)
   assert.equal(bindWorkflowLabel(unsaved, 'portrait'), true)
   assert.equal(workflowNameFromEditor(unsaved), 'portrait', 'the tab now names the workflow')
-  assert.equal(unsaved.extensionManager.workflow.activeWorkflow.path, 'portrait.json')
+  assert.equal(unsaved.extensionManager.workflow.activeWorkflow.path, 'workflows/portrait.json', 'Save keeps writing under workflows/')
 
   // A tool load replaces the canvas, so the tab has to move with it: leaving
   // the old file name would make Save write the loaded graph over the old file.
@@ -698,6 +698,16 @@ const stage = (service, extra = {}) => overlayPlan({
 
   assert.equal(bindWorkflowLabel(editor(null), ''), false)
   assert.equal(bindWorkflowLabel({}, 'portrait'), false, 'no workflow service means nothing to rename')
+
+  // The tab takes the frontend's own convention: `filename` without the
+  // extension, `path` under `workflows/`. Anything else makes the store miss
+  // the workflow and can send Save somewhere the tab does not name.
+  {
+    const draft = { filename: 'Unsaved Workflow', path: 'workflows/Unsaved Workflow.json' }
+    assert.equal(bindWorkflowLabel({ extensionManager: { workflow: { activeWorkflow: draft } } }, 'portrait'), true)
+    assert.equal(draft.filename, 'portrait', 'the tab shows the name, not the file name')
+    assert.equal(draft.path, 'workflows/portrait.json')
+  }
 }
 
 // The sync loop used to be a 127-line callback reachable only through a

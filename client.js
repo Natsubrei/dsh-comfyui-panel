@@ -732,10 +732,11 @@ window.__ModuleLoader__.load({
     /**
      * Show a Host-side workflow name in the editor's tab.
      *
-     * ComfyUI derives the tab label, and the path Save writes to, from the
-     * active workflow's `filename`. Renaming therefore has to mean "this
-     * canvas is that saved workflow", which is why the caller only does it for
-     * a name a tool just set and only when `workflows/<name>.json` exists.
+     * The frontend shows the tab from `filename`, which carries no extension,
+     * and identifies the workflow by `path`, under `workflows/`. Writing either
+     * in another shape makes `getWorkflowByPath` miss the workflow — which
+     * freezes its modified dot — and can send the next Save to a different
+     * file than the one the tab names.
      * @param {any} app - the editor's `comfyAPI.app.app`.
      * @param {string} name - the name to show; a saved slot or a reported file.
      * @returns {boolean} whether the label was changed.
@@ -744,8 +745,8 @@ window.__ModuleLoader__.load({
       const workflow = app?.extensionManager?.workflow?.activeWorkflow
       if (workflow === null || workflow === undefined) return false
       if (typeof name !== 'string' || name.length === 0) return false
-      workflow.filename = `${name}.json`
-      workflow.path = `${name}.json`
+      workflow.filename = name
+      workflow.path = `workflows/${name}.json`
       return true
     }
 
