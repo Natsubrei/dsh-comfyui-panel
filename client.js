@@ -55,6 +55,7 @@ window.__ModuleLoader__.load({
       statsTitle: '{{nodes}} nodes · {{links}} links · rev {{revision}}',
       editorLoading: 'Loading the editor…',
       bridgeUnavailable: 'ComfyUI did not expose its editor API. Check that the panel is served from /comfyui/.',
+      frontendUnverified: 'ComfyUI frontend {{installed}} is not the verified {{expected}}. Runs and edits may not show up.',
       syncFailed: 'Could not send the workflow to the Host.',
       // Not "Running": the server state already says that, and two "Running"
       // labels in one bar read as one contradictory sentence.
@@ -112,6 +113,7 @@ window.__ModuleLoader__.load({
       statsTitle: '{{nodes}} 个节点 · {{links}} 条连线 · rev {{revision}}',
       editorLoading: '正在加载编辑器…',
       bridgeUnavailable: 'ComfyUI 没有暴露编辑器 API。请确认面板是通过 /comfyui/ 同源加载的。',
+      frontendUnverified: '当前 ComfyUI 前端是 {{installed}}，本面板只验证过 {{expected}}。运行和编辑可能不会显示。',
       syncFailed: '工作流未能发送到 Host。',
       running: '进度 {{value}}/{{max}}',
       queued: '排队中',
@@ -1979,6 +1981,9 @@ window.__ModuleLoader__.load({
           onAction: action => { void serviceAction(action) },
         }),
         message === '' ? null : h('div', { className: 'dsh-comfyui-notice', 'data-tone': status === 'error' ? 'error' : 'info' }, message),
+        service?.frontend?.status === 'mismatch'
+          ? h('div', { className: 'dsh-comfyui-notice', 'data-tone': 'info' }, t('frontendUnverified').replace('{{installed}}', String(service.frontend.installed)).replace('{{expected}}', String(service.frontend.expected)))
+          : null,
         // Explicit-only: an unhealthy upstream must not force this form open
         // and resize the panel; the gear button in the bar carries that
         // affordance.

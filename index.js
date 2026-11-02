@@ -26,7 +26,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { randomUUID } from 'node:crypto'
 import { digestLine, layoutReport, projectFromWorkflow } from './projection.js'
 import { createWorkflowStore } from './storage.js'
-import { createServiceController } from './service.js'
+import { createServiceController, frontendReport } from './service.js'
 import { createCommandChannel } from './commands.js'
 import { createSessionStore, validWorkflowName } from './session-store.js'
 
@@ -63,7 +63,7 @@ export function apply(ctx, rawConfig = {}) {
   const service = createServiceController({
     upstream,
     config: config.supervise,
-    probe: async () => (await fetchJson('/system_stats', 2500)).ok === true,
+    probe: async () => (await readSystemStats()).ok === true,
     logger: ctx.logger,
   })
 
@@ -212,7 +212,8 @@ export function apply(ctx, rawConfig = {}) {
     }
     const target = targetUrl(req.url)
     const transport = target.protocol === 'https:' ? https : http
-    const headers = { ...req.headers, host: target.host }
+    const headers = redactUpstreamHeaders(req.headers)
+    headers.host = target.host
     delete headers['proxy-connection']
     delete headers.connection
     delete headers['keep-alive']
@@ -274,12 +275,9 @@ export function apply(ctx, rawConfig = {}) {
 
     upstreamSocket.once(target.protocol === 'https:' ? 'secureConnect' : 'connect', () => {
       const lines = [`GET ${target.pathname}${target.search} HTTP/1.1`]
-      for (let index = 0; index < req.rawHeaders.length; index += 2) {
-        const name = req.rawHeaders[index]
-        const value = req.rawHeaders[index + 1]
-        const lower = name.toLowerCase()
-        if (lower === 'host' || lower === 'origin' || lower === 'referer') continue
-        lines.push(`${name}: ${value}`)
+      const pairs = redactRawHeaderPairs(req.rawHeaders)
+      for (let index = 0; index < pairs.length; index += 2) {
+        lines.push(`${pairs[index]}: ${pairs[index + 1]}`)
       }
       lines.push(`Host: ${target.host}`)
       lines.push('', '')
@@ -424,9 +422,36 @@ export function apply(ctx, rawConfig = {}) {
   // involved. Settings are limited to the checkout directory and auto-start,
   // and the host derives the command and arguments from them.
 
+  /**
+   * Read `/system_stats` once. Transport failures are a result, not a throw, so every caller shares one shape.
+   * @returns {Promise<{ok: boolean, status: number, data: any, error?: string}>} the probe outcome.
+   */
+  async function readSystemStats() {
+    return fetchJson('/system_stats', 2500).catch(error => ({
+      ok: false,
+      status: 0,
+      data: null,
+      error: error instanceof Error ? error.message : String(error),
+    }))
+  }
+
+  /**
+   * Health and the frontend report from one `/system_stats` read.
+   * `service.status()` probes on its own; this does not call it, or the route would hit the upstream twice.
+   * @returns {Promise<object>} the supervisor snapshot plus `health` and `frontend`.
+   */
+  async function serviceView() {
+    const stats = await readSystemStats()
+    return {
+      ...service.snapshot(),
+      health: stats.ok === true,
+      frontend: frontendReport(stats.ok === true ? stats.data : null),
+    }
+  }
+
   async function bridgeService(request) {
     if (request.method === 'GET') {
-      return json({ ok: true, ...(await service.status()) })
+      return json({ ok: true, ...(await serviceView()) })
     }
     let body
     try {
@@ -447,7 +472,7 @@ export function apply(ctx, rawConfig = {}) {
       else if (action === 'stop') await service.stop()
       else if (action === 'restart') await service.restart()
       else if (action !== 'save') return json({ ok: false, error: `unknown action "${action}"` }, 400)
-      return json({ ok: true, ...(await service.status()) })
+      return json({ ok: true, ...(await serviceView()) })
     } catch (error) {
       return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400)
     }
@@ -517,9 +542,7 @@ export function apply(ctx, rawConfig = {}) {
       output: textOutput(),
       async execute() {
         const state = sessionStore.get(sessionId)
-        const health = await fetchJson('/system_stats', 2500).catch(error => ({
-          ok: false, status: 0, data: null, error: error.message,
-        }))
+        const health = await readSystemStats()
         return {
           text: JSON.stringify({
             sessionId,
@@ -532,6 +555,7 @@ export function apply(ctx, rawConfig = {}) {
             progress: sessionStore.latestRun(sessionId),
             persistence: persistence(),
             service: service.snapshot(),
+            frontend: frontendReport(health.ok === true ? health.data : null),
           }, null, 2),
         }
       },
@@ -1330,15 +1354,83 @@ export function apply(ctx, rawConfig = {}) {
   }
 }
 
+/** The panel and the ComfyUI frontend both derive their API base from this path. */
+const PANEL_PREFIX = '/comfyui'
+
+/** Cookie names the DSH web UI uses for admission. They must not reach ComfyUI. */
+const DSH_AUTH_COOKIE = /^dsh-auth(?:-|$)/iu
+
+/**
+ * Remove DSH admission cookies from one Cookie header value.
+ * @param {string | undefined} value - the raw Cookie header.
+ * @returns {string} the header with those cookies removed; empty when none remain.
+ */
+export function redactCookieHeader(value) {
+  if (typeof value !== 'string' || value.length === 0) return ''
+  return value.split(';').map(part => part.trim()).filter(part => {
+    if (part.length === 0) return false
+    const name = part.split('=')[0].trim()
+    return !DSH_AUTH_COOKIE.test(name)
+  }).join('; ')
+}
+
+/**
+ * Copy request headers for the upstream, without DSH admission cookies.
+ * @param {import('node:http').IncomingHttpHeaders} headers - the browser's headers.
+ * @returns {import('node:http').OutgoingHttpHeaders} headers safe to forward.
+ */
+function redactUpstreamHeaders(headers) {
+  /** @type {import('node:http').OutgoingHttpHeaders} */
+  const out = { ...headers }
+  const cookie = out.cookie
+  if (typeof cookie === 'string') {
+    const next = redactCookieHeader(cookie)
+    if (next.length === 0) delete out.cookie
+    else out.cookie = next
+  } else if (Array.isArray(cookie)) {
+    const next = cookie.map(part => redactCookieHeader(part)).filter(part => part.length > 0)
+    if (next.length === 0) delete out.cookie
+    else out.cookie = next
+  }
+  return out
+}
+
+/**
+ * Copy a WebSocket handshake's raw headers, without DSH admission cookies.
+ * Host, Origin, and Referer are dropped here; the caller sets Host itself.
+ * @param {string[]} rawHeaders - Node's `rawHeaders` pairs.
+ * @returns {string[]} pairs safe to forward.
+ */
+export function redactRawHeaderPairs(rawHeaders) {
+  /** @type {string[]} */
+  const pairs = []
+  for (let index = 0; index < rawHeaders.length; index += 2) {
+    const name = rawHeaders[index]
+    const value = rawHeaders[index + 1]
+    const lower = name.toLowerCase()
+    if (lower === 'host' || lower === 'origin' || lower === 'referer') continue
+    if (lower === 'cookie') {
+      const next = redactCookieHeader(value)
+      if (next.length === 0) continue
+      pairs.push(name, next)
+      continue
+    }
+    pairs.push(name, value)
+  }
+  return pairs
+}
+
 function normalizeConfig(raw) {
   const upstream = new URL(raw?.upstream ?? 'http://127.0.0.1:8188')
   if (upstream.protocol !== 'http:' && upstream.protocol !== 'https:') {
     throw new Error(`dsh-comfyui: upstream must be http(s), got ${upstream.protocol}`)
   }
-  let prefix = raw?.prefix ?? '/comfyui'
+  let prefix = raw?.prefix ?? PANEL_PREFIX
   if (!prefix.startsWith('/')) prefix = `/${prefix}`
   prefix = prefix.replace(/\/+$/, '')
-  if (prefix.length === 0) throw new Error('dsh-comfyui: prefix must not be empty')
+  if (prefix !== PANEL_PREFIX) {
+    throw new Error(`dsh-comfyui: prefix is fixed at ${PANEL_PREFIX} (the panel and the ComfyUI frontend both derive their API base from it); got ${prefix}`)
+  }
   return { upstream, prefix, supervise: normalizeSupervise(raw?.supervise) }
 }
 

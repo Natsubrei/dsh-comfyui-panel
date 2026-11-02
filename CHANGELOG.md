@@ -3,6 +3,30 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
+## Unreleased
+
+- The panel path is fixed at `/comfyui`. A profile patch that sets another
+  `prefix` fails plugin load instead of serving the proxy where the panel
+  never opens.
+- The proxy strips the DSH session cookie (`dsh-auth-…`) before forwarding a
+  request to ComfyUI. Other cookies and `Authorization` are still forwarded;
+  point `upstream` at a server you trust. See SECURITY.md.
+- A ComfyUI that reports a frontend version other than 1.57.1 shows a panel
+  notice. The panel keeps working. A server that omits the field is left alone.
+- Adopting an already-running ComfyUI no longer requires Linux `/proc` when
+  `lsof` can name the process working directory. The panel looks for
+  `.venv/Scripts/python.exe` on Windows.
+- `npm test` no longer fails because the current account name or hostname is an
+  ordinary word in the tree. Path leaks are still rejected. The pre-commit hook
+  keeps the stricter word scan (`DSH_HYGIENE_STRICT=1`).
+- The npm package ships `docs/comfyui-bridge.md` and `SECURITY.md`, and no
+  longer ships `scripts/dsh-web.sh`. That script stays in the repository for
+  maintainers.
+- A workflow name that came from a file is dropped when the editor no longer
+  holds that file. A name a tool gave the canvas stays. The editor tab is
+  renamed with the frontend's own path, so Save stays under `workflows/` and
+  the modified dot does not freeze.
+
 ## 0.7.1
 
 - Workflows have a name that the panel, the model, and the saved slots agree on.

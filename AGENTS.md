@@ -45,8 +45,10 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
   the `dsh_comfyui` storage domain (`tables.sessions.<sessionId>.workflow`, with
   the API `prompt` and the workflow `name` beside it). Read it when you need the
   raw UI JSON while the panel is closed.
-- `test/repo-hygiene.mjs` — fails when this machine's paths, account, or
-  hostname appear in the tree or in any commit.
+- `test/repo-hygiene.mjs` — fails when a home-directory path is in the tree or
+  any commit. The default run also rejects this machine's account in an address
+  (`name@`). Bare account names and hostnames fail only when
+  `DSH_HYGIENE_STRICT=1`.
 - `.github/workflows/test.yml` — CI: `npm ci`, `npm run typecheck`, then
   `npm test` on Node 22 and 24.
 - `tsconfig.json` + `types/globals.d.ts` — `checkJs` over every `.js` and
@@ -117,15 +119,18 @@ so two suites can run at once.
 
 ## Publishing
 
-This repository is meant to be published; `npm test` scans both the working tree
-and every commit for home directories, the local account name, and the hostname
-(`test/repo-hygiene.mjs`). A hit in history means a history rewrite, not a new
+This repository is meant to be published. `npm test` rejects home-directory
+paths in the working tree and in every commit (`test/repo-hygiene.mjs`). The
+pre-commit hook also sets `DSH_HYGIENE_STRICT=1`, which rejects this machine's
+account name and hostname as bare words; CI does not, because the runner's
+name is not the leak. A hit in history means a history rewrite, not a new
 commit: fix the file, then rewrite the affected commits before publishing, and
-re-run `npm test` until the hygiene test is quiet.
+re-run the same check until it is quiet.
 
 A release is a commit plus an index entry that pins it:
 
-1. Bump `package.json` and add the CHANGELOG section.
+1. Bump `package.json` and rename the CHANGELOG `Unreleased` section to that
+   version.
 2. Commit, then tag: `git tag v<version> && git push origin main --tags`.
    This commit cannot pass the pre-commit hook: the index still pins the
    previous release and `npm test` says so. Commit it with `--no-verify`; step 4
@@ -169,3 +174,7 @@ indexes discover packages through the `keywords: ["dsh-plugin"]` keyword and the
   `df` first.
 - Commit with a quoted heredoc (`git commit -F - <<'MSG'`) so backticks in the
   message are not executed by the shell.
+- `prefix` is fixed at `/comfyui`. `normalizeConfig` throws on any other value;
+  the client hardcodes `PANEL_URL`. The proxy strips `dsh-auth-…` cookies
+  before they reach ComfyUI and still forwards other cookies and
+  `Authorization`. See SECURITY.md before changing that filter.

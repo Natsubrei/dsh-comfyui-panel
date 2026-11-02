@@ -8,6 +8,9 @@ frontend upgrade.
 
 Verified against **comfyui-frontend 1.57.1** (ComfyUI serving
 `.venv/lib/python3.*/site-packages/comfyui_frontend_package/static/assets/`).
+When `/system_stats` reports another `comfyui-frontend-package` version, the
+service route sets `frontend.status` to `mismatch` and the panel shows a notice.
+It does not refuse to load. A body that omits the version is `unreported`, not a mismatch.
 
 ## 1. The shim: `window.comfyAPI.app.app`
 

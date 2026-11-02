@@ -5,6 +5,7 @@
       name: 'dsh-comfyui-panel'
       config:
         upstream: http://127.0.0.1:8188
+        # Fixed. Another value fails plugin load; the panel opens /comfyui/.
         prefix: /comfyui
         # Optional advanced process supervision. The panel can start, stop, and
         # restart ComfyUI without this block; enabling it here takes precedence

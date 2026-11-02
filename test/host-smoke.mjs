@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { apply, applySeedControls, takeCommand } from '../index.js'
+import { apply, applySeedControls, redactCookieHeader, redactRawHeaderPairs, takeCommand } from '../index.js'
 import { createCommandChannel } from '../commands.js'
 import { createSessionStore } from '../session-store.js'
 import { createSupervisor } from '../supervisor.js'
@@ -155,11 +155,21 @@ const parse = value => JSON.parse(value.text)
 
 /** Bodies the proxy forwarded to /prompt, newest last. */
 const queuedBodies = []
+/** Cookie headers the proxy forwarded, newest last. */
+const upstreamCookies = []
 
 const upstream = http.createServer((req, res) => {
+  upstreamCookies.push(req.headers.cookie ?? '')
   if (req.url === '/system_stats') {
     res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ system: { comfyui_version: '0.42.0' } }))
+    res.end(JSON.stringify({
+      system: {
+        comfyui_version: '0.42.0',
+        comfy_package_versions: [
+          { name: 'comfyui-frontend-package', installed: '1.57.1', required: '1.57.1' },
+        ],
+      },
+    }))
     return
   }
   if (req.url === '/prompt' && req.method === 'POST') {
@@ -264,6 +274,30 @@ assert.equal(redirect.headers.get('location'), '/comfyui/')
 const asset = await fetch(`http://127.0.0.1:${PROXY_PORT}/comfyui/assets/app-abc123.js`)
 assert.equal(asset.status, 200)
 assert.equal(asset.headers.get('cache-control'), 'public, max-age=31536000, immutable')
+
+// DSH admission cookies stay on the DSH origin. ComfyUI's own cookies still cross.
+upstreamCookies.length = 0
+const forwarded = await fetch(`http://127.0.0.1:${PROXY_PORT}/comfyui/`, {
+  headers: { cookie: 'dsh-auth-abc=secret; comfy_session=keep; dsh-auth=also' },
+})
+assert.equal(forwarded.status, 200)
+assert.equal(upstreamCookies.at(-1), 'comfy_session=keep')
+upstreamCookies.length = 0
+const stripped = await fetch(`http://127.0.0.1:${PROXY_PORT}/comfyui/`, {
+  headers: { cookie: 'dsh-auth-abc=secret' },
+})
+assert.equal(stripped.status, 200)
+assert.equal(upstreamCookies.at(-1), '')
+assert.equal(redactCookieHeader('dsh-auth-abc=secret; theme=dark'), 'theme=dark')
+assert.deepEqual(
+  redactRawHeaderPairs(['Cookie', 'dsh-auth-abc=secret', 'Origin', 'http://dsh', 'X-Trace', '1']),
+  ['X-Trace', '1'],
+)
+
+assert.throws(
+  () => apply(createHost(createStorage()), { upstream: `http://127.0.0.1:${UPSTREAM_PORT}`, prefix: '/other' }),
+  /prefix is fixed/,
+)
 
 const workflow = {
   nodes: [
@@ -462,6 +496,8 @@ const exec = execOf('s1')
 const status = parse(await s1.tools.get('comfyui_status').execute({}, exec))
 assert.equal(status.connected, true)
 assert.equal(status.panelConnected, false)
+assert.equal(status.frontend.status, 'verified')
+assert.equal(status.frontend.installed, '1.57.1')
 
 const read = parse(await s1.tools.get('comfyui_graph_read').execute({}, exec))
 assert.equal(read.projectedFrom, 'panel')
@@ -1013,6 +1049,7 @@ assert.equal(serviceGet.status, 200)
 assert.equal(initialService.ok, true)
 assert.equal(initialService.health, true)
 assert.equal(initialService.settings, null)
+assert.equal(initialService.frontend.status, 'verified')
 assert.ok(initialService.detected === null || typeof initialService.detected === 'string')
 
 const comfyRoot = mkdtempSync(join(tmpdir(), 'dsh-comfyui-service-'))

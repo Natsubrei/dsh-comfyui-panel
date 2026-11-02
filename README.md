@@ -20,19 +20,21 @@ per version, so an install always matches a tested release. The same index is
 what the `plugin_market` tool reads, so an agent can list it, show versions, and
 install without a browser.
 
-**With the agent or the CLI.** The market hands `install_bundle` an install spec
-of the form `git+https://github.com/Natsubrei/dsh-comfyui-panel.git#<commit>`;
-that is also the spec to paste yourself:
+**With the agent or the CLI.** Copy the install spec from the market card. It
+has the form `git+https://github.com/Natsubrei/dsh-comfyui-panel.git#<commit>`.
+An unpinned URL installs the default branch, which can be ahead of the indexed
+release:
 
 ```sh
-dsh plugin --profile <name> add 'git+https://github.com/Natsubrei/dsh-comfyui-panel.git'
+dsh plugin --profile <name> add 'git+https://github.com/Natsubrei/dsh-comfyui-panel.git#<commit>'
 ```
 
 `dsh plugin` links or installs the package and appends it to the profile's
 bundle list. Restart DSH if the profile was already running; clients need a hard
 refresh after a bundle change.
 
-**From npm** once the package is published:
+**From npm.** The package is published. npm does not carry every indexed
+release; use the market when the version matters:
 
 ```sh
 dsh plugin --profile <name> add dsh-comfyui-panel
@@ -122,19 +124,23 @@ The bundle's own patch, `cordis.patch.yml`:
 ```
 
 Override the row in your profile's `cordis.patch.yml` by the same `id` to change
-`upstream` or `prefix`; a patch replaces the row's whole `config`, so repeat
-every key you keep.
+`upstream`. A patch replaces the row's whole `config`, so repeat `prefix` as
+well. `prefix` is fixed at `/comfyui`: the panel and the ComfyUI frontend both
+derive their API base from that path, and any other value fails the plugin load.
 
-`prefix` is the same-origin path the panel is served from; `upstream` is the
-ComfyUI server. Both must agree with the panel's hard-coded `/comfyui/`.
+`upstream` is the ComfyUI server. Prefer a loopback address. The proxy strips
+the DSH session cookie (`dsh-auth-…`) before forwarding, and still forwards
+every other cookie and `Authorization`. Point it only at a server you trust.
+See [SECURITY.md](SECURITY.md).
 
 Process management needs no configuration: open the panel's **Server** section,
 point it at the ComfyUI directory (the folder with `main.py`; a common location
 is detected automatically), and press **Start**. The command is derived from
-that directory (`<dir>/.venv/bin/python`, else `python3`) and the arguments from
-the configured upstream port, so the panel cannot run arbitrary commands. The
-directory and the **Start with DSH** flag are stored in the plugin's own
-`dsh_comfyui` domain, not in the DSH profile.
+that directory (`.venv/bin/python` on Unix, `.venv/Scripts/python.exe` on
+Windows, otherwise `python3` or `python`) and the arguments from the configured
+upstream port, so the panel cannot run arbitrary commands. The directory and
+the **Start with DSH** flag are stored in the plugin's own `dsh_comfyui` domain,
+not in the DSH profile.
 
 For advanced setups, the plugin row still accepts a `supervise` block that
 takes precedence at start-up:
@@ -171,7 +177,12 @@ Unloading the plugin stops only a process it started.
   for anything beyond this milestone. What the plugin actually uses — and how
   to re-derive it after an upgrade — is in
   [docs/comfyui-bridge.md](docs/comfyui-bridge.md); the panel was last verified
-  against frontend 1.57.1.
+  against frontend 1.57.1. When ComfyUI reports a different frontend version,
+  the panel shows a notice and keeps working. A server that omits the field
+  is left alone.
+- Adopting an already-running ComfyUI (so Stop and Restart keep working after
+  a reload) needs Linux `/proc` or `lsof`. Without either, that server stays
+  external. Starting one from the panel does not need either tool.
 
 ## Try it without ComfyUI
 
@@ -209,7 +220,7 @@ contract mounts the plugin next to the real Cordis context, `ToolRuntime`, the
 native tool executor, `SystemPrompt`, and `HostConnectionService`, so an invalid
 Fetch path or a tool schema the registry rejects fails locally instead of at
 install time. `npm test` and `npm run typecheck` are what the pre-commit hook
-runs; see [AGENTS.md](AGENTS.md) for reload and logging steps. Host smoke binds
+runs; see [AGENTS.md](AGENTS.md) for reload and logging steps. What a pull request can run without this machine is in [CONTRIBUTING.md](CONTRIBUTING.md). Host smoke binds
 five consecutive ports; set `DSH_COMFYUI_TEST_PORT` to shift that block so two
 checkouts can run the suite at once.
 
@@ -261,7 +272,11 @@ than 16 pixels (exit code 2 when any do). Use it to judge a layout file, or
 - An upstream the plugin cannot adopt — a pid it cannot name, or one running
   from a different directory — stays `external`: the plugin never stops it and
   the panel hides Stop/Restart. One it can adopt gets those buttons, but keeps
-  running when the plugin unloads (previous bullet).
+  running when the plugin unloads (previous bullet). Naming that pid needs
+  Linux `/proc` or `lsof`; Windows can start a checkout from the panel, and an
+  already-running server there stays external.
+- The iframe is same-origin with DSH and is not sandboxed, so a custom node UI
+  runs as the DSH page. See [SECURITY.md](SECURITY.md).
 
 ## Design notes
 

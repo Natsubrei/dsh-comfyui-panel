@@ -2,8 +2,11 @@
 # Keep the executable smoke contract green before every commit. The type check
 # needs dev dependencies, which a fresh clone does not have; run it when they
 # are installed and let CI be the backstop otherwise.
+#
+# The strict hygiene pass rejects this machine's account name and hostname as
+# bare words. CI and a fresh clone run the portable path check only.
 set -e
-npm test --silent
+DSH_HYGIENE_STRICT=1 npm test --silent
 if [ -d node_modules ]; then
   npm run typecheck --silent
 fi

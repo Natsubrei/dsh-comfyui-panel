@@ -6,7 +6,12 @@
  * `git grep` over every commit — a home directory that only survives in an old
  * commit would otherwise ship with a `git clone`.
  *
- * Run as part of `npm test`; run it on its own while preparing a release.
+ * Path leaks fail for everyone. This machine's account name and hostname fail
+ * as bare words only when `DSH_HYGIENE_STRICT=1` (the pre-commit hook). A
+ * contributor whose name is an ordinary word in the tree can still run
+ * `npm test`.
+ *
+ * Run as part of `npm test`; run it with `DSH_HYGIENE_STRICT=1` before publishing.
  */
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -29,35 +34,94 @@ const PATH_RULES = [
   },
 ]
 
-/** The current account and host, which must not appear in a public tree. */
+/** Bare-word identity scan. The pre-commit hook sets this; CI does not. */
+const STRICT = process.env.DSH_HYGIENE_STRICT === '1'
+
+/**
+ * Escape a string for both a JavaScript RegExp and a POSIX extended regex.
+ * @param {string} value - literal text.
+ * @returns {string} the escaped text.
+ */
+function escapeRegExp(value) {
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+}
+
+/**
+ * One hygiene rule, shared by the word scan and the address scan.
+ * @param {string} name - what a hit is called in the report.
+ * @param {RegExp} pattern - working-tree match.
+ * @param {string} grep - POSIX extended regex for `git grep`.
+ * @param {string} example - the hint printed with a hit.
+ * @returns {{name: string, pattern: RegExp, grep: string, example: string}}
+ */
+function rule(name, pattern, grep, example) {
+  return { name, pattern, grep, example }
+}
+
+/**
+ * A word-boundary rule. Used for the strict identity scan, not the portable one.
+ * @param {string} name - what a hit is called in the report.
+ * @param {string} text - the account or host to reject.
+ * @param {string} example - the hint printed with a hit.
+ * @returns {{name: string, pattern: RegExp, grep: string, example: string}}
+ */
+function wordRule(name, text, example) {
+  const escaped = escapeRegExp(text)
+  return rule(name, new RegExp(`\\b${escaped}\\b`, 'u'), `\\b${escaped}\\b`, example)
+}
+
+/**
+ * An address-shaped account leak (`name@`), which is not an ordinary word.
+ * @param {string} username - the current account.
+ * @returns {{name: string, pattern: RegExp, grep: string, example: string}}
+ */
+function emailRule(username) {
+  const escaped = escapeRegExp(username)
+  return rule(
+    'this machine account in an address',
+    new RegExp(`(?:^|[^A-Za-z0-9._-])${escaped}@`, 'u'),
+    `(^|[^A-Za-z0-9._-])${escaped}@`,
+    'use a placeholder address',
+  )
+}
+
+/** Whether this account name is too generic to scan for. */
+function skipAccount(username) {
+  return typeof username !== 'string' || username.length < 3 || /^(user|admin|root|runner|node)$/iu.test(username)
+}
+
+/** The current account and host. Bare words are strict-only. */
 function localNames() {
   /** @type {Array<{name: string, pattern: RegExp, grep: string, example: string}>} */
   const rules = []
   try {
     const { username } = userInfo()
-    if (typeof username === 'string' && username.length >= 3 && !/^(user|admin|root|runner|node)$/iu.test(username)) {
-      const escaped = username.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&')
-      rules.push({
-        name: 'this machine account',
-        pattern: new RegExp(`\\b${escaped}\\b`, 'u'),
-        grep: `\\b${escaped}\\b`,
-        example: 'replace it with a placeholder',
-      })
+    if (!skipAccount(username)) {
+      rules.push(emailRule(username))
+      if (STRICT) rules.push(wordRule('this machine account', username, 'replace it with a placeholder'))
     }
   } catch {
     // A container without a user database is fine.
   }
   const host = hostname()
-  if (host.length >= 4) {
-    const escaped = host.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&')
-    rules.push({
-      name: 'this machine hostname',
-      pattern: new RegExp(`\\b${escaped}\\b`, 'u'),
-      grep: `\\b${escaped}\\b`,
-      example: 'replace it with a placeholder',
-    })
+  if (STRICT && host.length >= 4) {
+    rules.push(wordRule('this machine hostname', host, 'replace it with a placeholder'))
   }
   return rules
+}
+
+/** Lock the portable/strict split. A contributor named `python` must not fail on ordinary source. */
+function selfCheck() {
+  const email = emailRule('python')
+  if (!email.pattern.test('reach python@example.com')) throw new Error('hygiene self-check: address leak not matched')
+  if (email.pattern.test('use python here')) throw new Error('hygiene self-check: ordinary word matched the address rule')
+  const bare = wordRule('account', 'python', 'replace it')
+  if (!bare.pattern.test('use python here')) throw new Error('hygiene self-check: strict word rule missed')
+  if (bare.pattern.test('use python3 here')) throw new Error('hygiene self-check: word rule matched a longer identifier')
+  const home = PATH_RULES.find(item => item.name === 'absolute home directory')
+  if (home === undefined) throw new Error('hygiene self-check: home rule missing')
+  if (!home.pattern.test('see /home/python/ComfyUI')) throw new Error('hygiene self-check: home path not matched')
+  if (home.pattern.test('use python here')) throw new Error('hygiene self-check: home rule matched an ordinary word')
 }
 
 /**
@@ -121,6 +185,8 @@ function scanHistory(rules) {
   return hits
 }
 
+selfCheck()
+
 const rules = [...PATH_RULES, ...localNames()]
 const treeHits = scanTree(rules)
 const historyHits = scanHistory(rules)
@@ -138,5 +204,6 @@ if (treeHits.length === 0 && historyHits.length === 0) {
     for (const hit of historyHits.slice(0, 20)) console.error(`  ${hit}`)
     console.error('  rewrite the affected commits before publishing; see AGENTS.md')
   }
+  if (STRICT) console.error('  DSH_HYGIENE_STRICT=1 also rejects this machine account and hostname as bare words. Unset it for the portable path check.')
   process.exitCode = 1
 }

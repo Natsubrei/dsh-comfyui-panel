@@ -49,6 +49,107 @@ export function discoverComfyUi() {
   return { cwd: null, candidates }
 }
 
+/** The ComfyUI frontend build this panel was verified against. */
+export const VERIFIED_FRONTEND = '1.57.1'
+
+/**
+ * The interpreter the panel will spawn for a checkout.
+ * @param {string} cwd - the ComfyUI directory.
+ * @param {{ exists: (path: string) => boolean, platform: string }} options - filesystem and platform, so a test does not depend on this machine.
+ * @returns {string} an absolute venv interpreter, or `python` / `python3` on `PATH`.
+ */
+export function pythonCommand(cwd, { exists, platform }) {
+  const candidates = platform === 'win32'
+    ? [join(cwd, '.venv', 'Scripts', 'python.exe')]
+    : [join(cwd, '.venv', 'bin', 'python')]
+  for (const candidate of candidates) {
+    if (exists(candidate)) return candidate
+  }
+  return platform === 'win32' ? 'python' : 'python3'
+}
+
+/**
+ * The working directory named by `lsof -Fn` output.
+ * @param {string} listing - stdout of `lsof -a -p <pid> -d cwd -Fn`.
+ * @returns {string | null} the path, or null when the listing does not name one.
+ */
+export function cwdFromLsof(listing) {
+  if (typeof listing !== 'string') return null
+  for (const line of listing.split('\n')) {
+    if (line.startsWith('n') && line.length > 1) return line.slice(1)
+  }
+  return null
+}
+
+/**
+ * Whether two directories are the same checkout after resolving symlinks.
+ * @param {string | null} actual - a process working directory.
+ * @param {string} directory - the configured ComfyUI checkout.
+ * @returns {boolean} true when both exist and resolve to the same path.
+ */
+export function checkoutMatches(actual, directory) {
+  if (typeof actual !== 'string' || actual.length === 0) return false
+  if (typeof directory !== 'string' || directory.length === 0) return false
+  try {
+    return realpathSync(actual) === realpathSync(directory)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Read the installed frontend version from a `/system_stats` body.
+ * Older ComfyUI builds omit the field; a commit hash is not a version.
+ * @param {any} data - decoded `/system_stats` JSON, or null when the probe failed.
+ * @returns {string | null} the installed `comfyui-frontend-package` version.
+ */
+export function installedFrontendVersion(data) {
+  const system = data?.system
+  if (system === null || typeof system !== 'object') return null
+  const packages = system.comfy_package_versions
+  if (Array.isArray(packages)) {
+    const found = packages.find(pkg => pkg !== null && typeof pkg === 'object' && pkg.name === 'comfyui-frontend-package')
+    if (typeof found?.installed === 'string' && /^\d+\.\d+\.\d+/.test(found.installed)) return found.installed
+  }
+  if (typeof system.comfyui_frontend_version === 'string' && /^\d+\.\d+\.\d+/.test(system.comfyui_frontend_version)) {
+    return system.comfyui_frontend_version
+  }
+  return null
+}
+
+/**
+ * Compare an upstream `/system_stats` body with the frontend this panel was verified against.
+ * A missing version is not a mismatch.
+ * @param {any} data - decoded `/system_stats` JSON, or null.
+ * @returns {{ status: 'verified' | 'mismatch' | 'unreported', installed: string | null, expected: string, warning: string | null }} the report the panel and `comfyui_status` share. `unreported` means the upstream did not name a version; it is not a mismatch.
+ */
+export function frontendReport(data) {
+  const installed = installedFrontendVersion(data)
+  if (installed === null) {
+    return { status: 'unreported', installed: null, expected: VERIFIED_FRONTEND, warning: null }
+  }
+  if (installed === VERIFIED_FRONTEND) {
+    return { status: 'verified', installed, expected: VERIFIED_FRONTEND, warning: null }
+  }
+  return {
+    status: 'mismatch',
+    installed,
+    expected: VERIFIED_FRONTEND,
+    warning: `ComfyUI frontend ${installed} is not the verified ${VERIFIED_FRONTEND}. The panel may miss runs, edits, or the graph.`,
+  }
+}
+
+/**
+ * The working directory to compare with the checkout.
+ * A `/proc` answer is authoritative, including a mismatch. `lsof` is only the fallback when `/proc` cannot name one.
+ * @param {string | null} procCwd - realpath of `/proc/<pid>/cwd`, or null.
+ * @param {string | null} lsofCwd - path from `lsof`, or null. Ignored when `procCwd` is set.
+ * @returns {string | null} the path to compare, or null when neither tool named one.
+ */
+export function adoptDirectory(procCwd, lsofCwd) {
+  return procCwd !== null ? procCwd : lsofCwd
+}
+
 /** Keep only the panel-editable settings. */
 export function sanitizeServiceSettings(raw) {
   if (raw === null || typeof raw !== 'object') return null
@@ -72,11 +173,10 @@ export function planFromSettings(settings, upstream) {
   }
   const cwd = resolve(settings.cwd)
   if (!isComfyUiDir(cwd)) throw new Error(`"${cwd}" does not contain main.py. Pick the ComfyUI checkout directory.`)
-  const python = join(cwd, '.venv', 'bin', 'python')
   const port = new URL(upstream).port || '8188'
   return {
     enabled: true,
-    command: existsSync(python) ? python : 'python3',
+    command: pythonCommand(cwd, { exists: existsSync, platform: process.platform }),
     args: ['main.py', '--listen', '127.0.0.1', '--port', port],
     cwd,
     env: {},
@@ -127,13 +227,47 @@ function listenerPid(port) {
   return null
 }
 
-/** Whether `pid` runs with `directory` as its working directory. */
-function servesDirectory(pid, directory) {
+/**
+ * The process working directory from Linux `/proc`.
+ * @param {number} pid - the listener.
+ * @returns {string | null} the real path, or null when this platform has no `/proc` or the pid is gone.
+ */
+function readProcCwd(pid) {
   try {
-    return realpathSync(`/proc/${pid}/cwd`) === realpathSync(directory)
+    return realpathSync(`/proc/${pid}/cwd`)
   } catch {
-    return false
+    return null
   }
+}
+
+/**
+ * The process working directory from `lsof`.
+ * @param {number} pid - the listener.
+ * @returns {string | null} the path, or null when `lsof` cannot name it.
+ */
+function readLsofCwd(pid) {
+  try {
+    const listing = execFileSync('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], {
+      encoding: 'utf8',
+      timeout: 2000,
+    })
+    return cwdFromLsof(listing)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Whether `pid` runs with `directory` as its working directory.
+ * `/proc` is authoritative when it names a directory, so a mismatch does not spawn `lsof`.
+ * @param {number} pid - the listener.
+ * @param {string} directory - the configured ComfyUI checkout.
+ * @returns {boolean} true when the named working directory is that checkout.
+ */
+function servesDirectory(pid, directory) {
+  const fromProc = readProcCwd(pid)
+  const fromLsof = fromProc !== null ? null : readLsofCwd(pid)
+  return checkoutMatches(adoptDirectory(fromProc, fromLsof), directory)
 }
 
 /**
