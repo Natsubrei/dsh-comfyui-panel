@@ -264,17 +264,19 @@ than 16 pixels (exit code 2 when any do). Use it to judge a layout file, or
   restart a persisted session gets them back; a brand-new session gets them on
   its first panel sync.
 - Saving a run's output is not exposed yet. `comfyui_cancel` interrupts the
-  run this session queued; `comfyui_run` only queues it.
+  run this session queued, the bar's Cancel stops a running prompt, and
+  `comfyui_run` only queues it.
 - The panel is an iframe, so it does not inherit DSH theme tokens; this is a
   deliberate exception for UI-workflow fidelity and third-party node UIs.
-- Execution events are relayed from the editor's own bus, so step progress and
-  error details exist only while the panel is mounted. The Host still tracks a
-  run that `comfyui_run` queued until that run ends, and `comfyui_progress`
-  reports the queue position, terminal status, and output file names in
-  `hostRun` with the panel closed; a run started from the panel's own Queue
-  button before the panel opened shows its queue entry but no step progress.
-  The Host stops watching after 30 minutes and reports `lost`, which means the
-  run's end was not observed, not that it failed.
+- Execution events are relayed from the editor's own bus, so previews,
+  per-node progress, elapsed time, and the bar's Cancel exist only while the
+  panel is mounted. The Host still tracks a run that `comfyui_run` queued until
+  that run ends, and `comfyui_progress` reports the queue position, terminal
+  status, and output file names in `hostRun` with the panel closed; a run
+  started from the panel's own Queue button before the panel opened shows its
+  queue entry but no step progress. The Host stops watching after 30 minutes
+  and reports `lost`, which means the run's end was not observed, not that it
+  failed.
 - A ComfyUI the plugin only adopted stays running when the plugin unloads: it did
   not start that process, and after a reload it cannot tell its own survivor from
   a server you launched by hand. Stop it from the panel first if you want it
