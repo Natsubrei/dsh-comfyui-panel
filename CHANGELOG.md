@@ -3,7 +3,7 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
-## Unreleased
+## 0.7.2
 
 - The panel path is fixed at `/comfyui`. A profile patch that sets another
   `prefix` fails plugin load instead of serving the proxy where the panel
