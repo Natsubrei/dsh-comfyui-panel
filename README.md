@@ -62,7 +62,7 @@ read on for the panel itself.
   Host sees runs without polling. ComfyUI addresses those events to the socket
   that queued the prompt, so the panel relays the editor's connection instead of
   opening one of its own.
-- Registers twelve model tools **on the Agent context of each session that has a
+- Registers thirteen model tools **on the Agent context of each session that has a
   synced workflow**. Other sessions see no ComfyUI tools:
   - `comfyui_status` — upstream reachability, panel connection, workflow
     summary, persistence backend, supervisor state, and the latest run.
@@ -71,7 +71,10 @@ read on for the panel itself.
     (`name -> "<sourceNodeId>:<slot>"`). `layout=true` returns the canvas boxes
     plus an overlap verdict, `full=true` the raw UI workflow and API prompt.
   - `comfyui_run` — submit the synced API prompt and return the `prompt_id`;
-    optionally wait for history.
+    optionally wait for history. The output PNG carries the UI workflow, so
+    dragging it back into ComfyUI restores the graph.
+  - `comfyui_cancel` — interrupt the run this session queued, or a given prompt
+    id; a prompt that already finished is a no-op.
   - `comfyui_progress` — panel events (current node, step progress, errors),
     the run record, and a live `/queue` snapshot.
   - `comfyui_edit` — add, remove, move, and reconnect nodes and set widget
@@ -256,7 +259,8 @@ than 16 pixels (exit code 2 when any do). Use it to judge a layout file, or
 - A session that never opened the panel shows no ComfyUI tools. After a Host
   restart a persisted session gets them back; a brand-new session gets them on
   its first panel sync.
-- `save`/`cancel` of a run are not exposed yet; `comfyui_run` only queues.
+- Saving a run's output is not exposed yet. `comfyui_cancel` interrupts the
+  run this session queued; `comfyui_run` only queues it.
 - The panel is an iframe, so it does not inherit DSH theme tokens; this is a
   deliberate exception for UI-workflow fidelity and third-party node UIs.
 - Execution events are relayed from the editor's own bus, so progress and errors

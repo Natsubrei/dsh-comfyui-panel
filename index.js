@@ -499,6 +499,7 @@ export function apply(ctx, rawConfig = {}) {
       add(() => sessionCtx.tools.register(statusTool(sessionId)))
       add(() => sessionCtx.tools.register(graphReadTool(sessionId)))
       add(() => sessionCtx.tools.register(runTool(sessionId)))
+      add(() => sessionCtx.tools.register(cancelTool(sessionId)))
       add(() => sessionCtx.tools.register(progressTool(sessionId)))
       add(() => sessionCtx.tools.register(editTool(sessionId)))
       add(() => sessionCtx.tools.register(screenshotTool(sessionId)))
@@ -671,7 +672,14 @@ export function apply(ctx, rawConfig = {}) {
             // execution events only to that client, and without it the run
             // never appears in the queue, preview, or history of the UI.
             client_id: state.clientId ?? clientId,
-            extra_data: { dsh_session_id: sessionId, dsh_workflow_revision: state.revision },
+            extra_data: {
+              dsh_session_id: sessionId,
+              dsh_workflow_revision: state.revision,
+              // SaveImage writes each extra_pnginfo key as a PNG text chunk, so
+              // the UI workflow travels with the image and a PNG dragged back
+              // into ComfyUI restores it. The API prompt is not attached.
+              extra_pnginfo: { workflow: state.workflow },
+            },
           }),
         })
         if (response.ok !== true) {
@@ -695,6 +703,33 @@ export function apply(ctx, rawConfig = {}) {
           }
           if (exec.signal.aborted) throw new Error('comfyui_run was cancelled')
         }
+      },
+    }
+  }
+
+  function cancelTool(sessionId) {
+    return {
+      name: 'comfyui_cancel',
+      description: 'Cancel the run this session queued, or the given prompt id, by asking ComfyUI to interrupt it. Defaults to the latest run reported for this session. Cancelling a prompt that already finished is a no-op.',
+      parameters: {
+        type: 'object',
+        properties: { promptId: { type: 'string', description: 'Optional prompt id to cancel; defaults to the latest run in this session.' } },
+        additionalProperties: false,
+      },
+      output: textOutput(),
+      async execute(args) {
+        const wanted = typeof args?.promptId === 'string' && args.promptId.length > 0 ? args.promptId : null
+        const promptId = wanted ?? sessionStore.latestRun(sessionId).run?.promptId ?? null
+        if (promptId === null || promptId.length === 0) throw new Error('No ComfyUI run to cancel in this session.')
+        const response = await fetchJson('/interrupt', 10000, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ prompt_id: promptId }),
+        })
+        if (response.ok !== true) {
+          throw new Error(`ComfyUI did not accept the interrupt (HTTP ${response.status}): ${JSON.stringify(response.data)}`)
+        }
+        return { text: JSON.stringify({ cancelled: true, promptId }, null, 2) }
       },
     }
   }
