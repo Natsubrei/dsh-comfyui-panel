@@ -423,6 +423,20 @@ const stage = (service, extra = {}) => overlayPlan({
     mapApiEvent('execution_start', { prompt_id: 'p1' }),
     { kind: 'execution_start', promptId: 'p1' },
   )
+  assert.deepEqual(
+    mapApiEvent('progress_state', {
+      prompt_id: 'p1',
+      nodes: { 9: { value: 4, max: 8, state: 'running' } },
+    }),
+    { kind: 'progress_state', promptId: 'p1', node: '9', value: 4, max: 8 },
+    'the per-node progress state reduces to the running node',
+  )
+  assert.equal(mapApiEvent('progress_state', { nodes: {} }), null, 'an empty progress state has nothing to show')
+  assert.deepEqual(
+    mapApiEvent('executed', { prompt_id: 'p1', node: '9', output: { images: [{ filename: 'a.png' }, { filename: 'b.png' }] } }),
+    { kind: 'executed', promptId: 'p1', node: '9', files: ['a.png', 'b.png'] },
+    'output file names ride along for the bar tooltip',
+  )
   assert.equal(mapApiEvent('logs', { message: 'x' }), null, 'kinds the Host does not record are dropped')
   assert.equal(mapApiEvent('b_preview', null), null)
 }
@@ -459,10 +473,28 @@ const stage = (service, extra = {}) => overlayPlan({
     assert.equal(handlers.get(kind)?.length, 1, `subscribed to ${kind}`)
   }
   assert.equal(handlers.has('logs'), false, 'kinds the Host does not record are not subscribed')
+  assert.equal(handlers.get('progress_state')?.length, 1, 'the bar reads progress_state without forwarding it')
+  assert.equal(handlers.get('b_preview')?.length, 1, 'the bar reads bare previews')
+  assert.equal(handlers.get('b_preview_with_metadata')?.length, 1, 'and previews with metadata')
 
   handlers.get('progress')[0]({ detail: { prompt_id: 'p1', node: '9', value: 2, max: 8 } })
   assert.deepEqual(applied, [{ kind: 'progress', promptId: 'p1', node: '9', value: 2, max: 8 }], 'the bar sees the event')
   assert.deepEqual(posted, applied, 'the Host sees the same event')
+
+  applied.length = 0
+  handlers.get('progress_state')[0]({
+    detail: { prompt_id: 'p1', nodes: { 9: { value: 4, max: 8, state: 'running' }, 10: { value: 8, max: 8, state: 'finished' } } },
+  })
+  assert.deepEqual(applied, [{ kind: 'progress_state', promptId: 'p1', node: '9', value: 4, max: 8 }], 'the bar sees the running node')
+  assert.equal(posted.some(event => event.kind === 'progress_state'), false, 'progress_state is not a Host event')
+
+  const previewBlob = new Blob(['preview'], { type: 'image/png' })
+  applied.length = 0
+  handlers.get('b_preview')[0]({ detail: previewBlob })
+  assert.equal(applied.length, 1)
+  assert.equal(applied[0].kind, 'preview')
+  assert.equal(applied[0].preview.blob, previewBlob)
+  assert.equal(posted.some(event => event.kind === 'preview'), false, 'a preview Blob never reaches the Host')
 
   applied.length = 0
   handlers.get('status')[0]({ detail: { exec_info: { queue_remaining: 0 } } })
@@ -470,6 +502,7 @@ const stage = (service, extra = {}) => overlayPlan({
 
   dispose()
   assert.equal(handlers.get('progress').length, 0, 'disposing removes every listener')
+  assert.equal(handlers.get('b_preview').length, 0, 'including the preview listeners')
 }
 
 // The Host has to queue as the iframe's socket, or ComfyUI sends the run's
@@ -881,6 +914,215 @@ const stage = (service, extra = {}) => overlayPlan({
     assert.equal(sync.snapshot().revision, 1, 'the local counter still advances before the POST, as before')
     assert.equal((await sync.push(false)).posted, true, 'the forgotten signature makes the next tick retry')
     assert.equal(calls.length, 2)
+  }
+}
+
+// A preview event arrives as binary in two shapes, and the panel has to reduce
+// both to the same record without ever handing the Blob to the Host. The URL
+// itself stays in the component: nothing here mocks a browser.
+{
+  const { readPreview, progressSummary, applyRunEvent, runLabel, cancelLabel } = mod.__ops
+  const blob = new Blob(['png'], { type: 'image/png' })
+
+  assert.deepEqual(readPreview(blob), { blob, nodeId: null, promptId: null }, 'b_preview carries the Blob itself')
+  assert.deepEqual(
+    readPreview({ blob, nodeId: 12, promptId: 'p1' }),
+    { blob, nodeId: '12', promptId: 'p1' },
+    'b_preview_with_metadata names the node and the prompt',
+  )
+  assert.deepEqual(
+    readPreview({ blob, node_id: '9', prompt_id: 'p2' }),
+    { blob, nodeId: '9', promptId: 'p2' },
+    'the ComfyUI spelling with underscores is understood too',
+  )
+  for (const bad of [null, undefined, {}, { blob: 'not a blob' }, { blob: null }, 7, 'preview']) {
+    assert.equal(readPreview(bad), null, `bad preview payload ${String(bad)} is ignored`)
+  }
+
+  // `progress_state` maps every node in the prompt; the bar has one line.
+  assert.deepEqual(
+    progressSummary({
+      nodes: {
+        12: { value: 14, max: 20, state: 'running' },
+        13: { value: 20, max: 20, state: 'finished' },
+      },
+    }),
+    { node: '12', value: 14, max: 20 },
+    'the running node wins over a finished one',
+  )
+  assert.deepEqual(
+    progressSummary({
+      nodes: {
+        12: { value: 1, max: 10, state: 'running' },
+        9: { value: 2, max: 10, state: 'running' },
+      },
+    }),
+    { node: '9', value: 2, max: 10 },
+    'the lowest id breaks a tie, so the bar does not flicker between nodes',
+  )
+  assert.deepEqual(
+    progressSummary({ nodes: { 4: { value: 10, max: 10, state: 'finished' } } }),
+    { node: '4', value: 10, max: 10 },
+    'without a running node a finished node still has a number to show',
+  )
+  assert.equal(progressSummary({ nodes: { 4: { value: 1, max: 0, state: 'running' } } }), null)
+  assert.equal(progressSummary({}), null)
+  assert.equal(progressSummary(null), null)
+
+  for (const key of ['runNode', 'runSeconds', 'runCancel', 'runCancelling', 'runCancelFailed']) {
+    assert.equal(typeof en[key], 'string', `${key} exists in en`)
+    assert.equal(typeof zh[key], 'string', `${key} exists in zh`)
+  }
+
+  const now = 1_700_000_010_000
+  const active = {
+    status: 'running',
+    node: '12',
+    value: 14,
+    max: 20,
+    startedAt: now - 5_000,
+    files: [],
+    preview: null,
+    cancel: 'none',
+  }
+  assert.equal(
+    runLabel(active, text, now),
+    `${en.runNode.replace('{{node}}', '12')} · 14/20 · ${en.runSeconds.replace('{{seconds}}', '5')}`,
+    'the line carries the node, the step count and the elapsed seconds',
+  )
+  assert.equal(
+    runLabel({ ...active, node: null, value: null, max: null }, text, now),
+    en.runSeconds.replace('{{seconds}}', '5'),
+    'a started run with no node progress still shows its clock',
+  )
+  assert.equal(runLabel({ ...active, status: 'error' }, text, now), en.runFailed)
+  assert.equal(runLabel({ ...active, status: 'interrupted' }, text, now), en.runInterrupted)
+  assert.equal(runLabel({ ...active, cancel: 'failed' }, text, now), en.runCancelFailed, 'a failed cancel replaces the line')
+  assert.equal(runLabel({ ...active, status: 'success' }, text, now), '')
+  assert.equal(runLabel(null, text), '')
+  assert.equal(cancelLabel({ cancel: 'busy' }, text), en.runCancelling)
+  assert.equal(cancelLabel({ cancel: 'none' }, text), en.runCancel)
+
+  // The transition, not the component, decides what a finished run leaves
+  // behind: no thumbnail state, no cancel phase, and an empty bar line.
+  const started = applyRunEvent(null, { kind: 'execution_start', promptId: 'p1' }, 1_000)
+  assert.equal(started.status, 'running')
+  assert.equal(started.promptId, 'p1')
+  assert.equal(started.startedAt, 1_000, 'execution_start records when the run began')
+
+  const previewed = applyRunEvent(started, { kind: 'preview', preview: { blob, nodeId: '12', promptId: 'p1' } }, 2_000)
+  assert.equal(previewed.preview.blob, blob)
+  assert.equal(previewed.promptId, 'p1')
+
+  const stepped = applyRunEvent(previewed, { kind: 'progress_state', promptId: 'p1', node: '12', value: 14, max: 20 }, 3_000)
+  assert.equal(stepped.node, '12')
+  assert.equal(stepped.value, 14)
+
+  const withFiles = applyRunEvent(stepped, { kind: 'executed', promptId: 'p1', node: '12', files: ['a.png'] }, 3_500)
+  assert.deepEqual(withFiles.files, ['a.png'], 'executed output names are kept for the tooltip')
+  const moreFiles = applyRunEvent(withFiles, { kind: 'executed', promptId: 'p1', node: '12', files: ['a.png', 'b.png'] }, 3_600)
+  assert.deepEqual(moreFiles.files, ['a.png', 'b.png'], 'repeated names are not duplicated')
+
+  const done = applyRunEvent(moreFiles, { kind: 'execution_success', promptId: 'p1' }, 5_000)
+  assert.equal(done.status, 'success')
+  assert.equal(done.preview, null, 'a finished run leaves no preview behind')
+  assert.equal(runLabel(done, text, 5_000), '')
+
+  assert.equal(applyRunEvent(previewed, { kind: 'execution_error', promptId: 'p1' }, 5_000).preview, null)
+  const interrupted = applyRunEvent(previewed, { kind: 'execution_interrupted', promptId: 'p1' }, 5_000)
+  assert.equal(interrupted.preview, null)
+  assert.equal(runLabel(interrupted, text, 5_000), en.runInterrupted)
+
+  const busy = applyRunEvent(started, { kind: 'cancel', state: 'busy' }, 3_000)
+  assert.equal(cancelLabel(busy, text), en.runCancelling)
+  assert.equal(
+    runLabel(busy, text, 3_000),
+    en.runSeconds.replace('{{seconds}}', '2'),
+    'the button says Cancelling…; the progress line keeps its numbers',
+  )
+  const failed = applyRunEvent(busy, { kind: 'cancel', state: 'failed' }, 4_000)
+  assert.equal(failed.cancel, 'failed')
+  assert.equal(runLabel(failed, text, 4_000), en.runCancelFailed)
+  const cancelled = applyRunEvent(busy, { kind: 'execution_interrupted', promptId: 'p1' }, 5_000)
+  assert.equal(cancelled.cancel, 'none')
+  assert.equal(cancelled.preview, null)
+}
+
+// The bar is the only place Cancel and the thumbnail exist, and its tree is
+// pure, so it renders without a browser: the button belongs to a running
+// prompt, says what the request is doing, and goes away with the run.
+{
+  const { TopBar, barPlan, runLabel } = mod.__ops
+  const walk = node => {
+    if (node === null || node === undefined || typeof node !== 'object') return []
+    if (Array.isArray(node)) return node.flatMap(walk)
+    return [node, ...(node.children ?? []).flatMap(walk)]
+  }
+  const render = (run, extra = {}) => walk(TopBar({
+    stats: { nodes: 2, links: 1, revision: 3, name: null },
+    synced: '',
+    syncAt: 0,
+    runText: runLabel(run, text, 1_700_000_010_000),
+    previewUrl: '',
+    previewTitle: '',
+    filesTitle: '',
+    run,
+    plan: barPlan({
+      status: 'ready',
+      service: { health: true, owned: true, state: 'running', pid: 1 },
+      dir: '/opt/ComfyUI',
+      t: text,
+    }),
+    serviceOpen: false,
+    t: text,
+    onSync() {},
+    onReload() {},
+    onFit() {},
+    onOpen() {},
+    onService() {},
+    onAction() {},
+    onCancel() {},
+    ...extra,
+  }))
+  const buttons = tree => tree.filter(node => node.type === 'button')
+  const cancel = tree => buttons(tree).find(button => button.props['data-action'] === 'cancel')
+  const running = {
+    status: 'running',
+    promptId: 'p1',
+    node: '12',
+    value: 14,
+    max: 20,
+    startedAt: 1_700_000_005_000,
+    files: [],
+    preview: null,
+    cancel: 'none',
+  }
+
+  {
+    const tree = render(running)
+    assert.equal(cancel(tree)?.children[0], en.runCancel)
+    assert.equal(cancel(tree)?.props.disabled, false)
+    assert.equal(
+      tree.find(node => node.props.className === 'dsh-comfyui-run')?.children[0],
+      `${en.runNode.replace('{{node}}', '12')} · 14/20 · ${en.runSeconds.replace('{{seconds}}', '5')}`,
+      'the bar line shows the node, the steps and the elapsed seconds',
+    )
+  }
+  {
+    const tree = render({ ...running, cancel: 'busy' })
+    assert.equal(cancel(tree)?.children[0], en.runCancelling, 'the button names the request in flight')
+    assert.equal(cancel(tree)?.props.disabled, true, 'and cannot be clicked twice')
+  }
+  {
+    assert.equal(cancel(render({ ...running, status: 'success' })), undefined, 'a finished run has no Cancel')
+    assert.equal(cancel(render(null)), undefined, 'and neither has no run at all')
+  }
+  {
+    const tree = render(running, { previewUrl: 'blob:preview', previewTitle: 'a.png' })
+    const image = tree.find(node => node.type === 'img')
+    assert.equal(image?.props.src, 'blob:preview')
+    assert.equal(image?.props.title, 'a.png')
+    assert.equal(render(running).some(node => node.type === 'img'), false, 'no preview URL, no thumbnail')
   }
 }
 

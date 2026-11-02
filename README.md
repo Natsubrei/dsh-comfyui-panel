@@ -256,12 +256,15 @@ than 16 pixels (exit code 2 when any do). Use it to judge a layout file, or
 - A session that never opened the panel shows no ComfyUI tools. After a Host
   restart a persisted session gets them back; a brand-new session gets them on
   its first panel sync.
-- `save`/`cancel` of a run are not exposed yet; `comfyui_run` only queues.
+- Saving a run's output and cancelling from the model are not exposed yet; the
+  bar can cancel a running prompt this session queued, and `comfyui_run` only
+  queues.
 - The panel is an iframe, so it does not inherit DSH theme tokens; this is a
   deliberate exception for UI-workflow fidelity and third-party node UIs.
-- Execution events are relayed from the editor's own bus, so progress and errors
-  exist only while the panel is mounted; a run started before the panel opened
-  shows its queue entry but no step progress.
+- Execution events are relayed from the editor's own bus, so previews,
+  per-node progress, elapsed time, and Cancel exist only while the panel is
+  mounted; a run started before the panel opened shows its queue entry but no
+  step progress, no preview, and no Cancel button.
 - A ComfyUI the plugin only adopted stays running when the plugin unloads: it did
   not start that process, and after a reload it cannot tell its own survivor from
   a server you launched by hand. Stop it from the panel first if you want it

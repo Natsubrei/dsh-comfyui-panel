@@ -25,6 +25,7 @@ window.__ModuleLoader__.load({
     const TAB_ID = 'dsh-comfyui-panel/workflow'
     const TAB_KIND = 'comfyui'
     const PANEL_URL = '/comfyui/'
+    const INTERRUPT_URL = `${PANEL_URL}interrupt`
     const STATE_URL = '/api/comfyui/state'
     const EVENT_URL = '/api/comfyui/events'
     const COMMAND_POLL_URL = '/api/comfyui/commands/poll'
@@ -59,10 +60,14 @@ window.__ModuleLoader__.load({
       syncFailed: 'Could not send the workflow to the Host.',
       // Not "Running": the server state already says that, and two "Running"
       // labels in one bar read as one contradictory sentence.
-      running: 'Progress {{value}}/{{max}}',
       queued: 'Queued',
+      runNode: 'node {{node}}',
+      runSeconds: '{{seconds}}s',
       runFailed: 'Run failed',
       runInterrupted: 'Run interrupted',
+      runCancel: 'Cancel',
+      runCancelling: 'Cancelling…',
+      runCancelFailed: 'Could not cancel the run',
       serverRunning: 'ComfyUI running (pid {{pid}})',
       serverExternal: 'ComfyUI running (started outside the plugin)',
       serverStopped: 'ComfyUI is not running',
@@ -115,10 +120,14 @@ window.__ModuleLoader__.load({
       bridgeUnavailable: 'ComfyUI 没有暴露编辑器 API。请确认面板是通过 /comfyui/ 同源加载的。',
       frontendUnverified: '当前 ComfyUI 前端是 {{installed}}，本面板只验证过 {{expected}}。运行和编辑可能不会显示。',
       syncFailed: '工作流未能发送到 Host。',
-      running: '进度 {{value}}/{{max}}',
       queued: '排队中',
+      runNode: '节点 {{node}}',
+      runSeconds: '{{seconds}} 秒',
       runFailed: '运行失败',
       runInterrupted: '运行已中断',
+      runCancel: '取消',
+      runCancelling: '正在取消…',
+      runCancelFailed: '取消运行失败',
       serverRunning: 'ComfyUI 运行中（pid {{pid}}）',
       serverExternal: 'ComfyUI 在运行（外部启动）',
       serverStopped: 'ComfyUI 未运行',
@@ -180,6 +189,11 @@ window.__ModuleLoader__.load({
       .dsh-comfyui-run {
         color: var(--dsw-alias-state-warn-primary);
         white-space: nowrap;
+      }
+      .dsh-comfyui-preview {
+        width: 26px; height: 20px; flex: 0 0 auto;
+        object-fit: cover; border-radius: 3px;
+        border: 1px solid var(--dsw-alias-border-l1);
       }
       .dsh-comfyui-stats {
         /* basis 0, not auto: the line only wraps when the buttons themselves
@@ -497,7 +511,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function TopBar({ stats, synced, syncAt, runText, plan, serviceOpen, onSync, onReload, onFit, onOpen, onService, onAction, t }) {
+    function TopBar({ stats, synced, syncAt, runText, previewUrl, previewTitle, filesTitle, run, plan, serviceOpen, onSync, onReload, onFit, onOpen, onService, onAction, onCancel, t }) {
       const counts = t('stats')
         .replace('{{nodes}}', String(stats.nodes))
         .replace('{{links}}', String(stats.links))
@@ -511,6 +525,9 @@ window.__ModuleLoader__.load({
         .replace('{{nodes}}', String(stats.nodes))
         .replace('{{links}}', String(stats.links))
         .replace('{{revision}}', String(stats.revision))
+      const canCancel = run !== null && run !== undefined
+        && run.status === 'running'
+        && typeof run.promptId === 'string' && run.promptId.length > 0
       return h('div', { className: 'dsh-comfyui-bar' },
         h('span', { className: 'dsh-comfyui-dot', 'data-status': plan.tone, title: plan.chipTitle }),
         h('span', { className: 'dsh-comfyui-state', 'data-tone': plan.tone, title: plan.chipTitle }, plan.label),
@@ -527,8 +544,24 @@ window.__ModuleLoader__.load({
             title: action.title,
             onClick: () => onAction(action.action),
           }, action.label)),
+          // Cancel sits with the lifecycle controls because it acts on the
+          // same server state, and only exists while this session's prompt runs.
+          canCancel ? h('button', {
+            key: 'cancel',
+            className: 'dsh-comfyui-button',
+            'data-action': 'cancel',
+            type: 'button',
+            disabled: run.cancel === 'busy',
+            onClick: onCancel,
+          }, cancelLabel(run, t)) : null,
         ),
-        runText === '' ? null : h('span', { className: 'dsh-comfyui-run' }, runText),
+        previewUrl === '' ? null : h('img', {
+          className: 'dsh-comfyui-preview',
+          src: previewUrl,
+          alt: '',
+          title: previewTitle,
+        }),
+        runText === '' ? null : h('span', { className: 'dsh-comfyui-run', title: filesTitle }, runText),
         // The counters are also the only machine-readable state the panel
         // publishes, so the headless UI check reads them instead of parsing
         // localized bar text.
@@ -574,6 +607,246 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * Whether a value is a Blob, whichever realm made it.
+     *
+     * `b_preview` dispatches a Blob created inside the iframe, where
+     * `instanceof Blob` is false in the parent page. The toString tag and the
+     * Blob methods are realm-independent.
+     * @param {any} value - candidate.
+     * @returns {boolean} whether the value is a Blob or a File.
+     */
+    function isBlob(value) {
+      if (value === null || typeof value !== 'object') return false
+      if (typeof value.size !== 'number' || typeof value.type !== 'string' || typeof value.slice !== 'function') return false
+      const tag = Object.prototype.toString.call(value)
+      return tag === '[object Blob]' || tag === '[object File]'
+    }
+
+    /**
+     * Normalize a preview event payload.
+     *
+     * `b_preview` carries the Blob itself; `b_preview_with_metadata` carries
+     * `{ blob, nodeId, promptId }`. Both reduce to one shape, and anything else
+     * returns null instead of reaching `URL.createObjectURL`.
+     * @param {any} payload - the event detail.
+     * @returns {{ blob: Blob, nodeId: string | null, promptId: string | null } | null} preview, or null.
+     */
+    function readPreview(payload) {
+      const id = value => (typeof value === 'string' && value.length > 0)
+        ? value
+        : (Number.isSafeInteger(value) ? String(value) : null)
+      if (isBlob(payload)) return { blob: payload, nodeId: null, promptId: null }
+      if (payload === null || typeof payload !== 'object') return null
+      if (!isBlob(payload.blob)) return null
+      return {
+        blob: payload.blob,
+        nodeId: id(payload.nodeId) ?? id(payload.node_id),
+        promptId: id(payload.promptId) ?? id(payload.prompt_id),
+      }
+    }
+
+    /**
+     * Reduce ComfyUI's `progress_state` payload to one node's progress.
+     *
+     * The event maps every node in the prompt to its own `{ value, max,
+     * state }`; the bar has room for one line, so the running node wins and
+     * the lowest id breaks a tie. Without a running node the first node with a
+     * usable `max` is used, because a state that finished between ticks still
+     * says more than an empty bar.
+     * @param {any} payload - `{ nodes: { <id>: { value, max, state } } }`.
+     * @returns {{ node: string, value: number, max: number } | null} summary, or null.
+     */
+    function progressSummary(payload) {
+      const nodes = payload?.nodes
+      if (nodes === null || typeof nodes !== 'object') return null
+      const candidates = []
+      for (const [id, entry] of Object.entries(nodes)) {
+        if (entry === null || typeof entry !== 'object') continue
+        const value = Number(entry.value)
+        const max = Number(entry.max)
+        if (!Number.isFinite(value) || !Number.isFinite(max) || max <= 0) continue
+        candidates.push({ node: String(id), value, max, running: entry.state === 'running' })
+      }
+      if (candidates.length === 0) return null
+      const running = candidates.filter(candidate => candidate.running)
+      const pool = running.length > 0 ? running : candidates
+      pool.sort((left, right) => Number(left.node) - Number(right.node) || left.node.localeCompare(right.node))
+      const chosen = pool[0]
+      return { node: chosen.node, value: chosen.value, max: chosen.max }
+    }
+
+    /**
+     * File names in an `executed` message, for the bar's tooltip.
+     * @param {any} data - the message body.
+     * @returns {string[]} file names, bounded.
+     */
+    function outputFiles(data) {
+      const output = data?.output
+      if (output === null || typeof output !== 'object') return []
+      const files = []
+      for (const entry of Object.values(output)) {
+        if (!Array.isArray(entry)) continue
+        for (const item of entry) {
+          if (typeof item?.filename === 'string' && item.filename !== '') files.push(item.filename)
+        }
+      }
+      return files.slice(0, 8)
+    }
+
+    /** The bar's run state before any event. */
+    function emptyRun() {
+      return {
+        status: null,
+        promptId: null,
+        node: null,
+        value: null,
+        max: null,
+        startedAt: null,
+        files: [],
+        preview: null,
+        cancel: 'none',
+      }
+    }
+
+    /**
+     * One event in, the next run state out.
+     *
+     * Everything the bar shows about a run lives here: the prompt id Cancel
+     * needs, node and step progress, the start time the elapsed seconds count
+     * from, collected output names, the thumbnail, and the cancel phase.
+     * Turning the preview Blob into a URL is the component's job, because that
+     * is a browser effect rather than a state transition.
+     * @param {any} run - current state, or null before the first event.
+     * @param {any} event - a mapped editor event, or a local `preview` / `cancel` one.
+     * @param {number} [now] - current time in milliseconds.
+     * @returns {any} next state.
+     */
+    function applyRunEvent(run, event, now = Date.now()) {
+      const base = run ?? emptyRun()
+      switch (event?.kind) {
+        case 'execution_start':
+          // A new prompt owns the bar: an older thumbnail and the previous
+          // run's output names do not describe it.
+          return { ...emptyRun(), status: 'running', promptId: event.promptId ?? null, startedAt: now }
+        case 'executing': {
+          if (event.node === null || event.node === undefined) return base
+          const sameNode = base.node === event.node
+          return {
+            ...base,
+            status: 'running',
+            promptId: event.promptId ?? base.promptId,
+            node: event.node,
+            value: sameNode ? base.value : null,
+            max: sameNode ? base.max : null,
+            startedAt: typeof base.startedAt === 'number' ? base.startedAt : now,
+          }
+        }
+        case 'progress':
+        case 'progress_state':
+          return {
+            ...base,
+            status: 'running',
+            promptId: event.promptId ?? base.promptId,
+            node: event.node ?? base.node,
+            value: typeof event.value === 'number' ? event.value : base.value,
+            max: typeof event.max === 'number' ? event.max : base.max,
+            startedAt: typeof base.startedAt === 'number' ? base.startedAt : now,
+          }
+        case 'executed': {
+          const files = Array.isArray(event.files) ? event.files : []
+          const merged = files.length === 0 ? base.files : [...new Set([...base.files, ...files])]
+          return {
+            ...base,
+            promptId: event.promptId ?? base.promptId,
+            node: event.node ?? base.node,
+            files: merged.slice(-8),
+          }
+        }
+        case 'execution_success':
+          return {
+            ...base,
+            status: 'success',
+            promptId: event.promptId ?? base.promptId,
+            value: null,
+            max: null,
+            preview: null,
+            cancel: 'none',
+          }
+        case 'execution_error':
+          return {
+            ...base,
+            status: 'error',
+            promptId: event.promptId ?? base.promptId,
+            error: event.error ?? null,
+            preview: null,
+            cancel: 'none',
+          }
+        case 'execution_interrupted':
+          return {
+            ...base,
+            status: 'interrupted',
+            promptId: event.promptId ?? base.promptId,
+            preview: null,
+            cancel: 'none',
+          }
+        case 'preview': {
+          const preview = readPreview(event.preview)
+          if (preview === null) return base
+          return { ...base, preview, promptId: preview.promptId ?? base.promptId }
+        }
+        case 'cancel':
+          if (base.status !== 'running') return base
+          return { ...base, cancel: event.state === 'busy' ? 'busy' : event.state === 'failed' ? 'failed' : 'none' }
+        default:
+          return base
+      }
+    }
+
+    /**
+     * The one line the bar shows for a run.
+     *
+     * Node and step progress come from `progress_state` (or `progress`), the
+     * seconds from the recorded start time, and a failed Cancel replaces the
+     * line. Empty when there is nothing to say, so the bar keeps its space.
+     * @param {any} run - state from `applyRunEvent`.
+     * @param {(key: string) => string} t - translator.
+     * @param {number} [now] - current time in milliseconds.
+     * @returns {string} label, possibly empty.
+     */
+    function runLabel(run, t, now = Date.now()) {
+      if (run === null || run === undefined) return ''
+      if (run.cancel === 'failed') return t('runCancelFailed')
+      if (run.status === 'queued') return t('queued')
+      if (run.status === 'running') {
+        const parts = []
+        if (run.node !== null && run.node !== undefined && String(run.node) !== '') {
+          parts.push(t('runNode').replace('{{node}}', String(run.node)))
+        }
+        if (typeof run.value === 'number' && typeof run.max === 'number' && run.max > 0) {
+          parts.push(`${run.value}/${run.max}`)
+        }
+        if (typeof run.startedAt === 'number' && Number.isFinite(run.startedAt)) {
+          const seconds = Math.max(0, Math.floor((now - run.startedAt) / 1000))
+          parts.push(t('runSeconds').replace('{{seconds}}', String(seconds)))
+        }
+        return parts.join(' · ')
+      }
+      if (run.status === 'error') return t('runFailed')
+      if (run.status === 'interrupted') return t('runInterrupted')
+      return ''
+    }
+
+    /**
+     * The Cancel button's label: a request in flight replaces the verb.
+     * @param {any} run - state from `applyRunEvent`.
+     * @param {(key: string) => string} t - translator.
+     * @returns {string} label.
+     */
+    function cancelLabel(run, t) {
+      return run?.cancel === 'busy' ? t('runCancelling') : t('runCancel')
+    }
+
     /** Event kinds the editor's bus dispatches that the Host records. */
     const PANEL_EVENTS = [
       'status',
@@ -587,6 +860,15 @@ window.__ModuleLoader__.load({
       'execution_interrupted',
     ]
 
+    /** Event kinds the panel reads but the Host does not record. */
+    const LOCAL_EVENTS = ['progress_state']
+
+    /**
+     * Preview kinds carry a Blob. They feed the bar's thumbnail only; the
+     * Host's event route takes JSON and has no use for the binary.
+     */
+    const PREVIEW_EVENTS = ['b_preview', 'b_preview_with_metadata']
+
     /**
      * Reduce one event the editor's own bus delivered to the shape the Host
      * stores.
@@ -595,8 +877,8 @@ window.__ModuleLoader__.load({
      * WebSocket, so the panel can read the same events the editor renders
      * instead of opening a socket of its own. The payload is not uniform:
      * `executing` carries only the node id, `status` only the queue state, and
-     * everything else the raw message body. Kinds the Host does not track
-     * return null.
+     * everything else the raw message body. Kinds the panel does not use
+     * return null, and `progress_state` is mapped for the bar only.
      */
     function mapApiEvent(kind, detail) {
       const data = detail !== null && typeof detail === 'object' ? detail : {}
@@ -609,8 +891,13 @@ window.__ModuleLoader__.load({
           return { kind, promptId, node: typeof detail === 'string' ? detail : node }
         case 'progress':
           return { kind, promptId, node, value: data.value ?? null, max: data.max ?? null }
+        case 'progress_state': {
+          const summary = progressSummary(data)
+          if (summary === null) return null
+          return { kind, promptId, node: summary.node, value: summary.value, max: summary.max }
+        }
         case 'executed':
-          return { kind, promptId, node }
+          return { kind, promptId, node, files: outputFiles(data) }
         case 'execution_error':
           return {
             kind,
@@ -634,17 +921,12 @@ window.__ModuleLoader__.load({
      *
      * Returns a disposer that removes every listener again. Kept apart from the
      * effect so the wiring itself — every kind subscribed, the payload mapped,
-     * both sinks fed, nothing left behind — is testable without a DOM.
+     * the local kinds kept away from the Host, nothing left behind — is
+     * testable without a DOM.
      */
     function relayEditorEvents(api, { applyEvent, postEvent }) {
       const listeners = []
-      for (const kind of PANEL_EVENTS) {
-        const listener = event => {
-          const mapped = mapApiEvent(kind, event?.detail)
-          if (mapped === null) return
-          applyEvent(mapped)
-          postEvent(mapped)
-        }
+      const listen = (kind, listener) => {
         try {
           api.addEventListener(kind, listener)
           listeners.push([kind, listener])
@@ -652,6 +934,26 @@ window.__ModuleLoader__.load({
           // A frontend that refuses a listener name is not fatal: the panel
           // still syncs, only the progress readouts stay empty.
         }
+      }
+      for (const kind of PANEL_EVENTS) {
+        listen(kind, event => {
+          const mapped = mapApiEvent(kind, event?.detail)
+          if (mapped === null) return
+          applyEvent(mapped)
+          postEvent(mapped)
+        })
+      }
+      for (const kind of LOCAL_EVENTS) {
+        listen(kind, event => {
+          const mapped = mapApiEvent(kind, event?.detail)
+          if (mapped !== null) applyEvent(mapped)
+        })
+      }
+      for (const kind of PREVIEW_EVENTS) {
+        listen(kind, event => {
+          const preview = readPreview(event?.detail)
+          if (preview !== null) applyEvent({ kind: 'preview', preview })
+        })
       }
       return () => {
         for (const [kind, listener] of listeners) {
@@ -1414,6 +1716,11 @@ window.__ModuleLoader__.load({
       const [stats, setStats] = useState({ nodes: 0, links: 0, revision: 0, name: null })
       const [message, setMessage] = useState('')
       const [run, setRun] = useState(null)
+      const runRef = useRef(null)
+      runRef.current = run
+      /** Bumped once a second while a run with a start time is on screen. */
+      const [runClock, setRunClock] = useState(0)
+      const [previewUrl, setPreviewUrl] = useState('')
       const [lastSyncAt, setLastSyncAt] = useState(0)
       const [notice, setNotice] = useState(null)
       const eventRef = useRef({ pending: null, timer: null, sentAt: 0 })
@@ -1718,29 +2025,41 @@ window.__ModuleLoader__.load({
       }, [sessionId])
 
       const applyEvent = useCallback((event) => {
-        setRun(current => {
-          switch (event.kind) {
-            case 'status':
-              return current
-            case 'execution_start':
-              return { status: 'running', promptId: event.promptId, value: null, max: null }
-            case 'progress':
-              return {
-                status: 'running',
-                promptId: event.promptId ?? current?.promptId ?? null,
-                value: event.value,
-                max: event.max,
-              }
-            case 'execution_success':
-              return { status: 'success', promptId: event.promptId, value: null, max: null }
-            case 'execution_error':
-              return { status: 'error', promptId: event.promptId, error: event.error }
-            case 'execution_interrupted':
-              return { status: 'interrupted', promptId: event.promptId }
-            default:
-              return current
-          }
-        })
+        setRun(current => applyRunEvent(current, event, Date.now()))
+      }, [])
+
+      /**
+       * Ask ComfyUI to stop this session's prompt.
+       *
+       * The button is disabled while the request is in flight and returns on a
+       * failure; a success waits for `execution_interrupted` / `execution_error`
+       * to end the run, because the server may still be tearing down the last
+       * node. No response, including a network error, reaches the console as an
+       * exception: the bar says it could not cancel and keeps the run.
+       * @returns {Promise<void>} resolves when the request settles.
+       */
+      const cancelRun = useCallback(async () => {
+        const current = runRef.current
+        if (current === null || current === undefined || current.status !== 'running') return
+        if (current.cancel === 'busy') return
+        const promptId = typeof current.promptId === 'string' ? current.promptId : ''
+        if (promptId === '') return
+        setRun(value => (value !== null && value.promptId === promptId && value.status === 'running')
+          ? applyRunEvent(value, { kind: 'cancel', state: 'busy' })
+          : value)
+        try {
+          const response = await fetch(INTERRUPT_URL, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ prompt_id: promptId }),
+          })
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        } catch {
+          setRun(value => (value !== null && value.promptId === promptId && value.status === 'running')
+            ? applyRunEvent(value, { kind: 'cancel', state: 'failed' })
+            : value)
+        }
       }, [])
 
       // Execution events follow the socket that queued the prompt, and that is
@@ -1782,6 +2101,38 @@ window.__ModuleLoader__.load({
           detach()
         }
       }, [applyEvent, postEvent, sessionId])
+
+      // One interval while a run with a start time is on screen; its cleanup
+      // covers the run ending, a reload, and unmounting the panel.
+      const runningStartedAt = run !== null && run.status === 'running' && typeof run.startedAt === 'number'
+        ? run.startedAt
+        : null
+      useEffect(() => {
+        if (runningStartedAt === null) return undefined
+        const timer = setInterval(() => setRunClock(Date.now()), 1000)
+        return () => clearInterval(timer)
+      }, [runningStartedAt])
+
+      // The preview Blob becomes an object URL only here. Replacing the
+      // preview or ending the run runs this cleanup, which revokes the old URL,
+      // so a run that produces dozens of previews leaks no object URLs.
+      const previewBlob = run?.preview?.blob ?? null
+      useEffect(() => {
+        if (previewBlob === null) {
+          setPreviewUrl('')
+          return undefined
+        }
+        if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return undefined
+        let url = ''
+        try {
+          url = URL.createObjectURL(previewBlob)
+        } catch {
+          setPreviewUrl('')
+          return undefined
+        }
+        setPreviewUrl(url)
+        return () => URL.revokeObjectURL(url)
+      }, [previewBlob])
 
       useEffect(() => {
         if (sessionId === undefined || sessionId === null) return undefined
@@ -1888,14 +2239,17 @@ window.__ModuleLoader__.load({
       const syncLabel = status === 'syncing'
         ? t('syncPending')
         : (lastSyncAt > 0 ? t('syncedAt').replace('{{time}}', syncClock) : '')
-      let runText = ''
-      if (run !== null) {
-        if (run.status === 'queued') runText = t('queued')
-        else if (run.status === 'running' && typeof run.value === 'number' && typeof run.max === 'number' && run.max > 0) {
-          runText = t('running').replace('{{value}}', String(run.value)).replace('{{max}}', String(run.max))
-        } else if (run.status === 'error') runText = t('runFailed')
-        else if (run.status === 'interrupted') runText = t('runInterrupted')
-      }
+      // The label is one pure function so node, steps, seconds and cancel
+      // failures cannot drift apart; the ticking clock is the only state it
+      // reads beyond the run.
+      const runText = runLabel(run, t, runningStartedAt === null ? Date.now() : Math.max(Date.now(), runClock))
+      const filesTitle = run !== null && Array.isArray(run.files) && run.files.length > 0
+        ? run.files.join(' · ')
+        : ''
+      const previewNode = run?.preview?.nodeId
+      const previewTitle = previewNode === null || previewNode === undefined
+        ? filesTitle
+        : [t('runNode').replace('{{node}}', String(previewNode)), filesTitle].filter(part => part !== '').join(' · ')
 
       if (sessionId === undefined || sessionId === null) {
         return h('div', { className: 'dsh-comfyui-panel' },
@@ -1967,6 +2321,10 @@ window.__ModuleLoader__.load({
           synced: syncLabel,
           syncAt: lastSyncAt,
           runText,
+          previewUrl,
+          previewTitle,
+          filesTitle,
+          run,
           plan,
           serviceOpen,
           t,
@@ -1979,6 +2337,7 @@ window.__ModuleLoader__.load({
           onOpen: open,
           onService: () => setServiceOpen(current => !current),
           onAction: action => { void serviceAction(action) },
+          onCancel: () => { void cancelRun() },
         }),
         message === '' ? null : h('div', { className: 'dsh-comfyui-notice', 'data-tone': status === 'error' ? 'error' : 'info' }, message),
         service?.frontend?.status === 'mismatch'
@@ -2023,7 +2382,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale', 'sidebarRightTabs'],
       // Editor operations, dictionaries, and the bar/stage rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, captureGraph, applyWorkflowGraph, loadWorkflow, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, mapApiEvent, relayEditorEvents, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, viewShowsAll, describeOperation, en, zh, createSync },
+      __ops: { applyOperation, captureGraph, applyWorkflowGraph, loadWorkflow, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, mapApiEvent, relayEditorEvents, readPreview, progressSummary, applyRunEvent, runLabel, cancelLabel, TopBar, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, viewShowsAll, describeOperation, en, zh, createSync },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')

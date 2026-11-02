@@ -3,6 +3,21 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
+## Unreleased
+
+- The top bar shows the latest preview from the editor's `b_preview` and
+  `b_preview_with_metadata` events as a thumbnail. A new preview replaces the
+  old one and revokes its object URL; preview Blobs stay in the page and are
+  never posted to the Host.
+- `progress_state` reduces to the running node on the bar (`node 12 · 14/20`),
+  elapsed seconds tick while a run is active, and `executed` output file names
+  appear in the run line's tooltip. Runs without `progress_state` keep the
+  existing `progress` readout.
+- A running prompt this session queued gets a `Cancel` button. It POSTs
+  `/comfyui/interrupt` with that `prompt_id`, disables itself as
+  "Cancelling…" until the editor reports the interruption, and reports a
+  failed request in the run line instead of throwing.
+
 ## 0.7.2
 
 - The panel path is fixed at `/comfyui`. A profile patch that sets another
