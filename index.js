@@ -392,7 +392,9 @@ export function apply(ctx, rawConfig = {}) {
   async function bridgeCommandPoll(request) {
     let body
     try {
-      body = JSON.parse(await request.text())
+      const text = await request.text()
+      if (text.length > 100_000) return json({ ok: false, error: 'command payload is too large' }, 413)
+      body = JSON.parse(text)
     } catch {
       return json({ ok: false, error: 'invalid JSON body' }, 400)
     }
@@ -405,7 +407,9 @@ export function apply(ctx, rawConfig = {}) {
   async function bridgeCommandResult(request) {
     let body
     try {
-      body = JSON.parse(await request.text())
+      const text = await request.text()
+      if (text.length > 1_000_000) return json({ ok: false, error: 'command result is too large' }, 413)
+      body = JSON.parse(text)
     } catch {
       return json({ ok: false, error: 'invalid JSON body' }, 400)
     }

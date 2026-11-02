@@ -596,6 +596,24 @@ assert.equal(edited.sessionId, 's1')
 assert.equal(edited.nodes, 2)
 assert.equal(edited.links, 1)
 
+// Both command routes cap the body like the state, event and service bridges
+// do. A route without a cap reads whatever a client sends into memory, and the
+// poll is the one a panel can hit every few seconds.
+{
+  const polled = await host.fetches.get('/api/comfyui/commands/poll').fetch(new Request(
+    'http://127.0.0.1/api/comfyui/commands/poll',
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 's1', pad: 'x'.repeat(100_000) }) },
+  ))
+  assert.equal(polled.status, 413)
+  assert.equal((await polled.json()).error, 'command payload is too large')
+  const answered = await host.fetches.get('/api/comfyui/commands/result').fetch(new Request(
+    'http://127.0.0.1/api/comfyui/commands/result',
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 's1', id: 'big', pad: 'x'.repeat(1_000_000) }) },
+  ))
+  assert.equal(answered.status, 413)
+  assert.equal((await answered.json()).error, 'command result is too large')
+}
+
 // A screenshot takes the same command channel: the panel serializes its canvas,
 // the Host keeps the bytes and hands back a path.
 {

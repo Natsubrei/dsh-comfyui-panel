@@ -2013,7 +2013,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale', 'sidebarRightTabs'],
       // Editor operations, dictionaries, and the bar/stage rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, captureGraph, applyWorkflowGraph, loadWorkflow, findNode, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, workflowFileExists, mapApiEvent, relayEditorEvents, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, fitCanvasByBounds, viewShowsAll, describeOperation, en, zh, createSync },
+      __ops: { applyOperation, captureGraph, applyWorkflowGraph, loadWorkflow, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, mapApiEvent, relayEditorEvents, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, viewShowsAll, describeOperation, en, zh, createSync },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')
