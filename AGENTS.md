@@ -50,7 +50,8 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
   (`name@`). Bare account names and hostnames fail only when
   `DSH_HYGIENE_STRICT=1`.
 - `.github/workflows/test.yml` — CI: `npm ci`, `npm run typecheck`, then
-  `npm test` on Node 22 and 24.
+  `npm test` on Node 22 and 24. `.github/workflows/release.yml` cuts a release
+  from the Actions tab; see [Publishing](#publishing).
 - `tsconfig.json` + `types/globals.d.ts` — `checkJs` over every `.js` and
   `.mjs`. The dev dependencies exist only for this pass.
 - `market/index.json` — the plugin market index this repository hosts, the URL
@@ -144,6 +145,16 @@ commit that carries both:
 5. Tag this second commit, not the version bump: `git tag v<version>`, then
    `git push origin main --tags`. The tag points at a commit whose CI is green,
    while the index still installs the release commit it pins.
+
+GitHub can run the same sequence for you: **Actions -> release -> Run
+workflow**, with the version and `dry_run` unchecked. It runs the suite, then
+`scripts/release.mjs` creates the two commits and the tag, pushes, creates the
+GitHub Release, and publishes to npm when an `NPM_TOKEN` secret is configured.
+Add a `RELEASE_TOKEN` secret (fine-grained, contents: write) if the pushed
+commits should also trigger the test workflow; pushes made with the default
+`GITHUB_TOKEN` do not. The workflow pushes straight to `main`, so any branch
+protection must allow it. Leaving `dry_run` checked runs the checks and prints
+the plan without writing anything.
 
 Do not move a published tag to fix a red run; cut the next patch release
 instead. The exception is a tag that was moved within the same release before

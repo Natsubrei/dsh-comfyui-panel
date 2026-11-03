@@ -1,0 +1,94 @@
+name: release
+
+# Cut a release from GitHub: Actions -> release -> Run workflow.
+#
+# The version commit always lands before the market index that pins it, so the
+# index commit is what gets tagged; tagging the version commit would point the
+# tag at a run whose market-index check fails by design. This workflow does the
+# whole sequence, creates the GitHub Release, and publishes to npm when an
+# NPM_TOKEN secret is configured.
+#
+# Direct pushes to main need a token that may bypass any protection rule. The
+# default GITHUB_TOKEN can push, but its pushes do not trigger the test
+# workflow; add a RELEASE_TOKEN secret (fine-grained, contents: write) to get
+# CI on the released commits too. The suite runs in this job either way.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, x.y.z'
+        required: true
+        type: string
+      dry_run:
+        description: 'Run the checks and print the plan without committing or pushing'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install the type-check dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Checks, host smoke, editor ops, repository hygiene
+        run: npm test
+
+      - name: Configure git
+        if: ${{ !inputs.dry_run }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Prepare the release
+        run: |
+          node scripts/release.mjs \
+            --version "${{ inputs.version }}" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Push the release commits and tag
+        if: ${{ !inputs.dry_run }}
+        run: git push origin main --tags
+
+      - name: Create the GitHub Release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+        run: |
+          gh release create "v${{ inputs.version }}" \
+            --title "v${{ inputs.version }}" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"
+
+      - name: Publish to npm when a token is configured
+        if: ${{ !inputs.dry_run }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "no NPM_TOKEN secret configured; skipping npm publish"
+            exit 0
+          fi
+          npm publish --access public
