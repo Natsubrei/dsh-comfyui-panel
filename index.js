@@ -672,17 +672,20 @@ export function apply(ctx, rawConfig = {}) {
       },
       {
         layer: 'commandChannel',
-        ok: commandWaiting,
+        // `connected` covers a 15 s freshness window, so a connected panel with
+        // no parked poll is usually between long-polls; that is a warning, not
+        // a fault. A panel that stops polling altogether drops out of
+        // `connected` within the window and fails this row.
+        ok: commandWaiting || panelConnected,
+        ...(panelConnected && !commandWaiting ? { warn: true } : {}),
         detail: commandWaiting
           ? 'The panel is waiting for commands.'
           : panelConnected
-            ? 'The panel is connected but is not polling for commands right now.'
+            ? 'The panel is connected; no command long-poll is parked right now.'
             : 'No panel is waiting for commands.',
-        ...(commandWaiting
+        ...(panelConnected
           ? {}
-          : { action: panelConnected
-              ? 'Reload the ComfyUI tab so it reopens its command long-poll.'
-              : 'Open the ComfyUI tab in this session so it can take commands.' }),
+          : { action: 'Open the ComfyUI tab in this session so it can take commands.' }),
       },
       {
         layer: 'storage',
