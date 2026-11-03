@@ -22,7 +22,7 @@ import net from 'node:net'
 import tls from 'node:tls'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { digestLine, layoutReport, projectFromWorkflow } from './projection.js'
 import { createWorkflowStore } from './storage.js'
@@ -825,7 +825,7 @@ export function apply(ctx, rawConfig = {}) {
   function runTool(sessionId) {
     return {
       name: 'comfyui_run',
-      description: 'Queue the workflow synced in this session, honouring each seed widget\'s control-after-generate (randomize/increment/decrement). Returns the prompt id and the seed values used; increment and decrement continue from the previous run even though the editor keeps showing its own seed. The Host keeps tracking the run after this call returns, so comfyui_progress still works when the panel is closed. Set wait=true to poll /history until it settles.',
+      description: 'Queue the workflow synced in this session, honouring each seed widget\'s control-after-generate (randomize/increment/decrement). Returns the prompt id and the seed values used; increment and decrement continue from the previous run even though the editor keeps showing its own seed. The Host keeps tracking the run after this call returns, so comfyui_progress still works when the panel is closed. Set wait=true to poll /history until it settles and return the output images as image attachments beside the text.',
       parameters: {
         type: 'object',
         properties: {
@@ -834,7 +834,7 @@ export function apply(ctx, rawConfig = {}) {
         },
         additionalProperties: false,
       },
-      output: textOutput(),
+      output: runOutput(),
       async execute(args, exec) {
         const state = sessionStore.get(sessionId)
         if (state === undefined) throw new Error('No ComfyUI workflow has synced in this session. Open the ComfyUI tab in this session first.')
@@ -882,7 +882,22 @@ export function apply(ctx, rawConfig = {}) {
           await delay(1000)
           const history = await fetchJson(`/history/${encodeURIComponent(promptId)}`, 5000).catch(() => undefined)
           if (history?.ok === true && isObject(history.data) && isObject(history.data[promptId])) {
-            return { text: JSON.stringify({ prompt_id: promptId, seeds, history: history.data[promptId] }, null, 2) }
+            const settled = history.data[promptId]
+            const collected = collectOutputImages(settled)
+            const attached = await attachOutputImages(collected, exec)
+            const text = JSON.stringify({
+              prompt_id: promptId,
+              seeds,
+              history: settled,
+              images: collected.map(image => image.filename),
+              attachments: attached.images.length > 0 ? 'inline' : 'unavailable',
+              ...attached.note === null ? {} : { imageNote: attached.note },
+              ...attached.skipped.length > 0 ? { skippedImages: attached.skipped } : {},
+            }, null, 2)
+            return {
+              text,
+              ...attached.images.length > 0 ? { images: attached.images } : {},
+            }
           }
           if (exec.signal.aborted) throw new Error('comfyui_run was cancelled')
         }
@@ -1522,6 +1537,129 @@ export function apply(ctx, rawConfig = {}) {
     }
   }
 
+  /**
+   * The run tools' output: text, plus the images a settled wait=true run
+   * returned as durable attachment references.
+   * @returns {{schema: any, render: (args: unknown, value: {text: string, images?: Array<{attachment: any}>}) => any[]}} the output contract.
+   */
+  function runOutput() {
+    return {
+      schema: {
+        type: 'object',
+        properties: {
+          text: { type: 'string' },
+          images: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                // Loose on purpose: the attachment service owns the reference
+                // shape, and this plugin only forwards what it returned.
+                attachment: { type: 'object', additionalProperties: true },
+              },
+              required: ['attachment'],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ['text'],
+        additionalProperties: false,
+      },
+      render(_args, value) {
+        /** @type {any[]} */
+        const blocks = [{ type: 'text', text: value.text }]
+        for (const image of value.images ?? []) blocks.push({ type: 'image', attachment: image.attachment })
+        return blocks
+      },
+    }
+  }
+
+  /**
+   * Fetch and store a settled run's output images. Every image failure is
+   * reported in the text and never fails the run; a missing attachment
+   * service or an image-incapable model route skips the whole batch.
+   * @param {Array<{filename: string, subfolder: string}>} images - output files in history order.
+   * @param {any} exec - the tool execution, used to resolve the calling model route.
+   * @returns {Promise<{images: Array<{attachment: any}>, skipped: Array<{filename: string, reason: string}>, note: string | null}>} what was stored, what was skipped, and why the batch was skipped.
+   */
+  async function attachOutputImages(images, exec) {
+    if (images.length === 0) return { images: [], skipped: [], note: null }
+    const attachments = ctx.get('attachments')
+    if (attachments === undefined || typeof attachments.saveImage !== 'function') {
+      return {
+        images: [],
+        skipped: [],
+        note: 'no attachment service is mounted, so the images stay in ComfyUI and only their file names are returned',
+      }
+    }
+    const refusal = await imageRouteRefusal(exec)
+    if (refusal !== null) return { images: [], skipped: [], note: refusal }
+    /** @type {Array<{attachment: any}>} */
+    const stored = []
+    /** @type {Array<{filename: string, reason: string}>} */
+    const skipped = []
+    for (const image of images) {
+      const result = await attachOutputImage(image, attachments)
+      if ('attachment' in result) stored.push(result)
+      else skipped.push({ filename: image.filename, reason: result.reason })
+    }
+    return { images: stored, skipped, note: null }
+  }
+
+  /**
+   * Fetch one output image through `/view` and commit it to the attachment store.
+   * @param {{filename: string, subfolder: string}} image - one history output entry.
+   * @param {{saveImage: (input: {data: Uint8Array, mediaType: string, name: string}) => Promise<any>}} attachments - the mounted attachment service.
+   * @returns {Promise<{attachment: any} | {reason: string}>} the stored reference, or why this image was skipped.
+   */
+  async function attachOutputImage(image, attachments) {
+    const query = new URLSearchParams({ filename: image.filename, subfolder: image.subfolder, type: 'output' })
+    /** @type {{ok: boolean, status: number, bytes?: Uint8Array, mediaType?: string, error?: string}} */
+    const fetched = await fetchBytes(`/view?${query.toString()}`, OUTPUT_IMAGE_TIMEOUT_MS).catch(error => ({
+      ok: false,
+      status: 0,
+      error: error instanceof Error ? error.message : String(error),
+    }))
+    if (fetched.ok !== true) {
+      return { reason: `could not read the image: ${fetched.error ?? `HTTP ${fetched.status}`}` }
+    }
+    const mediaType = outputImageMediaType(image.filename, fetched.mediaType)
+    if (mediaType === undefined) return { reason: 'the image is not PNG, JPEG, or WebP' }
+    try {
+      return { attachment: await attachments.saveImage({ data: fetched.bytes, mediaType, name: image.filename }) }
+    } catch (error) {
+      return { reason: `the attachment service refused it: ${error instanceof Error ? error.message : String(error)}` }
+    }
+  }
+
+  /**
+   * Require the calling model route to declare image input, like `read_image`
+   * does. An image block that a text-only adapter cannot serialize would fail
+   * the next model request and take the run's text result down with it, so an
+   * unknown route counts as negative and only the text is returned.
+   * @param {any} exec - the tool execution carrying the calling agent.
+   * @returns {Promise<string | null>} why images cannot be attached, or null when they can.
+   */
+  async function imageRouteRefusal(exec) {
+    const routed = exec?.agent?.session?.requestHeader?.()?.config
+    const provider = routed?.provider ?? exec?.agent?.options?.provider
+    const model = routed?.model ?? exec?.agent?.options?.model
+    const llm = ctx.get('llm')
+    if (provider === undefined || model === undefined || llm === undefined) {
+      return 'the current model route could not be resolved for image input, so only the file names are returned'
+    }
+    let info
+    try {
+      info = await llm.resolveModelInfo(provider, model, exec.signal)
+    } catch {
+      return 'the current model route could not be verified for image input, so only the file names are returned'
+    }
+    if (info?.inputModalities === undefined || !info.inputModalities.includes('image')) {
+      return `model "${model}" does not declare image input, so only the file names are returned`
+    }
+    return null
+  }
+
   function targetUrl(requestUrl) {
     const suffix = requestUrl.startsWith(prefix) ? requestUrl.slice(prefix.length) || '/' : '/'
     const queryIndex = suffix.indexOf('?')
@@ -1577,10 +1715,111 @@ export function apply(ctx, rawConfig = {}) {
     }
     return { ok: response.ok, status: response.status, data }
   }
+
+  /**
+   * Request one binary path (with its query) from the ComfyUI upstream.
+   * @param path - path and query below the upstream root, e.g. `/view?filename=a.png`.
+   * @param timeoutMs - abort budget in milliseconds.
+   * @param maxBytes - body cap; a longer response is abandoned instead of buffered.
+   * @returns {Promise<{ok: boolean, status: number, bytes?: Uint8Array, mediaType?: string, error?: string}>} the outcome; `error` is set when the body was refused.
+   */
+  async function fetchBytes(path, timeoutMs, maxBytes = MAX_OUTPUT_IMAGE_BYTES) {
+    const target = new URL(upstream.href)
+    const basePath = target.pathname.replace(/\/+$/, '')
+    const queryIndex = path.indexOf('?')
+    target.pathname = `${basePath}${queryIndex === -1 ? path : path.slice(0, queryIndex)}`
+    target.search = queryIndex === -1 ? '' : path.slice(queryIndex)
+    const response = await fetch(target, { signal: AbortSignal.timeout(timeoutMs) })
+    if (!response.ok) return { ok: false, status: response.status, error: `HTTP ${response.status}` }
+    const declared = Number(response.headers.get('content-length') ?? '')
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      return { ok: false, status: response.status, error: `the image is larger than the ${maxBytes / (1024 * 1024)} MB cap` }
+    }
+    const reader = response.body?.getReader()
+    if (reader === undefined) return { ok: false, status: response.status, error: 'the image response had no body' }
+    /** @type {Uint8Array[]} */
+    const chunks = []
+    let total = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {})
+        return { ok: false, status: response.status, error: `the image is larger than the ${maxBytes / (1024 * 1024)} MB cap` }
+      }
+      chunks.push(value)
+    }
+    const bytes = new Uint8Array(total)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+    const mediaType = (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
+    return { ok: true, status: response.status, bytes, mediaType }
+  }
 }
 
 /** The panel and the ComfyUI frontend both derive their API base from this path. */
 const PANEL_PREFIX = '/comfyui'
+
+/** Most output images one run result carries; a longer list would bloat the message. */
+const MAX_OUTPUT_IMAGES = 4
+
+/** Per-image byte cap for an output returned as an attachment. */
+const MAX_OUTPUT_IMAGE_BYTES = 20 * 1024 * 1024
+
+/** How long one output image fetch may take. */
+const OUTPUT_IMAGE_TIMEOUT_MS = 20000
+
+/** Media types the attachment service accepts from a ComfyUI output. */
+const OUTPUT_IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
+
+/** Extension fallback when `/view` does not declare a supported content type. */
+const OUTPUT_IMAGE_EXTENSIONS = new Map([
+  ['.png', 'image/png'],
+  ['.jpg', 'image/jpeg'],
+  ['.jpeg', 'image/jpeg'],
+  ['.webp', 'image/webp'],
+])
+
+/**
+ * Collect the output images a settled history entry reports.
+ * @param {any} history - one `/history/{id}` entry.
+ * @returns {Array<{filename: string, subfolder: string}>} up to four `type: 'output'` files in report order.
+ */
+export function collectOutputImages(history) {
+  /** @type {Array<{filename: string, subfolder: string}>} */
+  const images = []
+  if (!isObject(history) || !isObject(history.outputs)) return images
+  for (const output of Object.values(history.outputs)) {
+    if (images.length >= MAX_OUTPUT_IMAGES) break
+    if (!isObject(output) || !Array.isArray(output.images)) continue
+    for (const image of output.images) {
+      if (images.length >= MAX_OUTPUT_IMAGES) break
+      if (!isObject(image) || image.type !== 'output') continue
+      if (typeof image.filename !== 'string' || image.filename.length === 0) continue
+      images.push({
+        filename: image.filename,
+        subfolder: typeof image.subfolder === 'string' ? image.subfolder : '',
+      })
+    }
+  }
+  return images
+}
+
+/**
+ * Resolve the media type of a ComfyUI output image.
+ * @param {string} filename - the output file name from history.
+ * @param {string} [contentType] - the `/view` Content-Type, already stripped of parameters.
+ * @returns {string | undefined} the supported media type, or undefined when neither source declares one.
+ */
+export function outputImageMediaType(filename, contentType) {
+  if (typeof contentType === 'string' && OUTPUT_IMAGE_MEDIA_TYPES.has(contentType)) return contentType
+  if (typeof filename !== 'string') return undefined
+  return OUTPUT_IMAGE_EXTENSIONS.get(extname(filename).toLowerCase())
+}
 
 /** Cookie names the DSH web UI uses for admission. They must not reach ComfyUI. */
 const DSH_AUTH_COOKIE = /^dsh-auth(?:-|$)/iu

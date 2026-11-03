@@ -10,13 +10,19 @@ truth, and every release is pinned by a commit in `market/index.json`.
   `storage`, `supervisor`, `workflow`), with a one-sentence `detail` and an
   `action` when that layer is broken. It is built only from facts the status
   call already read, so the report sends no extra request.
+- `comfyui_run` with `wait=true` returns a successful run's output images as
+  image attachments beside the text result (up to four `type: 'output'` files,
+  20 MB each), so the images appear in the conversation. A missing attachment
+  service, an unreadable or unsupported image, or a model route that does not
+  declare image input falls back to the text result with the file names, so an
+  image failure never loses the run.
 - `comfyui_run` attaches the session's UI workflow to `/prompt` as
   `extra_data.extra_pnginfo.workflow`, so `SaveImage` writes it into the PNG's
   text metadata and dragging the image back into ComfyUI restores the graph.
   The API prompt is not attached.
 - New `comfyui_cancel` tool interrupts the run this session queued, or a given
   prompt id, through `POST /interrupt`; a prompt that already finished is a
-  no-op. Saving a run's output is still missing.
+  no-op. Copying output files to a chosen path is still missing.
 - `comfyui_run` no longer goes dark when the panel closes. The Host polls
   `/queue` and `/history/{id}` for every prompt the tool queued, writes the
   state into the session's run record, and `comfyui_progress` returns it as
