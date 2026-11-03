@@ -42,6 +42,13 @@ truth, and every release is pinned by a commit in `market/index.json`.
   `/comfyui/interrupt` with that `prompt_id`, disables itself as
   "Cancelling…" until the editor reports the interruption, and reports a
   failed request in the run line instead of throwing.
+- `comfyui_cancel` removes a prompt that is still waiting in the queue instead
+  of interrupting the running one, and its result says which happened
+  (`action: "deleted"` or `"interrupted"`). The Host also starts its own watch
+  for a run the panel's Queue button started, from that run's execution events,
+  so `hostRun` keeps updating after the panel closes. If a successful Cancel
+  never gets the matching interruption event, the bar's button becomes usable
+  again after 10 seconds and the progress line keeps its numbers.
 
 ## 0.7.2
 

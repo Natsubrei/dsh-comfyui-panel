@@ -166,6 +166,8 @@ const diagnosticRow = (report, layer) => report.diagnostics.find(row => row.laye
 const queuedBodies = []
 /** Bodies the proxy forwarded to /interrupt, newest last. */
 const interruptedBodies = []
+/** Bodies the proxy forwarded to a queue delete, newest last. */
+const deletedQueueBodies = []
 /** Cookie headers the proxy forwarded, newest last. */
 const upstreamCookies = []
 /** What the mock reports from /queue; the tracker test scripts a run here. */
@@ -250,6 +252,20 @@ const upstream = http.createServer((req, res) => {
         output_name: ['LATENT'],
       },
     }))
+    return
+  }
+  if (req.url === '/queue' && req.method === 'POST') {
+    const chunks = []
+    req.on('data', chunk => chunks.push(chunk))
+    req.on('end', () => {
+      try {
+        deletedQueueBodies.push(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+      } catch {
+        deletedQueueBodies.push(null)
+      }
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('{}')
+    })
     return
   }
   if (req.url === '/queue') {
@@ -643,8 +659,37 @@ assert.equal(runBody.extra_data.dsh_session_id, 's1')
 assert.equal('prompt' in runBody.extra_data.extra_pnginfo, false, 'the API prompt stays out of the PNG metadata')
 
 const cancelled = parse(await s1.tools.get('comfyui_cancel').execute({ promptId: run.prompt_id }, exec))
-assert.deepEqual(cancelled, { cancelled: true, promptId: run.prompt_id })
+assert.deepEqual(cancelled, { cancelled: true, promptId: run.prompt_id, action: 'interrupted' })
 assert.equal(interruptedBodies.at(-1)?.prompt_id, run.prompt_id)
+
+// A prompt still waiting in the queue is removed, not interrupted: interrupting
+// it would stop whatever is running instead.
+{
+  const before = interruptedBodies.length
+  mockQueue.queue_pending = [[1, 'p-pending', [], {}, []]]
+  try {
+    const deleted = parse(await s1.tools.get('comfyui_cancel').execute({ promptId: 'p-pending' }, exec))
+    assert.deepEqual(deleted, { cancelled: true, promptId: 'p-pending', action: 'deleted' })
+    assert.deepEqual(deletedQueueBodies.at(-1), { delete: ['p-pending'] })
+    assert.equal(interruptedBodies.length, before, 'a queued prompt must not be interrupted')
+  } finally {
+    mockQueue.queue_pending = []
+  }
+}
+
+// A prompt that is already running still takes the interrupt path.
+{
+  const before = interruptedBodies.length
+  mockQueue.queue_running = [[1, 'p-running', [], {}, []]]
+  try {
+    const interrupted = parse(await s1.tools.get('comfyui_cancel').execute({ promptId: 'p-running' }, exec))
+    assert.deepEqual(interrupted, { cancelled: true, promptId: 'p-running', action: 'interrupted' })
+    assert.equal(interruptedBodies.length, before + 1)
+    assert.equal(interruptedBodies.at(-1)?.prompt_id, 'p-running')
+  } finally {
+    mockQueue.queue_running = []
+  }
+}
 
 // Without a prompt id, cancel targets the run this session's panel last
 // reported, which is the one the model just queued.
@@ -676,7 +721,7 @@ assert.equal(interruptedBodies.at(-1)?.prompt_id, run.prompt_id)
   ))
   assert.equal(evented.status, 200)
   const defaulted = parse(await sCancel.tools.get('comfyui_cancel').execute({}, execOf('s-cancel')))
-  assert.deepEqual(defaulted, { cancelled: true, promptId: queued.prompt_id })
+  assert.deepEqual(defaulted, { cancelled: true, promptId: queued.prompt_id, action: 'interrupted' })
   assert.equal(interruptedBodies.at(-1)?.prompt_id, queued.prompt_id)
 }
 
@@ -919,6 +964,80 @@ assert.ok(Number.isFinite(joined.run.startedAt), 'the record counts from the fir
     assert.equal(finished.hostRun.outputs[7].images[0].filename, 'dsh-run_0001_.png')
   } finally {
     promptIdToReturn = 'p1'
+    mockQueue.queue_running = []
+  }
+}
+
+// A run the panel's Queue button started reaches the Host only as events. The
+// event route starts the Host's own watch, so `hostRun` keeps moving to the
+// terminal state after the panel is gone.
+{
+  const panelSession = 's-panel-run'
+  const synced = await host.fetches.get('/api/comfyui/state').fetch(new Request(
+    `http://127.0.0.1/api/comfyui/state?sessionId=${panelSession}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: panelSession,
+        revision: 1,
+        workflow,
+        prompt: { 7: { class_type: 'KSampler', inputs: {} } },
+        semantic,
+      }),
+    },
+  ))
+  assert.equal(synced.status, 200)
+  const panelScope = addAgent(host, panelSession)
+  mockQueue.queue_pending = [[1, 'p-panel', [], { dsh_session_id: panelSession }, []]]
+  try {
+    const evented = await host.fetches.get('/api/comfyui/events').fetch(new Request(
+      'http://127.0.0.1/api/comfyui/events',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: panelSession,
+          event: { kind: 'execution_start', promptId: 'p-panel' },
+        }),
+      },
+    ))
+    assert.equal(evented.status, 200)
+    const queued = parse(await panelScope.tools.get('comfyui_progress').execute({ promptId: 'p-panel' }, execOf(panelSession)))
+    assert.equal(queued.panelConnected, false)
+    assert.equal(queued.hostRun.promptId, 'p-panel')
+    assert.equal(queued.hostRun.status, 'queued', 'the Host follows a run the panel started')
+
+    mockQueue.queue_pending = []
+    mockQueue.queue_running = [[2, 'p-panel', [], {}, []]]
+    const running = parse(await panelScope.tools.get('comfyui_progress').execute({ promptId: 'p-panel' }, execOf(panelSession)))
+    assert.equal(running.hostRun.status, 'running', 'the queue moves the record without the panel')
+
+    mockQueue.queue_running = []
+    mockHistory['p-panel'] = {
+      status: { status_str: 'success', completed: true, messages: [] },
+      outputs: { 7: { images: [{ filename: 'panel-run_0001_.png', subfolder: '', type: 'output' }] } },
+    }
+    const finished = parse(await panelScope.tools.get('comfyui_progress').execute({ promptId: 'p-panel' }, execOf(panelSession)))
+    assert.equal(finished.hostRun.status, 'completed')
+    assert.equal(finished.hostRun.outputs[7].images[0].filename, 'panel-run_0001_.png')
+
+    // `status` and `execution_cached` carry no live run, even when a prompt id
+    // rides along, so they must not start a watch.
+    const statused = await host.fetches.get('/api/comfyui/events').fetch(new Request(
+      'http://127.0.0.1/api/comfyui/events',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: panelSession, event: { kind: 'status', promptId: 'p-status-only' } }),
+      },
+    ))
+    assert.equal(statused.status, 200)
+    const untracked = parse(await panelScope.tools.get('comfyui_progress').execute({ promptId: 'p-status-only' }, execOf(panelSession)))
+    assert.equal(untracked.hostRun, null, 'a status event names no run to follow')
+  } finally {
+    delete mockHistory['p-panel']
+    mockQueue.queue_pending = []
     mockQueue.queue_running = []
   }
 }
