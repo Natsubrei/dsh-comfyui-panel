@@ -74,13 +74,15 @@ read on for the panel itself.
     optionally wait for history. The Host keeps tracking the run after the
     call returns, with or without the panel, and the output PNG carries the UI
     workflow, so dragging it back into ComfyUI restores the graph.
-  - `comfyui_cancel` — interrupt the run this session queued, or a given prompt
-    id; a prompt that already finished is a no-op.
+  - `comfyui_cancel` — cancel the run this session queued, or a given prompt
+    id: a prompt still waiting in the queue is removed from it, a running one
+    is interrupted. The result names which happened (`action: "deleted"` or
+    `"interrupted"`); a prompt that already finished is a no-op.
   - `comfyui_progress` — panel events (current node, step progress, errors),
     the run record, the live `/queue` snapshot, and `hostRun`: the Host's own
-    tracking of a run started by `comfyui_run`, including the terminal status
-    and output file names. `hostRun` keeps working after the panel closes,
-    while step progress still needs the panel.
+    tracking of a run started by `comfyui_run` or by the panel's Queue button,
+    including the terminal status and output file names. `hostRun` keeps
+    working after the panel closes, while step progress still needs the panel.
   - `comfyui_edit` — add, remove, move, and reconnect nodes and set widget
     values inside the open panel through a Host → panel command channel. One
     batch is applied in order and answers with the node and link counts it left
@@ -263,20 +265,20 @@ than 16 pixels (exit code 2 when any do). Use it to judge a layout file, or
 - A session that never opened the panel shows no ComfyUI tools. After a Host
   restart a persisted session gets them back; a brand-new session gets them on
   its first panel sync.
-- Saving a run's output is not exposed yet. `comfyui_cancel` interrupts the
-  run this session queued, the bar's Cancel stops a running prompt, and
-  `comfyui_run` only queues it.
+- Saving a run's output is not exposed yet. `comfyui_cancel` removes a queued
+  prompt or interrupts a running one, and the bar's Cancel stops a running
+  prompt; `comfyui_run` only queues it.
 - The panel is an iframe, so it does not inherit DSH theme tokens; this is a
   deliberate exception for UI-workflow fidelity and third-party node UIs.
 - Execution events are relayed from the editor's own bus, so previews,
   per-node progress, elapsed time, and the bar's Cancel exist only while the
-  panel is mounted. The Host still tracks a run that `comfyui_run` queued until
-  that run ends, and `comfyui_progress` reports the queue position, terminal
-  status, and output file names in `hostRun` with the panel closed; a run
-  started from the panel's own Queue button before the panel opened shows its
-  queue entry but no step progress. The Host stops watching after 30 minutes
-  and reports `lost`, which means the run's end was not observed, not that it
-  failed.
+  panel is mounted. The Host starts its own watch for a run `comfyui_run`
+  queued, and for a run the panel's Queue button started when that run's first
+  execution event arrives, so `hostRun` keeps moving to its terminal status and
+  output file names after the panel closes. A run that started before this
+  panel attached has no `hostRun` and no step progress. The Host stops watching
+  after 30 minutes and reports `lost`, which means the run's end was not
+  observed, not that it failed.
 - A ComfyUI the plugin only adopted stays running when the plugin unloads: it did
   not start that process, and after a reload it cannot tell its own survivor from
   a server you launched by hand. Stop it from the panel first if you want it

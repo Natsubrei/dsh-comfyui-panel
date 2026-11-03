@@ -26,6 +26,8 @@ window.__ModuleLoader__.load({
     const TAB_KIND = 'comfyui'
     const PANEL_URL = '/comfyui/'
     const INTERRUPT_URL = `${PANEL_URL}interrupt`
+    /** How long a successful Cancel waits for its event before re-enabling. */
+    const CANCEL_FALLBACK_MS = 10_000
     const STATE_URL = '/api/comfyui/state'
     const EVENT_URL = '/api/comfyui/events'
     const COMMAND_POLL_URL = '/api/comfyui/commands/poll'
@@ -1718,6 +1720,8 @@ window.__ModuleLoader__.load({
       const [run, setRun] = useState(null)
       const runRef = useRef(null)
       runRef.current = run
+      /** Pending fallback for a successful Cancel; see `cancelRun`. */
+      const cancelTimerRef = useRef(null)
       /** Bumped once a second while a run with a start time is on screen. */
       const [runClock, setRunClock] = useState(0)
       const [previewUrl, setPreviewUrl] = useState('')
@@ -2029,12 +2033,24 @@ window.__ModuleLoader__.load({
       }, [])
 
       /**
+       * Drop the fallback timer a successful Cancel armed, if any.
+       * @returns {void}
+       */
+      const clearCancelTimer = useCallback(() => {
+        if (cancelTimerRef.current === null) return
+        clearTimeout(cancelTimerRef.current)
+        cancelTimerRef.current = null
+      }, [])
+
+      /**
        * Ask ComfyUI to stop this session's prompt.
        *
        * The button is disabled while the request is in flight and returns on a
        * failure; a success waits for `execution_interrupted` / `execution_error`
        * to end the run, because the server may still be tearing down the last
-       * node. No response, including a network error, reaches the console as an
+       * node. If that event never arrives, the fallback re-enables the button
+       * after `CANCEL_FALLBACK_MS` and leaves the progress line untouched.
+       * No response, including a network error, reaches the console as an
        * exception: the bar says it could not cancel and keeps the run.
        * @returns {Promise<void>} resolves when the request settles.
        */
@@ -2044,6 +2060,7 @@ window.__ModuleLoader__.load({
         if (current.cancel === 'busy') return
         const promptId = typeof current.promptId === 'string' ? current.promptId : ''
         if (promptId === '') return
+        clearCancelTimer()
         setRun(value => (value !== null && value.promptId === promptId && value.status === 'running')
           ? applyRunEvent(value, { kind: 'cancel', state: 'busy' })
           : value)
@@ -2055,12 +2072,25 @@ window.__ModuleLoader__.load({
             body: JSON.stringify({ prompt_id: promptId }),
           })
           if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          cancelTimerRef.current = setTimeout(() => {
+            cancelTimerRef.current = null
+            setRun(value => (value !== null && value.promptId === promptId && value.status === 'running' && value.cancel === 'busy')
+              ? applyRunEvent(value, { kind: 'cancel', state: 'none' })
+              : value)
+          }, CANCEL_FALLBACK_MS)
         } catch {
+          clearCancelTimer()
           setRun(value => (value !== null && value.promptId === promptId && value.status === 'running')
             ? applyRunEvent(value, { kind: 'cancel', state: 'failed' })
             : value)
         }
-      }, [])
+      }, [clearCancelTimer])
+
+      // The fallback belongs to one run. A new prompt or a status change makes
+      // it irrelevant; progress updates on the same running prompt leave it
+      // armed, or a busy server would keep the button disabled forever.
+      const cancelScope = run === null ? '' : `${run.promptId ?? ''}:${run.status ?? ''}`
+      useEffect(() => clearCancelTimer, [cancelScope, clearCancelTimer])
 
       // Execution events follow the socket that queued the prompt, and that is
       // the editor's own. Reading them from its event bus is what lets the

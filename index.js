@@ -371,6 +371,10 @@ export function apply(ctx, rawConfig = {}) {
     const event = normalizeEvent(body?.event)
     if (event === null) return json({ ok: false, error: 'event.kind is not a known ComfyUI event' }, 400)
     sessionStore.recordEvent(sessionId, event)
+    // The panel's Queue button only reaches the Host as events. Watching the
+    // prompt here keeps `hostRun` current once the panel is gone; `status` and
+    // `execution_cached` name no prompt to follow.
+    if (event.promptId !== null && TRACKED_EVENT_KINDS.has(event.kind)) trackRun(sessionId, event.promptId)
     return json({ ok: true, latest: sessionStore.latestRun(sessionId).latest })
   }
 
@@ -385,6 +389,9 @@ export function apply(ctx, rawConfig = {}) {
     'execution_error',
     'execution_interrupted',
   ])
+
+  /** Event kinds that carry a live prompt the Host should follow itself. */
+  const TRACKED_EVENT_KINDS = new Set(['execution_start', 'executing', 'progress'])
 
   function normalizeEvent(raw) {
     if (!isObject(raw)) return null
@@ -506,10 +513,15 @@ export function apply(ctx, rawConfig = {}) {
 
   /**
    * Start the Host's own poll for a prompt this session queued.
+   *
+   * A repeat call is a no-op: the tracker ignores a second watch, and a
+   * settled prompt must not be registered again after its mapping was dropped.
    * @param {string} sessionId - the session that queued it.
    * @param {string} promptId - the id ComfyUI returned.
    */
   function trackRun(sessionId, promptId) {
+    if (typeof promptId !== 'string' || promptId.length === 0) return
+    if (trackedRuns.has(promptId) || tracker.snapshot(promptId) !== null) return
     trackedRuns.set(promptId, sessionId)
     tracker.watch(sessionId, promptId)
   }
@@ -742,7 +754,7 @@ export function apply(ctx, rawConfig = {}) {
   function cancelTool(sessionId) {
     return {
       name: 'comfyui_cancel',
-      description: 'Cancel the run this session queued, or the given prompt id, by asking ComfyUI to interrupt it. Defaults to the latest run reported for this session. Cancelling a prompt that already finished is a no-op.',
+      description: 'Cancel the run this session queued, or the given prompt id. A prompt still waiting in the queue is removed from it; a running prompt is interrupted. Defaults to the latest run reported for this session. Cancelling a prompt that already finished is a no-op.',
       parameters: {
         type: 'object',
         properties: { promptId: { type: 'string', description: 'Optional prompt id to cancel; defaults to the latest run in this session.' } },
@@ -753,6 +765,23 @@ export function apply(ctx, rawConfig = {}) {
         const wanted = typeof args?.promptId === 'string' && args.promptId.length > 0 ? args.promptId : null
         const promptId = wanted ?? sessionStore.latestRun(sessionId).run?.promptId ?? null
         if (promptId === null || promptId.length === 0) throw new Error('No ComfyUI run to cancel in this session.')
+        // `/interrupt` only stops the prompt that is running. A queued prompt
+        // has to leave the queue instead, so ask where this one is first; a
+        // failed read is not proof either way, and the interrupt path below
+        // targets the id anyway.
+        const queue = await fetchJson('/queue', 2500).catch(() => null)
+        if (queue?.ok === true && queueHas(queue.data?.queue_pending, promptId)) {
+          const removed = await fetchJson('/queue', 10000, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ delete: [promptId] }),
+          }).catch(() => null)
+          if (removed?.ok === true) {
+            return { text: JSON.stringify({ cancelled: true, promptId, action: 'deleted' }, null, 2) }
+          }
+          // The prompt may have started between the read and the delete. The
+          // interrupt below is targeted, so it is a no-op when it did not.
+        }
         const response = await fetchJson('/interrupt', 10000, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -761,7 +790,7 @@ export function apply(ctx, rawConfig = {}) {
         if (response.ok !== true) {
           throw new Error(`ComfyUI did not accept the interrupt (HTTP ${response.status}): ${JSON.stringify(response.data)}`)
         }
-        return { text: JSON.stringify({ cancelled: true, promptId }, null, 2) }
+        return { text: JSON.stringify({ cancelled: true, promptId, action: 'interrupted' }, null, 2) }
       },
     }
   }
@@ -1546,6 +1575,18 @@ function queryOf(requestUrl) {
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/**
+ * Whether a ComfyUI `/queue` list holds one prompt. An entry is
+ * `[number, prompt_id, prompt, extra_data, outputs]`.
+ * @param {any} list - `queue_running` or `queue_pending`.
+ * @param {string} promptId - the prompt to find.
+ * @returns {boolean} whether the list holds it.
+ */
+function queueHas(list, promptId) {
+  if (!Array.isArray(list)) return false
+  return list.some(entry => Array.isArray(entry) && entry[1] === promptId)
 }
 
 const SEED_CONTROLS = new Set(['fixed', 'randomize', 'increment', 'decrement'])

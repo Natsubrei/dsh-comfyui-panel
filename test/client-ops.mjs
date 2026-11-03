@@ -1046,6 +1046,18 @@ const stage = (service, extra = {}) => overlayPlan({
   const cancelled = applyRunEvent(busy, { kind: 'execution_interrupted', promptId: 'p1' }, 5_000)
   assert.equal(cancelled.cancel, 'none')
   assert.equal(cancelled.preview, null)
+
+  // The component arms a 10 s fallback after a successful request; its release
+  // is the same Cancel transition with no state, which must leave the run and
+  // its progress exactly as they were.
+  const released = applyRunEvent(busy, { kind: 'cancel', state: 'none' }, 13_000)
+  assert.equal(released.cancel, 'none')
+  assert.equal(released.status, 'running')
+  assert.equal(released.node, busy.node)
+  assert.equal(released.value, busy.value)
+  assert.equal(released.max, busy.max)
+  assert.equal(runLabel(released, text, 13_000), runLabel(busy, text, 13_000), 'the progress line does not move')
+  assert.equal(cancelLabel(released, text), en.runCancel, 'the button is usable again')
 }
 
 // The bar is the only place Cancel and the thumbnail exist, and its tree is
