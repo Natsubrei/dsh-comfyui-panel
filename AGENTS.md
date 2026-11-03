@@ -127,18 +127,27 @@ name is not the leak. A hit in history means a history rewrite, not a new
 commit: fix the file, then rewrite the affected commits before publishing, and
 re-run the same check until it is quiet.
 
-A release is a commit plus an index entry that pins it:
+A release is a commit plus an index entry that pins it, and the tag names the
+commit that carries both:
 
 1. Bump `package.json` and rename the CHANGELOG `Unreleased` section to that
    version.
-2. Commit, then tag: `git tag v<version> && git push origin main --tags`.
-   This commit cannot pass the pre-commit hook: the index still pins the
-   previous release and `npm test` says so. Commit it with `--no-verify`; step 4
-   turns the suite green again before anything is pushed.
+2. Commit it with `--no-verify`. This commit cannot pass the pre-commit hook or
+   CI: the index still pins the previous release and `npm test` says so. That is
+   expected — the next step supplies the index, and step 5 gives the release a
+   green commit to point at.
 3. `npm run market` — writes `market/index.json` with `version` pinned to that
-   commit and its commit time as `publishTimestamp`, keeping older versions.
+   release commit and its commit time as `publishTimestamp`, keeping older
+   versions.
 4. `npm test` (validates the index against the real validator), then commit
-   `market/index.json` and push.
+   `market/index.json`.
+5. Tag this second commit, not the version bump: `git tag v<version>`, then
+   `git push origin main --tags`. The tag points at a commit whose CI is green,
+   while the index still installs the release commit it pins.
+
+Do not move a published tag to fix a red run; cut the next patch release
+instead. The exception is a tag that was moved within the same release before
+anyone installed it.
 
 Do not edit `market/index.json` by hand: the commit SHA, the timestamp, and
 `engines.dsh` must agree with the commit and the package, and the test says so.
