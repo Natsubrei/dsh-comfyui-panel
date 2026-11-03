@@ -150,6 +150,8 @@ function createStorage(state = { sessions: new Map(), workflows: new Map(), sett
 
 const execOf = sessionId => ({ agent: { session: { id: sessionId } }, signal: new AbortController().signal })
 const parse = value => JSON.parse(value.text)
+/** The diagnostics row for one layer, or undefined when the report has no such row. */
+const diagnosticRow = (report, layer) => report.diagnostics.find(row => row.layer === layer)
 
 // ── Mock ComfyUI upstream ─────────────────────────────────────────────────
 
@@ -167,6 +169,8 @@ const mockHistory = {
 }
 /** The prompt id the next /prompt call returns. */
 let promptIdToReturn = 'p1'
+/** The frontend version the mock /system_stats reports; one test changes it. */
+let frontendVersionToReport = '1.57.1'
 
 const upstream = http.createServer((req, res) => {
   upstreamCookies.push(req.headers.cookie ?? '')
@@ -176,7 +180,7 @@ const upstream = http.createServer((req, res) => {
       system: {
         comfyui_version: '0.42.0',
         comfy_package_versions: [
-          { name: 'comfyui-frontend-package', installed: '1.57.1', required: '1.57.1' },
+          { name: 'comfyui-frontend-package', installed: frontendVersionToReport, required: '1.57.1' },
         ],
       },
     }))
@@ -524,6 +528,36 @@ assert.equal(status.panelConnected, false)
 assert.equal(status.frontend.status, 'verified')
 assert.equal(status.frontend.installed, '1.57.1')
 
+// Not connected is the first-use state: the panel row names it and carries the
+// next step, while every other layer is still readable.
+assert.equal(status.diagnostics.length, 7)
+assert.deepEqual(
+  status.diagnostics.map(row => row.layer),
+  ['upstream', 'frontend', 'panel', 'commandChannel', 'storage', 'supervisor', 'workflow'],
+)
+assert.equal(diagnosticRow(status, 'upstream').ok, true)
+assert.equal(diagnosticRow(status, 'frontend').ok, true)
+assert.equal(diagnosticRow(status, 'panel').ok, false)
+assert.ok(diagnosticRow(status, 'panel').action, 'a closed panel carries the next step')
+assert.equal(diagnosticRow(status, 'commandChannel').ok, false)
+assert.equal(diagnosticRow(status, 'storage').ok, true)
+assert.equal(diagnosticRow(status, 'supervisor').ok, true)
+assert.equal(diagnosticRow(status, 'workflow').ok, true)
+
+// A different frontend than the one this panel was verified against is a
+// frontend fault, not an upstream fault.
+frontendVersionToReport = '1.60.0'
+try {
+  const mismatch = parse(await s1.tools.get('comfyui_status').execute({}, exec))
+  const frontend = diagnosticRow(mismatch, 'frontend')
+  assert.equal(frontend.ok, false)
+  assert.match(frontend.detail, /1\.60\.0/)
+  assert.match(frontend.action, /1\.57\.1/)
+  assert.equal(diagnosticRow(mismatch, 'upstream').ok, true, 'the upstream still answers')
+} finally {
+  frontendVersionToReport = '1.57.1'
+}
+
 const read = parse(await s1.tools.get('comfyui_graph_read').execute({}, exec))
 assert.equal(read.projectedFrom, 'panel')
 assert.equal(read.linkCount, 1)
@@ -749,6 +783,15 @@ const pollPromise = host.fetches.get('/api/comfyui/commands/poll').fetch(new Req
 ))
 await delay(30)
 assert.equal(parse(await s1.tools.get('comfyui_status').execute({}, exec)).panelConnected, true)
+
+// A parked poll is the healthy first-run state: every layer reports ok.
+const healthy = parse(await s1.tools.get('comfyui_status').execute({}, exec))
+assert.equal(healthy.diagnostics.length, 7)
+for (const row of healthy.diagnostics) assert.equal(row.ok, true, `${row.layer} should be ok`)
+assert.equal(diagnosticRow(healthy, 'panel').ok, true)
+assert.equal(diagnosticRow(healthy, 'commandChannel').ok, true)
+assert.match(diagnosticRow(healthy, 'frontend').detail, /verified frontend 1\.57\.1/)
+assert.equal(healthy.diagnostics.some(row => row.warn === true), false, 'a fully healthy report has no warnings')
 const editPromise = s1.tools.get('comfyui_edit').execute({ operations: [{ op: 'set_widget', id: 7, name: 'steps', value: 6 }] }, exec)
 const polled = await (await pollPromise).json()
 assert.equal(polled.command.operations[0].op, 'set_widget')
@@ -1482,10 +1525,23 @@ assert.throws(
   assert.equal(applySeedControls(workflow, edited, () => 0.5, cursor).seeds[8].value, 101)
 }
 
+// ── Diagnostics: upstream down ────────────────────────────────────────────
+
+// The first-use failure this report exists for: the upstream row names it and
+// carries the next step, while an unknown frontend stays a warning, not an
+// error.
+await new Promise(resolve => upstream.close(resolve))
+const offline = parse(await s1Again.tools.get('comfyui_status').execute({}, execOf('s1')))
+const offlineUpstream = diagnosticRow(offline, 'upstream')
+assert.equal(offlineUpstream.ok, false)
+assert.ok(offlineUpstream.detail.length > 0)
+assert.ok(offlineUpstream.action, 'a failed upstream carries the next step')
+assert.equal(diagnosticRow(offline, 'frontend').ok, true, 'an unknown frontend is not an error')
+assert.equal(diagnosticRow(offline, 'supervisor').ok, false, 'nothing is serving and nothing is managed')
+
 host.dispose()
 host2.dispose()
 
 console.log('host smoke test passed')
 
 await new Promise(resolve => proxyServer.close(resolve))
-await new Promise(resolve => upstream.close(resolve))

@@ -65,7 +65,12 @@ read on for the panel itself.
 - Registers thirteen model tools **on the Agent context of each session that has a
   synced workflow**. Other sessions see no ComfyUI tools:
   - `comfyui_status` — upstream reachability, panel connection, workflow
-    summary, persistence backend, supervisor state, and the latest run.
+    summary, persistence backend, supervisor state, and the latest run. Its
+    `diagnostics` array has one row per layer (`upstream`, `frontend`, `panel`,
+    `commandChannel`, `storage`, `supervisor`, `workflow`) with `ok`, a
+    one-sentence `detail`, and an `action` when that layer needs a next step;
+    `warn: true` with `ok: true` marks a working but degraded layer, such as an
+    unreported frontend version.
   - `comfyui_graph_read` — the semantic projection: per node `id`, `type`,
     `title`, `mode`, `widgets` (`name -> value`), and `inputs`
     (`name -> "<sourceNodeId>:<slot>"`). `layout=true` returns the canvas boxes

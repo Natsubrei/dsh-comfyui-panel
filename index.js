@@ -33,6 +33,13 @@ import { createRunTracker, TERMINAL_RUN_STATUSES } from './run-tracker.js'
 
 export { takeCommand } from './commands.js'
 
+/**
+ * One row of `comfyui_status.diagnostics`. `ok: false` names a broken layer and
+ * carries the next step in `action`; `warn: true` with `ok: true` marks a layer
+ * that works but is degraded.
+ * @typedef {{ layer: string, ok: boolean, warn?: boolean, detail: string, action?: string }} DiagnosticRow
+ */
+
 /** Required Host services: the HTTP carrier, its auth admission, and the Tool registry. */
 export const inject = ['webServer', 'connection', 'tools']
 
@@ -566,6 +573,146 @@ export function apply(ctx, rawConfig = {}) {
     sessionStore.trackTools(sessionId, dispose)
   }
 
+  /**
+   * One row per layer between the model and a ComfyUI run, in request order.
+   * Every fact here is already held by this Host; the helper sends nothing and
+   * probes nothing. `warn` marks a layer that still works but is degraded — an
+   * unreported frontend version, or a synced workflow without an API prompt.
+   *
+   * @param {string} sessionId - the session whose panel and workflow are described.
+   * @param {{ ok: boolean, status: number, data: any, error?: string }} health - the one `/system_stats` read.
+   * @returns {DiagnosticRow[]} the rows `comfyui_status` reports.
+   */
+  function layerDiagnostics(sessionId, health) {
+    const upstreamOk = health.ok === true
+    const frontend = frontendReport(upstreamOk ? health.data : null)
+    const state = sessionStore.get(sessionId)
+    const persistenceFacts = persistence()
+    const serviceFacts = service.snapshot()
+    const panelConnected = commands.connected(sessionId)
+    const commandWaiting = commands.waiting(sessionId)
+    const synced = state !== undefined
+    const hasPrompt = synced && state.prompt !== null && state.prompt !== undefined
+    const supervised = serviceFacts.owned === true
+    const starting = serviceFacts.state === 'starting' || serviceFacts.state === 'restarting'
+    const failure = health.status > 0 ? `HTTP ${health.status}` : (health.error ?? 'no response')
+    const pid = Number.isInteger(serviceFacts.pid) ? ` (pid ${serviceFacts.pid})` : ''
+
+    /** @type {DiagnosticRow} */
+    const supervisor = serviceFacts.state === 'failed'
+      ? {
+          layer: 'supervisor',
+          ok: false,
+          detail: `ComfyUI failed to start: ${serviceFacts.lastError ?? 'the supervisor stopped restarting it'}.`,
+          action: 'Check the configured ComfyUI directory and its log, then start it again from the panel.',
+        }
+      : starting
+        ? {
+            layer: 'supervisor',
+            ok: true,
+            detail: `The panel is bringing ComfyUI up (${serviceFacts.state})${pid}.`,
+          }
+        : upstreamOk
+          ? {
+              layer: 'supervisor',
+              ok: true,
+              detail: supervised && serviceFacts.state !== 'external'
+                ? `The panel manages the ComfyUI process${pid}.`
+                : 'ComfyUI answers on its own; the panel does not manage this process.',
+            }
+          : supervised
+            ? {
+                layer: 'supervisor',
+                ok: false,
+                detail: serviceFacts.state === 'running'
+                  ? `The panel-managed ComfyUI process is not answering${pid}.`
+                  : 'The panel manages ComfyUI, but it is not running.',
+                action: serviceFacts.state === 'running'
+                  ? 'Restart ComfyUI from the panel, or check its log.'
+                  : 'Start ComfyUI from the panel.',
+              }
+            : {
+                layer: 'supervisor',
+                ok: false,
+                detail: 'ComfyUI is not running and the panel is not managing it.',
+                action: 'Start ComfyUI from the panel, or point upstream at a running server.',
+              }
+
+    return [
+      {
+        layer: 'upstream',
+        ok: upstreamOk,
+        detail: upstreamOk
+          ? `Upstream ${upstream.href} answered /system_stats with HTTP ${health.status}.`
+          : `Upstream ${upstream.href} did not answer /system_stats: ${failure}.`,
+        ...(upstreamOk ? {} : { action: 'Start ComfyUI from the panel, or point upstream at a running server.' }),
+      },
+      {
+        layer: 'frontend',
+        ok: frontend.status !== 'mismatch',
+        ...(frontend.status === 'verified' ? {} : { warn: true }),
+        detail: frontend.status === 'verified'
+          ? `ComfyUI reports the verified frontend ${frontend.expected}.`
+          : frontend.status === 'mismatch'
+            ? `ComfyUI reports frontend ${frontend.installed}, but this panel was verified against ${frontend.expected}.`
+            : upstreamOk
+              ? `ComfyUI did not report a frontend version; this panel was verified against ${frontend.expected}.`
+              : 'The frontend version is unknown until the upstream answers.',
+        ...(frontend.status === 'mismatch'
+          ? { action: `Install the ${frontend.expected} frontend, or update this plugin for ${frontend.installed}.` }
+          : {}),
+      },
+      {
+        layer: 'panel',
+        ok: panelConnected,
+        detail: panelConnected
+          ? 'The ComfyUI panel is connected in this session.'
+          : 'The ComfyUI panel is not connected in this session.',
+        ...(panelConnected ? {} : { action: 'Open the ComfyUI tab in this session and wait for Connected.' }),
+      },
+      {
+        layer: 'commandChannel',
+        ok: commandWaiting,
+        detail: commandWaiting
+          ? 'The panel is waiting for commands.'
+          : panelConnected
+            ? 'The panel is connected but is not polling for commands right now.'
+            : 'No panel is waiting for commands.',
+        ...(commandWaiting
+          ? {}
+          : { action: panelConnected
+              ? 'Reload the ComfyUI tab so it reopens its command long-poll.'
+              : 'Open the ComfyUI tab in this session so it can take commands.' }),
+      },
+      {
+        layer: 'storage',
+        ok: persistenceFacts.backend === 'storage',
+        detail: persistenceFacts.backend === 'storage'
+          ? 'Workflows persist in the dsh_comfyui storage domain.'
+          : `Workflows are kept in memory only (${persistenceFacts.reason ?? 'the storage domain is unavailable'}).`,
+        ...(persistenceFacts.backend === 'storage'
+          ? {}
+          : { action: 'Fix the storage backend, or export the workflow to a file with comfyui_workflow_export.' }),
+      },
+      supervisor,
+      {
+        layer: 'workflow',
+        ok: synced,
+        ...(synced && !hasPrompt ? { warn: true } : {}),
+        detail: !synced
+          ? 'No workflow has synced in this session.'
+          : hasPrompt
+            ? `Workflow revision ${state.revision} is synced with an API prompt for ${Object.keys(state.prompt).length} nodes.`
+            : `Workflow revision ${state.revision} is synced, but no API prompt is available to run it.`,
+        ...(synced
+          ? hasPrompt
+            ? {}
+            : { action: 'Wait for the panel to finish syncing, or re-open the workflow in the editor so app.graphToPrompt() returns a prompt.' }
+          : { action: 'Open the ComfyUI tab in this session and wait for the workflow to sync.' }),
+      },
+    ]
+  }
+
   function statusTool(sessionId) {
     return {
       name: 'comfyui_status',
@@ -588,6 +735,7 @@ export function apply(ctx, rawConfig = {}) {
             persistence: persistence(),
             service: service.snapshot(),
             frontend: frontendReport(health.ok === true ? health.data : null),
+            diagnostics: layerDiagnostics(sessionId, health),
           }, null, 2),
         }
       },
