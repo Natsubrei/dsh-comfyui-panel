@@ -3,7 +3,7 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
-## Unreleased
+## 0.8.0
 
 - A ComfyUI that starts after the plugin, or survives a plugin reload, is now
   adopted as soon as the panel or `comfyui_status` sees it healthy. Before,
