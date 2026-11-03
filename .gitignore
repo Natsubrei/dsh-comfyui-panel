@@ -5,3 +5,6 @@ node_modules
 .DS_Store
 # Screenshots and the report written by `npm run ui`.
 .ui-out/
+
+# Local research notes; kept out of the published tree.
+.notes/
