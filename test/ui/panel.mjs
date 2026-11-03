@@ -431,6 +431,66 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
   record('editor events reach the bar', dispatched && runText.includes('3/7'),
     runText === '' ? 'the bar never showed the dispatched run' : runText)
 
+  // Preview, per-node progress, and Cancel are panel-local: they never reach
+  // the Host, so the browser is the only place they can be proved. Dispatch
+  // the same bus events the editor's socket handler would.
+  const previewDispatched = await browser.evaluate(`(() => {
+    const win = document.querySelector('${DOM.frame}')?.contentWindow
+    const api = win?.comfyAPI?.app?.app?.api
+    if (typeof api?.dispatchCustomEvent !== 'function') return false
+    const bytes = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='), c => c.charCodeAt(0))
+    api.dispatchCustomEvent('b_preview', new Blob([bytes], { type: 'image/png' }))
+    return true
+  })()`)
+  await sleep(500)
+  const previewSrc = await browser.evaluate(`(() => {
+    const img = document.querySelector('.dsh-comfyui-preview')
+    return img === null ? null : (img.getAttribute('src') ?? '')
+  })()`)
+  record('preview reaches the bar', previewDispatched === true && typeof previewSrc === 'string' && previewSrc.startsWith('blob:'),
+    previewSrc === null ? 'no thumbnail appeared' : String(previewSrc).slice(0, 24))
+
+  await browser.evaluate(`(() => {
+    const win = document.querySelector('${DOM.frame}')?.contentWindow
+    const api = win?.comfyAPI?.app?.app?.api
+    if (typeof api?.dispatchCustomEvent !== 'function') return false
+    api.dispatchCustomEvent('progress_state', { prompt_id: 'ui-check-probe', nodes: { 9: { value: 4, max: 8, state: 'running' } } })
+    return true
+  })()`)
+  await sleep(400)
+  const nodeText = await browser.evaluate(`document.querySelector('.dsh-comfyui-run')?.textContent ?? ''`)
+  record('per-node progress reaches the bar', nodeText.includes('4/8') && nodeText.includes('9'), nodeText)
+
+  const cancelReady = await browser.evaluate(`(() => {
+    const win = document.querySelector('${DOM.frame}')?.contentWindow
+    const api = win?.comfyAPI?.app?.app?.api
+    if (typeof api?.dispatchCustomEvent !== 'function') return false
+    window.__dshUiCheckFetch = window.fetch
+    window.fetch = (input, init) => String(input).includes('/interrupt')
+      ? Promise.resolve(new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } }))
+      : window.__dshUiCheckFetch(input, init)
+    api.dispatchCustomEvent('execution_start', { prompt_id: 'ui-check-cancel' })
+    return true
+  })()`)
+  await sleep(400)
+  const cancelLabelBefore = await browser.evaluate(`(() => {
+    const button = document.querySelector('[data-action="cancel"]')
+    return button === null ? null : button.textContent
+  })()`)
+  await browser.evaluate(`document.querySelector('[data-action="cancel"]')?.click()`)
+  await sleep(400)
+  const cancelLabelBusy = await browser.evaluate(`document.querySelector('[data-action="cancel"]')?.textContent ?? ''`)
+  // The fallback timer is 10 s; this wait proves the button re-enables even
+  // though no interruption event ever arrives.
+  await sleep(10_500)
+  const cancelLabelAfter = await browser.evaluate(`(() => {
+    const button = document.querySelector('[data-action="cancel"]')
+    return button === null ? null : { text: button.textContent, disabled: button.disabled }
+  })()`)
+  record('Cancel shows progress and recovers',
+    cancelReady === true && cancelLabelBefore !== null && cancelLabelBusy.includes('…') && cancelLabelAfter?.text === 'Cancel' && cancelLabelAfter?.disabled === false,
+    cancelLabelAfter === null ? 'the Cancel button disappeared' : `${String(cancelLabelBefore)} → ${String(cancelLabelBusy)} → ${String(cancelLabelAfter.text)}`)
+
   // Fit goes through ComfyUI's own command, which frames the selection when
   // one exists and the whole graph otherwise; either way the camera changes.
   if (graph.nodes === 0) {

@@ -36,6 +36,9 @@ check says so when it sees a URL without `?token=…`.
 | zooming does not count as an edit | the viewport must not bump the revision |
 | a widget edit bumps the revision once | real edits still do, exactly once |
 | editor events reach the bar | execution events relayed from the editor's bus actually arrive |
+| preview reaches the bar | a `b_preview` Blob becomes a thumbnail with an object URL |
+| per-node progress reaches the bar | `progress_state` reduces to the running node and its steps |
+| Cancel shows progress and recovers | the bar's Cancel disables as "Cancelling…" and re-enables after the 10 s fallback when no interruption event arrives |
 | Fit frames the graph | the Fit button goes through ComfyUI's own command |
 | no errors from the panel | no exception or unnamed console error during the run |
 
