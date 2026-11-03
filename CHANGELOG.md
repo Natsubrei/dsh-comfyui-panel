@@ -3,6 +3,13 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
+## Unreleased
+
+- Releases can be cut from GitHub Actions: Actions -> release -> Run workflow
+  runs the suite, creates the version and market-index commits, tags the index
+  commit, and creates the GitHub Release. Publishing to npm stays a manual
+  `npm publish` from the released tag.
+
 ## 0.8.0
 
 - A ComfyUI that starts after the plugin, or survives a plugin reload, is now
