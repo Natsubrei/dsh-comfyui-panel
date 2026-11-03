@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { apply, applySeedControls, redactCookieHeader, redactRawHeaderPairs, takeCommand } from '../index.js'
+import { apply, applySeedControls, collectOutputImages, outputImageMediaType, redactCookieHeader, redactRawHeaderPairs, takeCommand } from '../index.js'
 import { createCommandChannel } from '../commands.js'
 import { createSessionStore } from '../session-store.js'
 import { createSupervisor } from '../supervisor.js'
@@ -31,7 +31,7 @@ const SUPERVISOR_PORT = PORT_BASE + 3
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 
 /** One Host stand-in: routes, tools, agents, and a shared storage medium. */
-function createHost(storage) {
+function createHost(storage, services = new Map()) {
   const routes = new Map()
   const fetches = new Map()
   const handlers = new Map()
@@ -41,6 +41,7 @@ function createHost(storage) {
     routes,
     fetches,
     agents,
+    services,
     logger: { info() {}, warn() {}, error() {} },
     effect(factory) {
       const dispose = factory()
@@ -64,7 +65,7 @@ function createHost(storage) {
     get(name) {
       if (name === 'agents') return { get: id => agents.get(id), list: () => [...agents.values()] }
       if (name === 'storageDomain') return storage
-      return undefined
+      return services.get(name)
     },
     emit(event, payload) {
       for (const handler of handlers.get(event) ?? []) handler(payload)
@@ -148,7 +149,13 @@ function createStorage(state = { sessions: new Map(), workflows: new Map(), sett
   }
 }
 
-const execOf = sessionId => ({ agent: { session: { id: sessionId } }, signal: new AbortController().signal })
+const execOf = sessionId => ({
+  agent: {
+    session: { id: sessionId },
+    options: { provider: 'mock-llm', model: 'mock-vision' },
+  },
+  signal: new AbortController().signal,
+})
 const parse = value => JSON.parse(value.text)
 
 // ── Mock ComfyUI upstream ─────────────────────────────────────────────────
@@ -167,6 +174,13 @@ const mockHistory = {
 }
 /** The prompt id the next /prompt call returns. */
 let promptIdToReturn = 'p1'
+/** Query parameters the mock received on /view, newest last. */
+const viewRequests = []
+/** A real 1x1 PNG, so the attachment stand-in receives decodable bytes. */
+const PNG_BYTES = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+)
 
 const upstream = http.createServer((req, res) => {
   upstreamCookies.push(req.headers.cookie ?? '')
@@ -180,6 +194,13 @@ const upstream = http.createServer((req, res) => {
         ],
       },
     }))
+    return
+  }
+  if (req.url.startsWith('/view')) {
+    const url = new URL(req.url, 'http://127.0.0.1')
+    viewRequests.push(Object.fromEntries(url.searchParams))
+    res.writeHead(200, { 'content-type': 'image/png', 'content-length': PNG_BYTES.length })
+    res.end(PNG_BYTES)
     return
   }
   if (req.url === '/prompt' && req.method === 'POST') {
@@ -659,8 +680,145 @@ assert.equal(interruptedBodies.at(-1)?.prompt_id, run.prompt_id)
   await s3.tools.get('comfyui_run').execute({}, execOf('s3'))
   assert.match(queuedBodies.at(-1)?.client_id ?? '', /^dsh-comfyui-/)
 }
-const waited = parse(await s1.tools.get('comfyui_run').execute({ wait: true, timeoutMs: 3000 }, exec))
+// The output-image collector is pure: only `type: 'output'` entries count, the
+// order is ComfyUI's, and no run carries more than four images.
+const OUTPUT_IMAGES = [
+  { filename: 'dsh-run_0001_.png', subfolder: '', type: 'output' },
+  { filename: 'dsh-run_0002_.png', subfolder: 'batch', type: 'output' },
+  { filename: 'dsh-run_0003_.png', subfolder: '', type: 'temp' },
+  { filename: 'dsh-run_0004_.png', subfolder: '', type: 'output' },
+  { filename: 'dsh-run_0005_.png', subfolder: '', type: 'output' },
+  { filename: 'dsh-run_0006_.png', subfolder: '', type: 'output' },
+]
+mockHistory.p1.outputs = { 7: { images: OUTPUT_IMAGES } }
+assert.deepEqual(
+  collectOutputImages(mockHistory.p1).map(image => image.filename),
+  ['dsh-run_0001_.png', 'dsh-run_0002_.png', 'dsh-run_0004_.png', 'dsh-run_0005_.png'],
+  'only output images count, capped at four in report order',
+)
+assert.deepEqual(
+  collectOutputImages({ outputs: { 1: { images: [{ filename: 'preview.png', subfolder: '', type: 'temp' }] } } }),
+  [],
+)
+assert.equal(outputImageMediaType('frame.PNG', 'application/octet-stream'), 'image/png')
+assert.equal(outputImageMediaType('frame', 'image/jpeg'), 'image/jpeg')
+assert.equal(outputImageMediaType('frame', 'image/gif'), undefined)
+
+// The fake attachment store decodes nothing, but it is the same save contract
+// the Host uses: bytes + declared media type in, a durable ref out. The fake
+// model route declares image input; `comfyui_run` must prove that before it
+// puts an image block in a result.
+const savedImages = []
+const fakeAttachments = {
+  imageLimits: {
+    maxImageBytes: 20 * 1024 * 1024,
+    maxImagesPerMessage: 8,
+    maxMessageImageBytes: 80 * 1024 * 1024,
+    maxImagePixels: 16_777_216,
+    maxImageDimension: 16_384,
+    mediaTypes: ['image/png', 'image/jpeg', 'image/webp'],
+  },
+  async saveImage(input) {
+    if (input.name === 'broken.png') throw new Error('the bytes do not decode as an image')
+    savedImages.push(input)
+    return {
+      attachmentId: `att-${savedImages.length}`,
+      mediaType: input.mediaType,
+      bytes: input.data.byteLength,
+      width: 1,
+      height: 1,
+      name: input.name,
+    }
+  },
+}
+const fakeLlm = {
+  inputModalities: ['text', 'image'],
+  async resolveModelInfo() { return { inputModalities: fakeLlm.inputModalities } },
+}
+host.services.set('attachments', fakeAttachments)
+host.services.set('llm', fakeLlm)
+
+const runTool = s1.tools.get('comfyui_run')
+const waitedValue = await runTool.execute({ wait: true, timeoutMs: 3000 }, exec)
+const waited = JSON.parse(waitedValue.text)
 assert.equal(waited.history.status.status_str, 'success')
+assert.deepEqual(waited.images, ['dsh-run_0001_.png', 'dsh-run_0002_.png', 'dsh-run_0004_.png', 'dsh-run_0005_.png'])
+assert.equal(waited.attachments, 'inline')
+assert.equal('imageNote' in waited, false)
+assert.equal('skippedImages' in waited, false)
+assert.equal(waitedValue.images.length, 4)
+assert.deepEqual(
+  waitedValue.images.map(value => value.attachment.attachmentId),
+  ['att-1', 'att-2', 'att-3', 'att-4'],
+)
+assert.equal(waitedValue.images[0].attachment.mediaType, 'image/png')
+assert.deepEqual(savedImages.map(input => input.name), waited.images)
+assert.deepEqual(viewRequests.at(-1), { filename: 'dsh-run_0005_.png', subfolder: '', type: 'output' })
+const rendered = runTool.output.render({ wait: true }, waitedValue)
+assert.equal(rendered.length, 5)
+assert.equal(rendered[0].type, 'text')
+assert.match(rendered[0].text, /"attachments": "inline"/)
+assert.deepEqual(
+  rendered.slice(1).map(block => block.attachment.attachmentId),
+  ['att-1', 'att-2', 'att-3', 'att-4'],
+)
+
+// No attachment service: the run result survives as text, names its images,
+// and says the images did not come inline.
+{
+  const attachments = host.services.get('attachments')
+  host.services.delete('attachments')
+  try {
+    const degradedValue = await runTool.execute({ wait: true, timeoutMs: 3000 }, exec)
+    const degraded = JSON.parse(degradedValue.text)
+    assert.equal(degraded.attachments, 'unavailable')
+    assert.deepEqual(degraded.images, waited.images)
+    assert.match(degraded.imageNote, /no attachment service is mounted/)
+    assert.equal('images' in degradedValue, false)
+  } finally {
+    host.services.set('attachments', attachments)
+  }
+}
+
+// A text-only model route is the same text fallback: attaching an image block
+// there would make the next model request fail instead of losing only the image.
+{
+  fakeLlm.inputModalities = ['text']
+  try {
+    const refusedValue = await runTool.execute({ wait: true, timeoutMs: 3000 }, exec)
+    const refused = JSON.parse(refusedValue.text)
+    assert.equal(refused.attachments, 'unavailable')
+    assert.match(refused.imageNote, /does not declare image input/)
+    assert.equal('images' in refusedValue, false)
+  } finally {
+    fakeLlm.inputModalities = ['text', 'image']
+  }
+}
+
+// One image the attachment store refuses is skipped with its reason; the
+// others still arrive.
+{
+  mockHistory.p1.outputs = {
+    7: {
+      images: [
+        { filename: 'dsh-good_0001_.png', subfolder: '', type: 'output' },
+        { filename: 'broken.png', subfolder: '', type: 'output' },
+      ],
+    },
+  }
+  try {
+    const partialValue = await runTool.execute({ wait: true, timeoutMs: 3000 }, exec)
+    const partial = JSON.parse(partialValue.text)
+    assert.equal(partial.attachments, 'inline')
+    assert.deepEqual(partial.images, ['dsh-good_0001_.png', 'broken.png'])
+    assert.equal(partialValue.images.length, 1)
+    assert.equal(partial.skippedImages.length, 1)
+    assert.equal(partial.skippedImages[0].filename, 'broken.png')
+    assert.match(partial.skippedImages[0].reason, /refused it/)
+  } finally {
+    mockHistory.p1.outputs = { 7: { images: OUTPUT_IMAGES } }
+  }
+}
 
 const sendEvent = event => host.fetches.get('/api/comfyui/events').fetch(new Request(
   'http://127.0.0.1/api/comfyui/events',

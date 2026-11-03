@@ -73,7 +73,11 @@ read on for the panel itself.
   - `comfyui_run` — submit the synced API prompt and return the `prompt_id`;
     optionally wait for history. The Host keeps tracking the run after the
     call returns, with or without the panel, and the output PNG carries the UI
-    workflow, so dragging it back into ComfyUI restores the graph.
+    workflow, so dragging it back into ComfyUI restores the graph. With
+    `wait=true`, a successful run's output images (up to four) come back as
+    image attachments beside the text, so they appear in the conversation;
+    without an attachment service, or when the calling model route does not
+    accept images, the result falls back to text and names the files.
   - `comfyui_cancel` — interrupt the run this session queued, or a given prompt
     id; a prompt that already finished is a no-op.
   - `comfyui_progress` — panel events (current node, step progress, errors),
@@ -263,9 +267,11 @@ than 16 pixels (exit code 2 when any do). Use it to judge a layout file, or
 - A session that never opened the panel shows no ComfyUI tools. After a Host
   restart a persisted session gets them back; a brand-new session gets them on
   its first panel sync.
-- Saving a run's output is not exposed yet. `comfyui_cancel` interrupts the
-  run this session queued, the bar's Cancel stops a running prompt, and
-  `comfyui_run` only queues it.
+- Output images ride the `comfyui_run` result only for `wait=true`; a
+  non-waiting call still just queues the prompt and returns its `prompt_id`.
+  A run returns at most four `type: 'output'` images, 20 MB each, and only
+  when the attachment service and the calling model route both accept images.
+  Otherwise the result stays plain text and names the output files.
 - The panel is an iframe, so it does not inherit DSH theme tokens; this is a
   deliberate exception for UI-workflow fidelity and third-party node UIs.
 - Execution events are relayed from the editor's own bus, so previews,
