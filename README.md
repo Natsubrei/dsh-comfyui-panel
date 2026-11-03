@@ -206,7 +206,11 @@ Unloading the plugin stops only a process it started.
   is left alone.
 - Adopting an already-running ComfyUI (so Stop and Restart keep working after
   a reload) needs Linux `/proc` or `lsof`. Without either, that server stays
-  external. Starting one from the panel does not need either tool.
+  external. Starting one from the panel does not need either tool. Adoption is
+  retried whenever the panel or `comfyui_status` sees a healthy upstream, so a
+  ComfyUI that starts after the plugin is still taken over; a listener whose
+  working directory is not the configured checkout stays external, with its
+  pid reported and Stop/Restart unavailable.
 
 ## Try it without ComfyUI
 

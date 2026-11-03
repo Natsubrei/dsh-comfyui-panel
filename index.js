@@ -477,6 +477,12 @@ export function apply(ctx, rawConfig = {}) {
    */
   async function serviceView() {
     const stats = await readSystemStats()
+    // A ComfyUI that started after the plugin, or survived a reload, is adopted
+    // by the first view that sees it healthy. Without this the panel would show
+    // it as External forever and no button could manage it.
+    if (stats.ok === true) {
+      await service.adopt(true).catch(error => ctx.logger?.warn(`dsh-comfyui: could not adopt ComfyUI: ${String(error)}`))
+    }
     return {
       ...service.snapshot(),
       health: stats.ok === true,
@@ -737,6 +743,9 @@ export function apply(ctx, rawConfig = {}) {
       async execute() {
         const state = sessionStore.get(sessionId)
         const health = await readSystemStats()
+        // Status is the one tool that already probes; adopting here covers a
+        // panel that is closed when the server starts late.
+        if (health.ok === true) await service.adopt(true).catch(() => {})
         return {
           text: JSON.stringify({
             sessionId,

@@ -1655,8 +1655,11 @@ const savedService = await saveService.json()
 assert.equal(saveService.status, 200)
 assert.equal(savedService.ok, true)
 assert.equal(savedService.settings.cwd, comfyRoot)
-assert.equal(savedService.state, 'stopped')
+// The mock upstream listens from this checkout, not from comfyRoot, so the
+// saved settings describe a different server: it stays external, with its pid.
+assert.equal(savedService.state, 'external')
 assert.equal(savedService.owned, false)
+assert.ok(Number.isInteger(savedService.pid), 'an external server is named by pid')
 const storedSettings = storage.state.settings.get('service')
 assert.equal(storedSettings.cwd, comfyRoot)
 assert.equal(storedSettings.autoStart, false)
@@ -1675,7 +1678,9 @@ const stopService = await host.fetches.get('/api/comfyui/service').fetch(new Req
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ action: 'stop' }),
 }))
-assert.equal((await stopService.json()).ok, true)
+const stoppedExternal = await stopService.json()
+assert.equal(stopService.status, 400)
+assert.match(stoppedExternal.error, /started outside the plugin/)
 
 // A second Host with the same medium restores the workflow and its tools.
 const host2 = createHost(createStorage(storage.state))

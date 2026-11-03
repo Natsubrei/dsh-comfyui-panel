@@ -277,21 +277,34 @@ function servesDirectory(pid, directory) {
  * @param options.config - normalized `supervise` config from the plugin row.
  * @param options.probe - resolves true when the upstream answers `/system_stats`.
  * @param options.logger - host logger.
+ * @param [options.findListener] - pid listening on a port; injectable for tests.
+ * @param [options.serves] - whether a pid runs a checkout; injectable for tests.
+ * @param [options.makeSupervisor] - supervisor factory; injectable for tests.
  * @returns the controller used by the service route, tools, and shutdown.
  */
-export function createServiceController({ upstream, config, probe, logger }) {
+export function createServiceController({
+  upstream,
+  config,
+  probe,
+  logger,
+  findListener = listenerPid,
+  serves = servesDirectory,
+  makeSupervisor = createSupervisor,
+}) {
   /** Panel-owned settings; null until saved or detected. */
   let settings = config.enabled ? { cwd: config.cwd, autoStart: true } : null
   /** The advanced config plan, used until the panel saves its own settings. */
   let configuredPlan = config.enabled ? { ...config, logPath: config.logPath ?? defaultLogPath() } : null
   let supervisor = null
   let lastError = null
+  /** A healthy server this controller cannot prove it may manage. */
+  let externalPid = null
 
   const snapshot = () => {
     const base = supervisor?.snapshot() ?? {
       enabled: true,
-      state: 'stopped',
-      pid: null,
+      state: externalPid === null ? 'stopped' : 'external',
+      pid: externalPid,
       restarts: 0,
       lastExit: null,
       lastError: null,
@@ -309,7 +322,7 @@ export function createServiceController({ upstream, config, probe, logger }) {
   const ensureSupervisor = () => {
     if (supervisor !== null) return supervisor
     const plan = configuredPlan ?? planFromSettings(settings, upstream)
-    supervisor = createSupervisor({ config: plan, probe, logger })
+    supervisor = makeSupervisor({ config: plan, probe, logger })
     return supervisor
   }
 
@@ -338,11 +351,15 @@ export function createServiceController({ upstream, config, probe, logger }) {
      * adopting it back by pid keeps Stop and Restart working instead of
      * leaving a server no button can touch. Only a process running the
      * configured checkout is adopted — anything else stays external.
+     *
+     * It may run more than once: a reload or a late start can leave a healthy
+     * server unowned, so the status path calls this whenever it sees one.
+     * @param healthy - a probe result the caller already has, to avoid a second request.
      */
-    async adopt() {
+    async adopt(healthy) {
       if (supervisor !== null) return snapshot()
-      const healthy = await probe().catch(() => false)
-      if (!healthy) return snapshot()
+      const reachable = healthy ?? await probe().catch(() => false)
+      if (reachable !== true) return snapshot()
       let plan
       try {
         plan = configuredPlan ?? planFromSettings(settings, upstream)
@@ -350,13 +367,15 @@ export function createServiceController({ upstream, config, probe, logger }) {
         return snapshot()
       }
       const port = new URL(upstream).port || '8188'
-      const pid = listenerPid(port)
-      if (pid === null || !servesDirectory(pid, plan.cwd)) {
+      const pid = findListener(port)
+      if (pid === null || !serves(pid, plan.cwd)) {
+        externalPid = pid
         logger?.info(`dsh-comfyui: ComfyUI is listening upstream but was not started from ${plan.cwd}; leaving it external`)
         return snapshot()
       }
       const target = ensureSupervisor()
       if (typeof target.attach === 'function') target.attach(pid)
+      externalPid = null
       return snapshot()
     },
     /** Save panel settings; does not start anything. */
@@ -367,6 +386,7 @@ export function createServiceController({ upstream, config, probe, logger }) {
       settings = clean
       configuredPlan = null
       lastError = null
+      externalPid = null
       return snapshot()
     },
     /**
@@ -374,6 +394,7 @@ export function createServiceController({ upstream, config, probe, logger }) {
      * running is a no-op.
      */
     async start() {
+      externalPid = null
       const snap = supervisor?.snapshot()
       // A stopped supervisor instance cannot be started again (it latched its
       // stop); drop it so the next start builds a fresh one.
@@ -387,7 +408,10 @@ export function createServiceController({ upstream, config, probe, logger }) {
     /** Stop a process this controller started. */
     async stop() {
       const snap = supervisor?.snapshot()
-      if (snap === undefined) return snapshot()
+      if (snap === undefined) {
+        if (externalPid !== null) throw new Error('ComfyUI was started outside the plugin, so the plugin will not stop it. Stop it where it was launched.')
+        return snapshot()
+      }
       if (snap.state === 'external') {
         throw new Error('ComfyUI was started outside the plugin, so the plugin will not stop it. Stop it where it was launched.')
       }
@@ -398,6 +422,9 @@ export function createServiceController({ upstream, config, probe, logger }) {
     /** Restart an owned process; adopts an external one again if it is gone. */
     async restart() {
       const snap = supervisor?.snapshot()
+      if (snap === undefined && externalPid !== null) {
+        throw new Error('ComfyUI was started outside the plugin; restart it where it was launched.')
+      }
       if (snap?.state === 'external') throw new Error('ComfyUI was started outside the plugin; restart it where it was launched.')
       if (snap !== undefined && snap.state !== 'stopped' && snap.state !== 'failed') await supervisor.stop()
       supervisor = null

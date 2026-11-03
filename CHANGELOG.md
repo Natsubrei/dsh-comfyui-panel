@@ -5,6 +5,12 @@ truth, and every release is pinned by a commit in `market/index.json`.
 
 ## Unreleased
 
+- A ComfyUI that starts after the plugin, or survives a plugin reload, is now
+  adopted as soon as the panel or `comfyui_status` sees it healthy. Before,
+  adoption was attempted once at load and such a server stayed `External`
+  forever, with no Stop or Restart. A listener whose working directory is not
+  the configured checkout is reported as `external` with its pid instead of
+  the contradictory `stopped`.
 - `comfyui_status` gains `diagnostics`: one row for each layer between the
   model and a run (`upstream`, `frontend`, `panel`, `commandChannel`,
   `storage`, `supervisor`, `workflow`), with a one-sentence `detail` and an
