@@ -3,7 +3,7 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
-## Unreleased
+## 0.8.1
 
 - Releases can be cut from GitHub Actions: Actions -> release -> Run workflow
   runs the suite, creates the version and market-index commits, tags the index
