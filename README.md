@@ -103,10 +103,16 @@ read on for the panel itself.
     input names.
   - `comfyui_workflow_save` — store the synced workflow under a name; reusing a
     name replaces that slot.
-  - `comfyui_workflow_list` — the saved slots with node/link counts and when
-    each was created and last written.
-  - `comfyui_workflow_load` — replace the open panel's graph with a saved
-    workflow and sync it; needs the panel, like `comfyui_edit`.
+  - `comfyui_workflow_list` — every workflow this session can load: the saved
+    slots with node/link counts and when each was written, plus the `.json`
+    files in ComfyUI's own user `workflows/` directory with their size and
+    modification time. Every entry carries `source: "slot" | "comfyui"`, the
+    slot this session is editing is marked current, and a ComfyUI read that
+    fails leaves the slots in place with a `warning`.
+  - `comfyui_workflow_load` — replace the open panel's graph with a saved slot
+    or a ComfyUI user workflow file and sync it; needs the panel, like
+    `comfyui_edit`. A slot wins over a ComfyUI file with the same name unless
+    `source` says which one to load.
   - `comfyui_workflow_export` / `comfyui_workflow_import` — write a UI workflow
     JSON file from a saved slot (or the session's graph) and read one back into
     a slot. Paths resolve against the session workspace, and a path outside it
@@ -268,6 +274,11 @@ than 16 pixels (exit code 2 when any do). Use it to judge a layout file, or
   session's workspace and reject a path outside it.
 - A saved workflow replaces the whole graph; there is no merge, undo, or
   per-slot revision history. Saving a name overwrites its previous content.
+- ComfyUI user workflows are read from `workflows/` through `/userdata`, one
+  JSON per load. A name is the file's path below `workflows/` without `.json`,
+  so it is case-sensitive and a file in a subfolder keeps that folder in its
+  name. Only `.json` files are listed; the plugin never writes or moves them,
+  and loading one changes the panel's canvas only.
 - `comfyui_edit` does not validate graph semantics; a bad edit is rejected
   when ComfyUI converts the graph to a prompt.
 - Sync is polling-based (about once per second while the tab is visible).

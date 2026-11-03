@@ -1188,8 +1188,10 @@ export function apply(ctx, rawConfig = {}) {
   // ── Saved workflows ─────────────────────────────────────────────────────
   // The mirrored session workflow is the canvas the panel last synced; these
   // tools add named snapshots, a file export/import path, and a way to put a
-  // saved graph back into the editor. Only `load` needs the panel: it edits
-  // the browser's LiteGraph through the same command channel as comfyui_edit.
+  // saved graph back into the editor. `list` and `load` also read the `.json`
+  // workflows ComfyUI keeps in its user data directory; the plugin never
+  // writes those files. Only `load` needs the panel: it edits the browser's
+  // LiteGraph through the same command channel as comfyui_edit.
 
   /**
    * Validate a saved-workflow slot name.
@@ -1201,6 +1203,89 @@ export function apply(ctx, rawConfig = {}) {
     const name = validWorkflowName(value)
     if (name === null) throw new Error('name must be 1-80 characters without control characters')
     return name
+  }
+
+  /**
+   * Validate a name that may also name a file below ComfyUI's `workflows/`
+   * directory. Slashes are allowed because a workflow file can live in a
+   * subfolder; traversal, absolute paths, and backslashes never reach a URL.
+   * @param {unknown} value - the requested name.
+   * @returns {string} the trimmed name.
+   */
+  function loadableWorkflowName(value) {
+    if (typeof value !== 'string') throw new Error('name is required')
+    const name = value.trim()
+    if (name.length === 0) throw new Error('name is required')
+    if (/[\u0000-\u001f\u007f]/u.test(name)) throw new Error('name must not contain control characters')
+    if (name.includes('\\')) throw new Error('name must not contain a backslash')
+    if (name.startsWith('/') || /^[a-zA-Z]:/u.test(name)) {
+      throw new Error('name must be relative to ComfyUI\'s workflows directory')
+    }
+    if (name.split('/').some(segment => segment === '' || segment === '.' || segment === '..')) {
+      throw new Error('name must not contain empty, "." or ".." path segments')
+    }
+    return name
+  }
+
+  /**
+   * The `.json` workflows in ComfyUI's user data directory.
+   * @returns {Promise<{ workflows: { name: string, size: number | null, modified: number | null }[], warning?: string }>}
+   *   the readable files, or why they could not be read.
+   */
+  async function comfyuiWorkflows() {
+    let response
+    try {
+      response = await fetchJson('/userdata?dir=workflows&recurse=true&full_info=true', 5000)
+    } catch (error) {
+      return { workflows: [], warning: `Could not list ComfyUI workflows: ${error instanceof Error ? error.message : String(error)}` }
+    }
+    // A user data directory that has never held a workflow has no `workflows/`
+    // yet; ComfyUI answers 404, which its own workflow browser treats as empty.
+    if (response.status === 404) return { workflows: [] }
+    if (!response.ok) return { workflows: [], warning: `Could not list ComfyUI workflows: HTTP ${response.status}` }
+    if (!Array.isArray(response.data)) {
+      return { workflows: [], warning: 'Could not list ComfyUI workflows: the response was not an array' }
+    }
+    const workflows = []
+    for (const entry of response.data) {
+      if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) continue
+      if (typeof entry.path !== 'string' || !entry.path.endsWith('.json') || entry.path === '.json') continue
+      workflows.push({
+        name: entry.path.slice(0, -'.json'.length),
+        size: typeof entry.size === 'number' && Number.isFinite(entry.size) ? entry.size : null,
+        modified: typeof entry.modified === 'number' && Number.isFinite(entry.modified) ? entry.modified : null,
+      })
+    }
+    workflows.sort((left, right) => (right.modified ?? 0) - (left.modified ?? 0)
+      || (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
+    return { workflows }
+  }
+
+  /**
+   * Read one UI workflow file from ComfyUI's user data directory.
+   * @param {string} name - a loadable name below `workflows/`, without `.json`.
+   * @returns {Promise<any>} the workflow object.
+   */
+  async function comfyuiWorkflow(name) {
+    // `/userdata/{file}` matches one path segment and ComfyUI's own frontend
+    // encodes the whole relative path, so a subfolder's slash travels as `%2F`
+    // instead of becoming a route boundary.
+    const path = `/userdata/${encodeURIComponent(`workflows/${name}.json`)}`
+    let response
+    try {
+      response = await fetchJson(path, 15000)
+    } catch (error) {
+      throw new Error(`Could not read the ComfyUI workflow "${name}": ${error instanceof Error ? error.message : String(error)}`)
+    }
+    if (response.status === 404) {
+      throw new Error(`No ComfyUI workflow named "${name}" under workflows/. Call comfyui_workflow_list to see the available names.`)
+    }
+    if (!response.ok) throw new Error(`Could not read the ComfyUI workflow "${name}": HTTP ${response.status}`)
+    const workflow = response.data
+    if (workflow === null || typeof workflow !== 'object' || Array.isArray(workflow) || !Array.isArray(workflow.nodes)) {
+      throw new Error(`ComfyUI returned "${name}" as something other than a UI workflow (an object with a nodes array).`)
+    }
+    return workflow
   }
 
   /**
@@ -1318,39 +1403,52 @@ export function apply(ctx, rawConfig = {}) {
   }
 
   /**
-   * Build the tool that lists saved workflows.
+   * Build the tool that lists the workflows this session can load.
    * @param {string} sessionId - the session whose current workflow is flagged.
    * @returns {object} the tool definition.
    */
   function workflowListTool(sessionId) {
     return {
       name: 'comfyui_workflow_list',
-      description: 'List the workflows saved with comfyui_workflow_save, most recently saved first. The workflow open in this session is marked current.',
+      description: 'List every workflow this session can load, each entry tagged with its `source`: "slot" for a workflow saved with comfyui_workflow_save, "comfyui" for a .json file in ComfyUI\'s user workflows directory. The workflow open in this session is marked current.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       output: textOutput(),
       /**
-       * @returns {Promise<{ text: string }>} the saved slots.
+       * @returns {Promise<{ text: string }>} the saved slots and ComfyUI files.
        */
       async execute() {
         const saved = await store.workflows()
         const shown = saved.slice(0, 100)
         const current = sessionStore.get(sessionId)?.name ?? null
+        const files = await comfyuiWorkflows()
+        const comfyui = files.workflows.slice(0, 100)
+        const workflows = [
+          ...shown.map(record => ({
+            source: 'slot',
+            name: record.name,
+            current: record.name === current,
+            nodes: record.nodes,
+            links: record.links,
+            revision: record.revision,
+            createdAt: record.createdAt,
+            updatedAt: record.updatedAt,
+            sourceSessionId: record.sourceSessionId,
+          })),
+          ...comfyui.map(file => ({
+            source: 'comfyui',
+            name: file.name,
+            size: file.size,
+            modified: file.modified,
+          })),
+        ]
         return {
           text: JSON.stringify({
             current,
             persistence: persistence(),
-            count: saved.length,
-            truncated: saved.length > shown.length,
-            workflows: shown.map(record => ({
-              name: record.name,
-              current: record.name === current,
-              nodes: record.nodes,
-              links: record.links,
-              revision: record.revision,
-              createdAt: record.createdAt,
-              updatedAt: record.updatedAt,
-              sourceSessionId: record.sourceSessionId,
-            })),
+            count: workflows.length,
+            truncated: saved.length > shown.length || files.workflows.length > comfyui.length,
+            ...(files.warning === undefined ? {} : { warning: files.warning }),
+            workflows,
           }, null, 2),
         }
       },
@@ -1358,32 +1456,55 @@ export function apply(ctx, rawConfig = {}) {
   }
 
   /**
-   * Build the tool that loads a saved workflow into this session's panel.
+   * Build the tool that loads a workflow into this session's panel.
    * @param {string} sessionId - the session whose panel applies the load.
    * @returns {object} the tool definition.
    */
   function workflowLoadTool(sessionId) {
     return {
       name: 'comfyui_workflow_load',
-      description: 'Replace the graph in this session\'s ComfyUI panel with a saved workflow and sync it, discarding unsaved canvas changes. Requires the panel to be open.',
+      description: 'Replace the graph in this session\'s ComfyUI panel with a workflow and sync it, discarding unsaved canvas changes. A name comes from comfyui_workflow_list; a saved slot wins over a ComfyUI file with the same name unless `source` picks one. Requires the panel to be open.',
       parameters: {
         type: 'object',
         properties: {
           name: { type: 'string', description: 'A name from comfyui_workflow_list.' },
+          source: {
+            type: 'string',
+            enum: ['slot', 'comfyui'],
+            description: 'Where to read the workflow: a saved slot, or a .json file in ComfyUI\'s user workflows directory. Omit to try the slot first, then ComfyUI.',
+          },
         },
         required: ['name'],
         additionalProperties: false,
       },
       output: textOutput(),
       /**
-       * @param {{ name?: unknown }} args - the saved slot to load.
+       * @param {{ name?: unknown, source?: unknown }} args - the workflow to load and where to read it.
        * @returns {Promise<{ text: string }>} the loaded workflow facts.
        */
       async execute(args) {
-        const name = workflowName(args?.name)
-        const record = await store.workflow(name)
-        if (record === null) {
+        const name = loadableWorkflowName(args?.name)
+        const source = args?.source
+        if (source !== undefined && source !== 'slot' && source !== 'comfyui') {
+          throw new Error('source must be "slot" or "comfyui"')
+        }
+        const record = source === 'comfyui' ? null : await store.workflow(name)
+        if (source === 'slot' && record === null) {
           throw new Error(`No saved workflow named "${name}". Call comfyui_workflow_list to see the saved names.`)
+        }
+        let workflow
+        let nodes
+        let links
+        let origin = 'slot'
+        if (record !== null) {
+          workflow = record.workflow
+          nodes = record.nodes
+          links = record.links
+        } else {
+          workflow = await comfyuiWorkflow(name)
+          nodes = workflow.nodes.length
+          links = Array.isArray(workflow.links) ? workflow.links.length : 0
+          origin = 'comfyui'
         }
         if (!commands.connected(sessionId)) {
           throw new Error('The ComfyUI panel is not connected in this session. Open the ComfyUI tab in this session and wait for Connected, then retry.')
@@ -1391,7 +1512,7 @@ export function apply(ctx, rawConfig = {}) {
         const id = randomUUID()
         const answer = await commands.ask(
           sessionId,
-          { id, kind: 'workflow', workflow: record.workflow, at: Date.now() },
+          { id, kind: 'workflow', workflow, at: Date.now() },
           { timeoutMs: 20000, what: 'workflow load' },
         )
         if (answer.ok !== true) throw new Error(`ComfyUI rejected the workflow load: ${answer.error ?? 'unknown error'}`)
@@ -1403,17 +1524,20 @@ export function apply(ctx, rawConfig = {}) {
         if (!loaded) {
           throw new Error('The panel did not confirm the workflow load. Hard-refresh the page so the panel learns the command, then retry.')
         }
-        // The canvas now holds that slot; the name follows it so a later
-        // `comfyui_workflow_save` does not silently rename the session.
+        // The canvas now holds that workflow; the name follows it so a later
+        // `comfyui_workflow_save` does not silently rename the session. A
+        // ComfyUI file name can be longer than the session-name domain allows,
+        // in which case only the editor's own name survives.
         const state = sessionStore.get(sessionId)
-        if (state !== undefined) sessionStore.rename(sessionId, name)
+        if (validWorkflowName(name) !== null) sessionStore.rename(sessionId, name)
         return {
           text: JSON.stringify({
             id,
             sessionId,
             name,
-            nodes: value.nodes ?? record.nodes,
-            links: value.links ?? record.links,
+            source: origin,
+            nodes: value.nodes ?? nodes,
+            links: value.links ?? links,
             revision: state?.revision ?? null,
           }, null, 2),
         }
@@ -1724,7 +1848,7 @@ export function apply(ctx, rawConfig = {}) {
 
   /**
    * Request one path on the ComfyUI upstream and decode its JSON body.
-   * @param path - path below the upstream root, e.g. `/system_stats`.
+   * @param path - path below the upstream root, e.g. `/system_stats`; it may carry a query string.
    * @param timeoutMs - abort budget in milliseconds.
    * @param init - extra fetch options.
    * @returns {Promise<{ok: boolean, status: number, data: any, error?: string}>} the outcome; `error` is set only on a transport failure.
@@ -1732,8 +1856,10 @@ export function apply(ctx, rawConfig = {}) {
   async function fetchJson(path, timeoutMs, init = {}) {
     const target = new URL(upstream.href)
     const basePath = target.pathname.replace(/\/+$/, '')
-    target.pathname = `${basePath}${path}`
-    target.search = ''
+    const queryIndex = path.indexOf('?')
+    const pathname = queryIndex === -1 ? path : path.slice(0, queryIndex)
+    target.pathname = `${basePath}${pathname}`
+    target.search = queryIndex === -1 ? '' : path.slice(queryIndex)
     const response = await fetch(target, { ...init, signal: AbortSignal.timeout(timeoutMs) })
     const text = await response.text()
     let data

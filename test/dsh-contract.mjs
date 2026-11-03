@@ -258,6 +258,8 @@ try {
     'comfyui_workflow_save',
   ]
   assert.deepEqual(ctx.tools.schemas(agent).map(tool => tool.name).sort(), expected)
+  const loadSchema = ctx.tools.schemas(agent).find(tool => tool.name === 'comfyui_workflow_load')
+  assert.deepEqual(loadSchema?.parameters?.properties?.source?.enum, ['slot', 'comfyui'])
   assert.deepEqual(ctx.tools.schemas().map(tool => tool.name), [],
     'ComfyUI tools must not leak into the global registry')
   const outsider = { id: 'someone-else' }
