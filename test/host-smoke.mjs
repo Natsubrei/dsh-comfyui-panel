@@ -167,9 +167,58 @@ const mockHistory = {
 }
 /** The prompt id the next /prompt call returns. */
 let promptIdToReturn = 'p1'
+/** What the mock reports from /userdata; `fail` exercises the list warning. */
+const mockUserdata = {
+  fail: false,
+  query: '',
+  files: [
+    { path: 'a.json', size: 512, modified: 1_700_000_000_000, created: 1_690_000_000_000 },
+    { path: 'b.txt', size: 64, modified: 1_700_000_000_001, created: 1_690_000_000_000 },
+  ],
+  workflows: {
+    a: {
+      last_node_id: 2,
+      last_link_id: 1,
+      nodes: [
+        { id: 1, type: 'CheckpointLoaderSimple', pos: [0, 0], size: [320, 100], flags: {}, order: 0, mode: 0 },
+        { id: 2, type: 'KSampler', pos: [400, 0], size: [320, 250], flags: {}, order: 1, mode: 0 },
+      ],
+      links: [[1, 1, 0, 2, 0, 'MODEL']],
+      groups: [],
+      config: {},
+      extra: {},
+      version: 0.4,
+    },
+  },
+}
 
 const upstream = http.createServer((req, res) => {
   upstreamCookies.push(req.headers.cookie ?? '')
+  const requestUrl = new URL(req.url, 'http://127.0.0.1')
+  const requestPath = decodeURIComponent(requestUrl.pathname)
+  if (requestPath === '/userdata') {
+    mockUserdata.query = requestUrl.search
+    if (mockUserdata.fail) {
+      res.writeHead(500, { 'content-type': 'text/plain' })
+      res.end('userdata unavailable')
+      return
+    }
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(mockUserdata.files))
+    return
+  }
+  if (requestPath.startsWith('/userdata/workflows/')) {
+    const name = requestPath.slice('/userdata/workflows/'.length).replace(/\.json$/u, '')
+    const workflow = mockUserdata.workflows[name]
+    if (workflow === undefined) {
+      res.writeHead(404, { 'content-type': 'text/plain' })
+      res.end('Not Found')
+      return
+    }
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(workflow))
+    return
+  }
   if (req.url === '/system_stats') {
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify({
@@ -849,6 +898,18 @@ assert.equal(edited.links, 1)
     agent: { session: { id: 's1', header: { cwd: dir } } },
     signal: new AbortController().signal,
   }
+  const startPoll = () => host.fetches.get('/api/comfyui/commands/poll').fetch(new Request(
+    'http://127.0.0.1/api/comfyui/commands/poll',
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 's1', timeoutMs: 1000 }) },
+  ))
+  const answerLoad = (command, nodes, links) => host.fetches.get('/api/comfyui/commands/result').fetch(new Request(
+    'http://127.0.0.1/api/comfyui/commands/result',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 's1', id: command.id, ok: true, value: { applied: 1, nodes, links, operations: [{ op: 'load_workflow' }] } }),
+    },
+  ))
   try {
     const saved = parse(await s1.tools.get('comfyui_workflow_save').execute({ name: 'portrait' }, workflowExec))
     assert.equal(saved.saved, 'portrait')
@@ -864,12 +925,21 @@ assert.equal(edited.links, 1)
     assert.equal(again.replaced, true, 'saving the same name replaces that slot')
 
     const listed = parse(await s1.tools.get('comfyui_workflow_list').execute({}, workflowExec))
-    assert.equal(listed.count, 1)
     assert.equal(listed.current, 'portrait', 'the list says which slot the session is editing')
-    assert.equal(listed.workflows[0].name, 'portrait')
-    assert.equal(listed.workflows[0].current, true)
-    assert.equal(listed.workflows[0].nodes, 2)
-    assert.ok(Number.isSafeInteger(listed.workflows[0].createdAt), 'the list exposes when the slot was created')
+    const portrait = listed.workflows.find(workflow => workflow.source === 'slot' && workflow.name === 'portrait')
+    assert.ok(portrait, 'a saved slot is listed')
+    assert.equal(portrait.current, true)
+    assert.equal(portrait.nodes, 2)
+    assert.ok(Number.isSafeInteger(portrait.createdAt), 'the list exposes when the slot was created')
+    assert.match(mockUserdata.query, /dir=workflows/u)
+    assert.match(mockUserdata.query, /recurse=true/u)
+    assert.match(mockUserdata.query, /full_info=true/u)
+    const comfy = listed.workflows.find(workflow => workflow.source === 'comfyui' && workflow.name === 'a')
+    assert.ok(comfy, 'a .json file in ComfyUI\'s workflows directory is listed')
+    assert.equal(comfy.size, 512)
+    assert.equal(comfy.modified, 1_700_000_000_000)
+    assert.equal(listed.workflows.some(workflow => workflow.name === 'b' || workflow.name === 'b.txt'), false, 'only .json files are listed')
+    assert.equal(listed.count, 2, 'the count covers both sources')
 
     const exportedPath = join(dir, 'portrait.json')
     const exported = parse(await s1.tools.get('comfyui_workflow_export').execute({ name: 'portrait', path: 'portrait.json' }, workflowExec))
@@ -886,6 +956,15 @@ assert.equal(edited.links, 1)
     assert.equal(imported.nodes, 1)
     assert.equal(imported.replaced, false)
 
+    // A slot and a ComfyUI file with the same name: the slot wins by default,
+    // and `source` picks the file explicitly.
+    writeFileSync(join(dir, 'a.json'), JSON.stringify({ nodes: [{ id: 3, type: 'KSampler' }], links: [] }))
+    const importedA = parse(await s1.tools.get('comfyui_workflow_import').execute({ path: 'a.json', name: 'a' }, workflowExec))
+    assert.equal(importedA.imported, 'a')
+    const duplicated = parse(await s1.tools.get('comfyui_workflow_list').execute({}, workflowExec))
+    assert.equal(duplicated.workflows.filter(workflow => workflow.name === 'a').length, 2, 'the list shows both sources for one name')
+    assert.equal(duplicated.count, 4)
+
     await assert.rejects(
       s1.tools.get('comfyui_workflow_export').execute({ path: '../escape.json' }, workflowExec),
       /inside the session workspace/,
@@ -895,34 +974,74 @@ assert.equal(edited.links, 1)
       /inside the session workspace/,
     )
 
-    const pollLoad = host.fetches.get('/api/comfyui/commands/poll').fetch(new Request(
-      'http://127.0.0.1/api/comfyui/commands/poll',
-      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 's1', timeoutMs: 1000 }) },
-    ))
+    const pollLoad = startPoll()
     await delay(30)
     const loadPromise = s1.tools.get('comfyui_workflow_load').execute({ name: 'imported' }, exec)
     const loadCommand = (await (await pollLoad).json()).command
     assert.equal(loadCommand.kind, 'workflow')
     assert.equal(loadCommand.workflow.nodes.length, 1)
-    await host.fetches.get('/api/comfyui/commands/result').fetch(new Request(
-      'http://127.0.0.1/api/comfyui/commands/result',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sessionId: 's1', id: loadCommand.id, ok: true, value: { applied: 1, nodes: 1, links: 0, operations: [{ op: 'load_workflow' }] } }),
-      },
-    ))
+    await answerLoad(loadCommand, 1, 0)
     const loaded = parse(await loadPromise)
     assert.equal(loaded.name, 'imported')
+    assert.equal(loaded.source, 'slot')
     assert.equal(loaded.nodes, 1)
     assert.ok(s1.digest().includes('"imported"'), 'loading a slot names the session after it')
 
+    const pollSlot = startPoll()
+    await delay(30)
+    const slotPromise = s1.tools.get('comfyui_workflow_load').execute({ name: 'a' }, exec)
+    const slotCommand = (await (await pollSlot).json()).command
+    assert.equal(slotCommand.workflow.nodes.length, 1, 'a saved slot wins over a ComfyUI file with the same name')
+    await answerLoad(slotCommand, 1, 0)
+    const slotLoaded = parse(await slotPromise)
+    assert.equal(slotLoaded.source, 'slot')
+    assert.equal(slotLoaded.nodes, 1)
+
+    const pollComfy = startPoll()
+    await delay(30)
+    const comfyPromise = s1.tools.get('comfyui_workflow_load').execute({ name: 'a', source: 'comfyui' }, exec)
+    const comfyCommand = (await (await pollComfy).json()).command
+    assert.equal(comfyCommand.kind, 'workflow')
+    assert.equal(comfyCommand.workflow.nodes.length, 2, 'source "comfyui" reads the user workflow file')
+    assert.equal(comfyCommand.workflow.nodes[0].type, 'CheckpointLoaderSimple')
+    await answerLoad(comfyCommand, 2, 1)
+    const comfyLoaded = parse(await comfyPromise)
+    assert.equal(comfyLoaded.source, 'comfyui')
+    assert.equal(comfyLoaded.nodes, 2)
+
+    await assert.rejects(
+      s1.tools.get('comfyui_workflow_load').execute({ name: '../escape', source: 'comfyui' }, exec),
+      /\.\./u,
+    )
+    await assert.rejects(
+      s1.tools.get('comfyui_workflow_load').execute({ name: '/etc/passwd', source: 'comfyui' }, exec),
+      /relative/u,
+    )
+    await assert.rejects(
+      s1.tools.get('comfyui_workflow_load').execute({ name: 'sub\\a', source: 'comfyui' }, exec),
+      /backslash/u,
+    )
+    await assert.rejects(
+      s1.tools.get('comfyui_workflow_load').execute({ name: 'not-there', source: 'comfyui' }, exec),
+      /No ComfyUI workflow named "not-there"/u,
+    )
+
+    // ComfyUI's user data being unreadable is a warning, not a failed list:
+    // the slots this session saved are still there.
+    mockUserdata.fail = true
+    try {
+      const warned = parse(await s1.tools.get('comfyui_workflow_list').execute({}, workflowExec))
+      assert.match(warned.warning, /Could not list ComfyUI workflows/u)
+      assert.ok(warned.workflows.some(workflow => workflow.source === 'slot' && workflow.name === 'portrait'), 'slots survive a failed userdata read')
+      assert.equal(warned.workflows.some(workflow => workflow.source === 'comfyui'), false)
+      assert.equal(warned.count, 3, 'the count falls back to the slots')
+    } finally {
+      mockUserdata.fail = false
+    }
+
     // A page with the previous client falls back to "edit with no operations"
     // and answers success; the tool must not accept that as a load.
-    const pollOld = host.fetches.get('/api/comfyui/commands/poll').fetch(new Request(
-      'http://127.0.0.1/api/comfyui/commands/poll',
-      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 's1', timeoutMs: 1000 }) },
-    ))
+    const pollOld = startPoll()
     await delay(30)
     const oldPromise = s1.tools.get('comfyui_workflow_load').execute({ name: 'imported' }, exec)
     const oldCommand = (await (await pollOld).json()).command

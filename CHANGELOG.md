@@ -5,6 +5,12 @@ truth, and every release is pinned by a commit in `market/index.json`.
 
 ## Unreleased
 
+- `comfyui_workflow_list` now also lists the `.json` workflows in ComfyUI's
+  user `workflows/` directory, and `comfyui_workflow_load` loads one by name
+  with `source: "comfyui"`. Names are paths below `workflows/` without the
+  extension; a saved slot wins when both share a name, and `source` picks one
+  explicitly. A failed `/userdata` read leaves the slots in place with a
+  `warning`.
 - `comfyui_run` attaches the session's UI workflow to `/prompt` as
   `extra_data.extra_pnginfo.workflow`, so `SaveImage` writes it into the PNG's
   text metadata and dragging the image back into ComfyUI restores the graph.
