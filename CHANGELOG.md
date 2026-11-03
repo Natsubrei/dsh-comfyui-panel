@@ -5,6 +5,11 @@ truth, and every release is pinned by a commit in `market/index.json`.
 
 ## Unreleased
 
+- `comfyui_status` gains `diagnostics`: one row for each layer between the
+  model and a run (`upstream`, `frontend`, `panel`, `commandChannel`,
+  `storage`, `supervisor`, `workflow`), with a one-sentence `detail` and an
+  `action` when that layer is broken. It is built only from facts the status
+  call already read, so the report sends no extra request.
 - `comfyui_run` attaches the session's UI workflow to `/prompt` as
   `extra_data.extra_pnginfo.workflow`, so `SaveImage` writes it into the PNG's
   text metadata and dragging the image back into ComfyUI restores the graph.

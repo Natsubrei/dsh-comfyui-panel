@@ -20,6 +20,7 @@
  *   drop: (sessionId: string, id: string) => void,
  *   release: (sessionId: string) => void,
  *   connected: (sessionId: string) => boolean,
+ *   waiting: (sessionId: string) => boolean,
  * }} CommandChannel
  */
 
@@ -225,5 +226,18 @@ export function createCommandChannel() {
     return Date.now() - state.lastPollAt <= 15000
   }
 
-  return { ask, poll, answer, drop, release, connected }
+  /**
+   * Whether a panel long-poll is parked right now. `connected` also covers the
+   * 15 s freshness window after the last request, so it cannot tell a live
+   * command channel from one that stopped polling; this is the narrow signal.
+   *
+   * @param {string} sessionId - the session to ask about.
+   * @returns {boolean} whether a poll is waiting for a command.
+   */
+  function waiting(sessionId) {
+    const state = queues.get(sessionId)
+    return state !== undefined && state.waiters.length > 0
+  }
+
+  return { ask, poll, answer, drop, release, connected, waiting }
 }
