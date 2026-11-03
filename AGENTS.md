@@ -148,15 +148,14 @@ commit that carries both:
 
 GitHub can run the same sequence for you: **Actions -> release -> Run
 workflow**, with the version and `dry_run` unchecked. It runs the suite, then
-`scripts/release.mjs` creates the two commits and the tag, pushes, creates the
-GitHub Release, and publishes to npm through trusted publishing — no token
-secret. Add this repository and the `release.yml` workflow as a trusted
-publisher on the npm package first; npm then verifies the workflow's OIDC token
-(`id-token: write`) and attaches provenance. Add a `RELEASE_TOKEN` secret
-(fine-grained, contents: write) if the pushed commits should also trigger the
-test workflow; pushes made with the default `GITHUB_TOKEN` do not. The workflow
-pushes straight to `main`, so any branch protection must allow it. Leaving
-`dry_run` checked runs the checks and prints the plan without writing anything.
+`scripts/release.mjs` creates the two commits and the tag, pushes, and creates
+the GitHub Release. npm publishing stays manual: after the workflow finishes,
+run `npm publish --access public` from the released tag. Add a `RELEASE_TOKEN`
+secret (fine-grained, contents: write) if the pushed commits should also
+trigger the test workflow; pushes made with the default `GITHUB_TOKEN` do not.
+The workflow pushes straight to `main`, so any branch protection must allow it.
+Leaving `dry_run` checked runs the checks and prints the plan without writing
+anything.
 
 Do not move a published tag to fix a red run; cut the next patch release
 instead. The exception is a tag that was moved within the same release before

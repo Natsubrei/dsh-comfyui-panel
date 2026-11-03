@@ -5,8 +5,9 @@ name: release
 # The version commit always lands before the market index that pins it, so the
 # index commit is what gets tagged; tagging the version commit would point the
 # tag at a run whose market-index check fails by design. This workflow does the
-# whole sequence, creates the GitHub Release, and publishes to npm when an
-# NPM_TOKEN secret is configured.
+# whole sequence and creates the GitHub Release; publishing to npm stays manual
+# (`npm publish` from the released tag), because npm requires account 2FA to
+# configure a trusted publisher.
 #
 # Direct pushes to main need a token that may bypass any protection rule. The
 # default GITHUB_TOKEN can push, but its pushes do not trigger the test
@@ -27,7 +28,6 @@ on:
 
 permissions:
   contents: write
-  id-token: write
 
 concurrency:
   group: release
@@ -44,11 +44,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # Node 24 ships npm 11.5.1+, which is what negotiates the OIDC token;
-          # npm 10 on Node 22 generates provenance but publishes without auth.
           node-version: '24'
           cache: npm
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Install the type-check dependencies
         run: npm ci
@@ -84,9 +81,3 @@ jobs:
           gh release create "v${{ inputs.version }}" \
             --title "v${{ inputs.version }}" \
             --notes-file "$RUNNER_TEMP/release-notes.md"
-
-      - name: Publish to npm through trusted publishing
-        if: ${{ !inputs.dry_run }}
-        run: |
-          echo "OIDC context: ${GITHUB_REPOSITORY} / ${GITHUB_WORKFLOW} / ${GITHUB_REF}"
-          npm publish --provenance --access public
