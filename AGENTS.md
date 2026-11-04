@@ -186,8 +186,10 @@ indexes discover packages through the `keywords: ["dsh-plugin"]` keyword and the
   the image exists on disk and nowhere in the UI.
 - The embedded frontend keeps live LiteGraph node ids and link origin ids as
   strings (`'9'`), while serialized workflows write numbers. `projectGraph`
-  normalizes them with `Number()`; without that the Host rejects every node
-  and the model silently falls back to positional widget values.
+  normalizes them with `Number()`, and the Host coerces the canonical spelling
+  itself, so a payload that skipped that pass is not dropped. A non-canonical
+  id (`'09'`, `'9.0'`) is dropped and the model silently falls back to
+  positional widget values.
 - The panel is stateful across browsers: opening the tab in a second browser
   profile means that editor's (possibly empty) workflow is what the session
   syncs. Run the UI check in a draft session, not in a conversation whose

@@ -49,6 +49,24 @@ function projectWidgets(raw) {
   return out
 }
 
+/**
+ * Accept a node or selection id.
+ *
+ * A safe integer stays itself. A string is kept only when it is the canonical
+ * base-10 spelling of a safe integer, which is how a live LiteGraph id (`"9"`)
+ * still reaches the Host after the panel's own `Number()` pass is skipped.
+ * @param {unknown} value - a node id or a selection entry.
+ * @returns {number | null} the integer, or null when the value is not one.
+ */
+function coerceId(value) {
+  if (typeof value === 'number') return Number.isSafeInteger(value) ? value : null
+  if (typeof value !== 'string') return null
+  const id = Number(value)
+  // `"09"` parses as 9 but is not the canonical spelling `String(9)`.
+  if (!Number.isSafeInteger(id) || String(id) !== value) return null
+  return id
+}
+
 /** Accept the `name -> "id:slot"` input map, keeping only well-formed references. */
 function projectInputs(raw) {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {}
@@ -73,9 +91,10 @@ export function sanitizeSemantic(raw) {
   const nodes = []
   for (const node of raw.nodes.slice(0, MAX_NODES)) {
     if (node === null || typeof node !== 'object') continue
-    if (!Number.isInteger(node.id) || typeof node.type !== 'string') continue
+    const id = coerceId(node.id)
+    if (id === null || typeof node.type !== 'string') continue
     const projected = {
-      id: node.id,
+      id,
       type: node.type.slice(0, 120),
       widgets: projectWidgets(node.widgets),
       inputs: projectInputs(node.inputs),
@@ -91,7 +110,7 @@ export function sanitizeSemantic(raw) {
     nodes,
     linkCount: Number.isInteger(raw.linkCount) ? raw.linkCount : null,
     selection: Array.isArray(raw.selection)
-      ? [...new Set(raw.selection.filter(Number.isInteger))].slice(0, 64)
+      ? [...new Set(raw.selection.map(coerceId).filter(id => id !== null))].slice(0, 64)
       : [],
   }
 }
@@ -114,7 +133,8 @@ export function projectFromWorkflow(workflow) {
   const nodes = []
   for (const node of sourceNodes.slice(0, MAX_NODES)) {
     if (node === null || typeof node !== 'object') continue
-    if (!Number.isInteger(node.id) || typeof node.type !== 'string') continue
+    const id = coerceId(node.id)
+    if (id === null || typeof node.type !== 'string') continue
     const inputs = {}
     for (const input of Array.isArray(node.inputs) ? node.inputs : []) {
       if (input === null || typeof input !== 'object' || input.link === null || input.link === undefined) continue
@@ -122,7 +142,7 @@ export function projectFromWorkflow(workflow) {
       if (link === undefined || input.name === '__proto__') continue
       inputs[String(input.name)] = `${link.originId}:${link.originSlot}`
     }
-    const projected = { id: node.id, type: node.type.slice(0, 120) }
+    const projected = { id, type: node.type.slice(0, 120) }
     if (typeof node.title === 'string' && node.title.length > 0 && node.title !== node.type) {
       projected.title = node.title.slice(0, 120)
     }

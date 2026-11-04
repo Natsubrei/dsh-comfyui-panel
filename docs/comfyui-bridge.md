@@ -58,9 +58,13 @@ saves to a `.json` file and restores on load. Two properties matter:
 - **Node and link ids are strings in the live graph and numbers in the
   serialized form.** `node.id` and `link.origin_id` / `link.target_id` are
   strings such as `'9'` while you walk `graph._nodes`, and integers after
-  `serialize()`. `projection.js` and the panel's `projectGraph` normalize with
-  `Number()`; comparing with `Number.isInteger` directly drops every node and
-  the model silently sees an empty graph.
+  `serialize()`. The panel's `projectGraph` normalizes live string ids with
+  `Number()`. The Host's `sanitizeSemantic` and `projectFromWorkflow` coerce
+  the same canonical integer strings on node ids (and `sanitizeSemantic` does
+  so for selection ids), so a payload that still carries `"9"` is not dropped.
+  Canonical means a safe integer, or a non-empty string that is exactly
+  `String` of that integer: `"9"` is kept, and `"09"`, `"9.0"`, and `" 9"`
+  are not that form and are dropped.
 - **`extra.ds` is written on every serialization.** The frontend's
   `saveViewportWithGraph` setting (on by default) stamps `{ scale, offset }` of
   the camera into `extra.ds`, so zooming, panning, or resizing the panel changes

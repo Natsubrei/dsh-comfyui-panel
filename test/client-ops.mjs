@@ -534,9 +534,10 @@ const stage = (service, extra = {}) => overlayPlan({
   )
 }
 
-// LiteGraph 0.4x keeps live node ids and link origins as strings. If the
-// projection keeps them, the Host rejects every node and the model falls back
-// to positional widgets, so the ids must be normalized to numbers.
+// LiteGraph 0.4x keeps live node ids and link origins as strings. The Host
+// accepts the canonical spelling too, but the contract is numeric: a
+// non-canonical id ("09") would be dropped and the model would fall back to
+// positional widgets, so the projection still normalizes to numbers.
 {
   const { projectGraph } = mod.__ops
   const app = {

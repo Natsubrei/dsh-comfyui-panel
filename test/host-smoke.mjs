@@ -736,6 +736,74 @@ assert.equal('missing' in layout, false)
   assert.ok(overlapping.overlaps[0].x > 0 && overlapping.overlaps[0].y > 0)
 }
 
+// A semantic payload can still carry live LiteGraph ids as strings. Coercion
+// keeps the panel projection; dropping `"9"` would empty it and the store
+// would fall back to the raw workflow.
+{
+  const sessionId = 's-string-semantic'
+  const scope = addAgent(host, sessionId)
+  const posted = await host.fetches.get('/api/comfyui/state').fetch(new Request(
+    `http://127.0.0.1/api/comfyui/state?sessionId=${sessionId}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId,
+        revision: 1,
+        workflow: {
+          nodes: [{ id: 9, type: 'KSampler' }],
+          links: [],
+        },
+        prompt: null,
+        semantic: {
+          nodes: [{ id: '9', type: 'KSampler', widgets: {}, inputs: {} }],
+          linkCount: 0,
+          selection: ['9'],
+        },
+      }),
+    },
+  ))
+  assert.equal(posted.status, 200)
+  const stringSemantic = parse(await scope.tools.get('comfyui_graph_read').execute({}, execOf(sessionId)))
+  assert.equal(stringSemantic.projectedFrom, 'panel')
+  assert.equal(stringSemantic.nodes.length, 1)
+  assert.equal(typeof stringSemantic.nodes[0].id, 'number')
+  assert.equal(stringSemantic.nodes[0].id, 9)
+  assert.equal(stringSemantic.nodes[0].type, 'KSampler')
+  assert.deepEqual(stringSemantic.selection, [9])
+}
+
+// With no panel projection, a raw workflow whose node id is still the string
+// `"12"` is read from the workflow and that id comes back as a number.
+{
+  const sessionId = 's-string-workflow'
+  const scope = addAgent(host, sessionId)
+  const posted = await host.fetches.get('/api/comfyui/state').fetch(new Request(
+    `http://127.0.0.1/api/comfyui/state?sessionId=${sessionId}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId,
+        revision: 1,
+        workflow: {
+          nodes: [{ id: '12', type: 'KSampler' }],
+          links: [],
+        },
+        prompt: null,
+        semantic: null,
+      }),
+    },
+  ))
+  assert.equal(posted.status, 200)
+  const stringWorkflow = parse(await scope.tools.get('comfyui_graph_read').execute({}, execOf(sessionId)))
+  assert.equal(stringWorkflow.projectedFrom, 'workflow')
+  assert.equal(stringWorkflow.nodes.length, 1)
+  assert.equal(typeof stringWorkflow.nodes[0].id, 'number')
+  assert.equal(stringWorkflow.nodes[0].id, 12)
+  assert.equal(stringWorkflow.nodes[0].type, 'KSampler')
+}
+
 const run = parse(await s1.tools.get('comfyui_run').execute({}, exec))
 assert.equal(run.prompt_id, 'p1')
 // Execution events only reach the client that queued the prompt, so a run the
