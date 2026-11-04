@@ -1,0 +1,55 @@
+name: Bug report
+description: A broken panel, tool, or ComfyUI process
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report a vulnerability here. Use a [GitHub Security Advisory](https://github.com/Natsubrei/dsh-comfyui-panel/security/advisories/new).
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      description: The version from the market card, or from package.json.
+      placeholder: 0.9.0
+    validations:
+      required: true
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH version
+      description: The DeepSeek Harness version this plugin is running in.
+    validations:
+      required: true
+  - type: input
+    id: frontend-version
+    attributes:
+      label: ComfyUI frontend version
+      description: The comfyui-frontend-package value from ComfyUI /system_stats. Write "omitted" when that field is absent.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Panel
+        - Tool
+        - Process manager
+        - Install
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you saw.
+    validations:
+      required: true
+  - type: input
+    id: upstream
+    attributes:
+      label: Upstream
+      description: Loopback or another host. Do not paste tokens or cookies.
+      placeholder: http://127.0.0.1:8188
+    validations:
+      required: false

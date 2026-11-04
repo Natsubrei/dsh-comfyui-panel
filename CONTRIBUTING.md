@@ -19,6 +19,10 @@ Two checks stay local, and continuous integration skips both:
 
 A green pull request therefore does not prove the plugin still mounts on the current DSH or the current ComfyUI frontend. Say which frontend you ran against when the change touches the editor bridge ([docs/comfyui-bridge.md](docs/comfyui-bridge.md)).
 
+A change a user can see gets one bullet under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md), in one of `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, or `Security`. Leave out an empty category. The file follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+A new ComfyUI frontend object or method is recorded in [docs/comfyui-bridge.md](docs/comfyui-bridge.md) in the same change. That rule, and the one about editor-state commands, is in [CODING_STANDARDS.md](CODING_STANDARDS.md).
+
 ## Hooks and hygiene
 
 A fresh clone does not install the pre-commit hook. Enable it with `git config core.hooksPath .githooks` if you want the same gate as this checkout.

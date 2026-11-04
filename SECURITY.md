@@ -16,3 +16,7 @@ A `supervise` block in the profile's `cordis.patch.yml` can name any command. Th
 ## Upstream
 
 Prefer a loopback `upstream`. The proxy removes the DSH admission cookie (`dsh-auth` and `dsh-auth-…`) before forwarding HTTP and WebSocket requests. Other cookies and `Authorization` are still forwarded, because ComfyUI may be using them. Point `upstream` only at a server you trust.
+
+## Supported versions
+
+A fix goes to `main` and ships in the next release. Older tags are not patched. Install the current release to pick up a fix.

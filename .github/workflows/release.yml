@@ -5,7 +5,9 @@ name: release
 # The version commit always lands before the market index that pins it, so the
 # index commit is what gets tagged; tagging the version commit would point the
 # tag at a run whose market-index check fails by design. This workflow does the
-# whole sequence and creates the GitHub Release; publishing to npm stays manual
+# whole sequence and creates the GitHub Release. scripts/release.mjs dates the
+# Keep a Changelog `[Unreleased]` section and retargets its compare links; do
+# not rename that section before the workflow. Publishing to npm stays manual
 # (`npm publish` from the released tag), because npm requires account 2FA to
 # configure a trusted publisher.
 #

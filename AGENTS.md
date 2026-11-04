@@ -1,5 +1,7 @@
 # dsh-comfyui-panel
 
+This file is for an agent maintaining this repository. A human contributor starts at [CONTRIBUTING.md](CONTRIBUTING.md).
+
 A zero-intrusion ComfyUI panel for the DSH Web UI. The ComfyUI **UI workflow is
 canonical**; plugin state lives in the Host's `dsh_comfyui` storage domain, never
 in the profile config. Do not edit DSH core or ComfyUI sources to make this work.
@@ -30,6 +32,9 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
 - `docs/comfyui-bridge.md` — the frontend surface the panel depends on
   (`comfyAPI`, string ids, `extra.ds`, the camera, command ids,
   `server.client_id`) and how to re-derive it after a ComfyUI upgrade.
+- `docs/supervise.md` — the profile `supervise` block, which overrides the
+  panel Server controls at startup. Read it when changing the boot command,
+  `cwd`, restart limits, or adoption from `cordis.patch.yml`.
 - `test/host-smoke.mjs` — self-contained executable contract for every route
   and tool.
 - `test/dsh-contract.mjs` — the same routes and tools against the **real**
@@ -134,8 +139,13 @@ re-run the same check until it is quiet.
 A release is a commit plus an index entry that pins it, and the tag names the
 commit that carries both:
 
-1. Bump `package.json` and rename the CHANGELOG `Unreleased` section to that
-   version.
+1. Bump `package.json`. In `CHANGELOG.md`, date the `## [Unreleased]` section
+   as `## [<version>] - YYYY-MM-DD` (Asia/Shanghai), leave a new empty
+   `[Unreleased]` above it, and retarget the compare links: `[Unreleased]`
+   points at `v<version>...HEAD`, and a new `[<version>]` link compares the
+   previous tag to `v<version>`. Do that by hand only when cutting the release
+   yourself. `scripts/release.mjs` does the same rename; do not rename the
+   section and then run the script.
 2. Commit it with `--no-verify`. This commit cannot pass the pre-commit hook or
    CI: the index still pins the previous release and `npm test` says so. That is
    expected — the next step supplies the index, and step 5 gives the release a

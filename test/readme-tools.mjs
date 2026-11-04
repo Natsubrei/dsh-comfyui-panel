@@ -1,10 +1,12 @@
 /**
- * Check that the README's model-tool list matches the tools index.js registers.
+ * Check that each README's model-tool list matches the tools index.js registers.
  *
- * A tool can be added without a word in the README, which is how the tab tools
+ * A tool can be added without a word in a README, which is how the tab tools
  * once shipped while the list still named the old count and set. Both sides are
  * derived — the tool definitions in `index.js`, the backticked `comfyui_…`
- * names anywhere in `README.md` — so neither list is duplicated here.
+ * names anywhere in a README — so neither list is duplicated here. The
+ * translated README is checked too, because a reader of that file needs the
+ * same tool names.
  *
  * Part of `npm test`.
  */
@@ -13,6 +15,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
+const READMES = ['README.md', 'README.zh-CN.md']
 
 /**
  * Every name captured by a pattern's first group in one file.
@@ -26,18 +29,21 @@ function namesIn(file, pattern) {
 }
 
 const registered = namesIn('index.js', /\bname:\s*'(comfyui_[a-z0-9_]+)'/gu)
-const documented = namesIn('README.md', /`(comfyui_[a-z0-9_]+)`/gu)
+let failures = 0
 
-const missing = [...registered].filter(name => !documented.has(name)).sort()
-const stale = [...documented].filter(name => !registered.has(name)).sort()
-
-if (missing.length > 0 || stale.length > 0) {
+for (const file of READMES) {
+  const documented = namesIn(file, /`(comfyui_[a-z0-9_]+)`/gu)
+  const missing = [...registered].filter(name => !documented.has(name)).sort()
+  const stale = [...documented].filter(name => !registered.has(name)).sort()
   if (missing.length > 0) {
-    console.error(`readme tools: README does not mention ${missing.join(', ')}`)
+    console.error(`readme tools: ${file} does not mention ${missing.join(', ')}`)
+    failures += 1
   }
   if (stale.length > 0) {
-    console.error(`readme tools: README mentions ${stale.join(', ')}, which index.js does not register`)
+    console.error(`readme tools: ${file} mentions ${stale.join(', ')}, which index.js does not register`)
+    failures += 1
   }
-  process.exit(1)
 }
+
+if (failures > 0) process.exit(1)
 console.log('readme tools test passed')
