@@ -773,6 +773,44 @@ assert.equal('missing' in layout, false)
   assert.deepEqual(stringSemantic.selection, [9])
 }
 
+// A non-canonical id drops that node only. The sibling stays, so the store
+// keeps the panel projection instead of falling back to the raw workflow.
+{
+  const sessionId = 's-bad-id'
+  const scope = addAgent(host, sessionId)
+  const posted = await host.fetches.get('/api/comfyui/state').fetch(new Request(
+    `http://127.0.0.1/api/comfyui/state?sessionId=${sessionId}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId,
+        revision: 1,
+        workflow: {
+          nodes: [{ id: 9, type: 'KSampler' }, { id: 3, type: 'VAEDecode' }],
+          links: [],
+        },
+        prompt: null,
+        semantic: {
+          nodes: [
+            { id: '9', type: 'KSampler', widgets: {}, inputs: {} },
+            { id: '09', type: 'VAEDecode', widgets: {}, inputs: {} },
+          ],
+          linkCount: 0,
+          selection: ['9', '09'],
+        },
+      }),
+    },
+  ))
+  assert.equal(posted.status, 200)
+  const badId = parse(await scope.tools.get('comfyui_graph_read').execute({}, execOf(sessionId)))
+  assert.equal(badId.projectedFrom, 'panel', 'one rejected id must not empty the projection')
+  assert.equal(badId.nodes.length, 1)
+  assert.equal(badId.nodes[0].id, 9)
+  assert.equal(badId.nodes[0].type, 'KSampler')
+  assert.deepEqual(badId.selection, [9])
+}
+
 // With no panel projection, a raw workflow whose node id is still the string
 // `"12"` is read from the workflow and that id comes back as a number.
 {

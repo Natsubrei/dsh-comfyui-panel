@@ -1384,9 +1384,9 @@ window.__ModuleLoader__.load({
       const projected = []
       for (const node of nodes) {
         if (node === null || typeof node !== 'object') continue
-        // LiteGraph 0.4x keeps node ids and link endpoints as strings while
-        // the serialized workflow writes numbers; the Host contract is
-        // numeric, so normalize here instead of dropping every node.
+        // LiteGraph 0.4x keeps node ids and link endpoints as strings while the
+        // serialized workflow writes numbers. The panel posts numbers. The Host
+        // also accepts the canonical spelling (`"9"`) and drops any other spelling.
         const id = Number(node.id)
         if (!Number.isSafeInteger(id) || typeof node.type !== 'string') continue
         const widgets = Object.create(null)

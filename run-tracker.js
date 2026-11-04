@@ -54,7 +54,7 @@ const PROBE_TIMEOUT_MS = 2500
  * @property {() => number} [now] - clock, injectable for tests.
  * @property {(fn: () => void, ms: number) => any} [setTimer] - timer, injectable for tests.
  * @property {(handle: any) => void} [clearTimer] - timer cancellation, injectable for tests.
- * @property {(record: RunRecord, sessionId: string | null) => void} [onChange] - called when a record's observed state changes. `sessionId` is the session passed to `watch`, or null after `forget`. A listener that only takes the record still works.
+ * @property {(record: RunRecord, sessionId: string | null) => void} [onChange] - called when a record's observed state changes. `sessionId` is the session passed to `watch`, or null after `forget`.
  */
 
 /**

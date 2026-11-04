@@ -29,7 +29,7 @@ import { createWorkflowStore } from './storage.js'
 import { createServiceController, frontendReport } from './service.js'
 import { createCommandChannel } from './commands.js'
 import { createSessionStore, validWorkflowName } from './session-store.js'
-import { createRunTracker, queueHas } from './run-tracker.js'
+import { createRunTracker, queueHas, TERMINAL_RUN_STATUSES } from './run-tracker.js'
 
 export { takeCommand } from './commands.js'
 
@@ -80,7 +80,7 @@ export function apply(ctx, rawConfig = {}) {
   const tracker = createRunTracker({
     fetchJson,
     onChange: (record, sessionId) => {
-      if (typeof sessionId !== 'string' || sessionId.length === 0) return
+      if (typeof sessionId !== 'string') return
       if (sessionStore.hasTools(sessionId)) sessionStore.mergeRun(sessionId, record)
     },
   })
@@ -138,9 +138,9 @@ export function apply(ctx, rawConfig = {}) {
   ctx.on('agent/disposed', ({ agent }) => {
     const sessionId = agent?.session?.id
     if (typeof sessionId !== 'string') return
-    // The tracker keeps polling to its own budget. `forget` drops the session
-    // first, so a later poll cannot merge the run back after `release` ends
-    // the session's memory.
+    // The same session id can return with a new agent. `forget` clears the
+    // association first, so a poll that finishes later cannot merge the old
+    // run into that agent. The tracker keeps polling to its own budget.
     tracker.forget(sessionId)
     sessionStore.release(sessionId)
   })
@@ -904,10 +904,10 @@ export function apply(ctx, rawConfig = {}) {
           if (Date.now() > deadline) return timedOut()
           const record = await tracker.refresh(promptId).catch(() => null)
           if (exec.signal.aborted) throw new Error('comfyui_run was cancelled')
-          // `lost` means the tracker stopped looking. Do not claim images for a
-          // run it no longer follows.
-          if (record?.status === 'lost') return timedOut()
-          if (record !== null && (record.status === 'completed' || record.status === 'error' || record.status === 'interrupted')) {
+          if (record !== null && TERMINAL_RUN_STATUSES.has(record.status)) {
+            // `lost` means the tracker stopped looking. Do not claim images for a
+            // run it no longer follows.
+            if (record.status === 'lost') return timedOut()
             const history = await fetchJson(`/history/${encodeURIComponent(promptId)}`, 5000).catch(() => undefined)
             if (history?.ok === true && isObject(history.data) && isObject(history.data[promptId])) {
               const settled = history.data[promptId]
@@ -985,7 +985,7 @@ export function apply(ctx, rawConfig = {}) {
   function progressTool(sessionId) {
     return {
       name: 'comfyui_progress',
-      description: 'Report the latest ComfyUI execution state for this session: panel events (current node, step progress, errors), the run record, the live queue snapshot, and `hostRun` — the Host\'s own tracking of a run started by comfyui_run, which keeps working after the panel closes and carries the output files.',
+      description: 'Report the latest ComfyUI execution state for this session: panel events (current node, step progress, errors), the run record, the live queue snapshot, and `hostRun` — the Host\'s own tracking of a run started by comfyui_run, which keeps working after the panel closes and carries the output files. `history` is set only for a prompt id the Host is not already watching.',
       parameters: {
         type: 'object',
         properties: { promptId: { type: 'string', description: 'Optional prompt id to inspect; defaults to the latest run.' } },

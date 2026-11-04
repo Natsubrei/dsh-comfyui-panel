@@ -64,7 +64,8 @@ saves to a `.json` file and restores on load. Two properties matter:
   so for selection ids), so a payload that still carries `"9"` is not dropped.
   Canonical means a safe integer, or a non-empty string that is exactly
   `String` of that integer: `"9"` is kept, and `"09"`, `"9.0"`, and `" 9"`
-  are not that form and are dropped.
+  are not that form and that node is dropped. The store falls back to the raw
+  workflow only when the projection has no nodes left.
 - **`extra.ds` is written on every serialization.** The frontend's
   `saveViewportWithGraph` setting (on by default) stamps `{ scale, offset }` of
   the camera into `extra.ds`, so zooming, panning, or resizing the panel changes

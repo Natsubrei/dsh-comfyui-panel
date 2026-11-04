@@ -53,8 +53,9 @@ function projectWidgets(raw) {
  * Accept a node or selection id.
  *
  * A safe integer stays itself. A string is kept only when it is the canonical
- * base-10 spelling of a safe integer, which is how a live LiteGraph id (`"9"`)
- * still reaches the Host after the panel's own `Number()` pass is skipped.
+ * base-10 spelling of a safe integer (`String(id) === value`). `"9"` stays.
+ * `"09"` parses as 9 but is not that spelling, and neither are `"9.0"` and
+ * `" 9"`. A rejected id drops that node only.
  * @param {unknown} value - a node id or a selection entry.
  * @returns {number | null} the integer, or null when the value is not one.
  */
@@ -62,7 +63,6 @@ function coerceId(value) {
   if (typeof value === 'number') return Number.isSafeInteger(value) ? value : null
   if (typeof value !== 'string') return null
   const id = Number(value)
-  // `"09"` parses as 9 but is not the canonical spelling `String(9)`.
   if (!Number.isSafeInteger(id) || String(id) !== value) return null
   return id
 }
