@@ -3,7 +3,7 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
-## Unreleased
+## 0.9.0
 
 - Two tab tools: `comfyui_workflow_switch` moves the editor to another open tab
   without losing its unsaved edits, and `comfyui_workflow_close` closes one after
@@ -14,6 +14,14 @@ truth, and every release is pinned by a commit in `market/index.json`.
   the count and the active one when more than one is open.
 - Loading a workflow keeps it in its own tab instead of opening a second,
   "Unsaved Workflow" one beside it.
+- The Host accepts the canonical spelling of a node id (`"9"`) in a synced
+  projection, so a panel that sends live LiteGraph ids still reaches the model.
+  Any other spelling (`"09"`, `"9.0"`) drops that node only.
+- A run the Host started keeps its session inside the run tracker. A run that
+  settles after its agent is gone can no longer be written back into a fresh
+  agent for the same session.
+- `comfyui_progress` returns `history` only for a prompt id the Host is not
+  already watching; a watched prompt carries its outputs on `hostRun`.
 
 ## 0.8.1
 
