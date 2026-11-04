@@ -747,6 +747,19 @@ export async function main(argv) {
     console.error(`authentication: ${String(error.message)}`)
     return 2
   }
+  // A stopped ComfyUI never boots the editor, and its iframe error page is
+  // invisible to the driver. Ask the plugin's own view of the upstream before
+  // launching a browser for a page that cannot get there: the answer costs a
+  // second, while the browser and its 90 s editor budget cost a minute.
+  const service = await readServiceHealth(url, cookie)
+  if ('error' in service || !service.health) {
+    const state = 'error' in service ? 'unknown' : service.state
+    const detail = 'error' in service
+      ? ` (${service.error})`
+      : (service.lastError === null ? '' : `, last error: ${service.lastError}`)
+    console.error(`ComfyUI is not reachable: ${SERVICE_ROUTE} reports state ${state}${detail}; start ComfyUI from the panel's Server controls, then run this check again`)
+    return 2
+  }
   let browser
   try {
     browser = await Browser.launch({ chrome: options.chrome, width: options.width, height: options.height })
@@ -757,18 +770,6 @@ export async function main(argv) {
   try {
     await browser.setCookie({ name: cookie.name, value: cookie.value, url })
     await browser.goto(url)
-    // A stopped ComfyUI never boots the editor, and the iframe's error page is
-    // invisible to the driver: check the plugin's own view of the upstream
-    // before spending the editor budget on a page that cannot get there.
-    const service = await readServiceHealth(url, cookie)
-    if ('error' in service || !service.health) {
-      const state = 'error' in service ? 'unknown' : service.state
-      const detail = 'error' in service
-        ? ` (${service.error})`
-        : (service.lastError === null ? '' : `, last error: ${service.lastError}`)
-      console.error(`ComfyUI is not reachable: ${SERVICE_ROUTE} reports state ${state}${detail}; start ComfyUI from the panel's Server controls, then run this check again`)
-      return 2
-    }
     // Anything the host and its other plugins logged while booting is not this
     // check's business; only errors from here on belong to the panel.
     const errorsSince = browser.console.length
