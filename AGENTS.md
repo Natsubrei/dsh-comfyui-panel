@@ -98,6 +98,9 @@ arguments still passes — that is exactly how a sync once shipped calling
 socket owned. Give a function whose signature carries meaning `@param` and
 `@returns` tags, and the call sites get checked.
 
+Reviewing a change: open `CODING_STANDARDS.md` for the two judgement rules the
+checks cannot enforce.
+
 ## After a client change
 
 `docs/panel-check.md` is the whole loop: reload the live plugin, run `npm run
