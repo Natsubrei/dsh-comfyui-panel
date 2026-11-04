@@ -734,6 +734,212 @@ const stage = (service, extra = {}) => overlayPlan({
   )
 }
 
+// Every tab the editor has open is page state the Host cannot see for itself:
+// the Host mirrors one graph, so the tab list is the only way a reply can say
+// which tab the user is looking at and what else is open beside it.
+{
+  const { readTabs, tabLabel } = mod.__ops
+  const open = [
+    { path: 'workflows/deepseek-chan-emoji.json', filename: 'deepseek-chan-emoji', isTemporary: false, isModified: false },
+    { path: 'workflows/Unsaved Workflow.json', filename: 'Unsaved Workflow', isTemporary: true, isModified: true },
+    { path: '' },
+  ]
+  const app = {
+    extensionManager: { workflow: { openWorkflows: open, isActive: workflow => workflow === open[0] } },
+  }
+  assert.deepEqual(readTabs(app), [
+    { name: 'deepseek-chan-emoji', path: 'workflows/deepseek-chan-emoji.json', temporary: false, modified: false, active: true },
+    { name: 'Unsaved Workflow', path: 'workflows/Unsaved Workflow.json', temporary: true, modified: true, active: false },
+  ], 'the active flag is the store\'s own answer, not a guess')
+  assert.equal(tabLabel(open[1]), 'Unsaved Workflow', 'a tab label is the label, even when no file has it')
+  assert.equal(tabLabel({ filename: 'sub/folder/pack.json' }), 'pack')
+  assert.equal(tabLabel({}), null)
+  assert.deepEqual(readTabs({}), [], 'a frontend without the store reports no tabs rather than failing')
+}
+
+// Switching a tab loads that tab's own state. Reading the file instead would
+// throw away the edits the tab is holding, which is exactly what the user is
+// coming back to.
+{
+  const { switchTab } = mod.__ops
+  const target = {
+    path: 'workflows/portrait.json', filename: 'portrait', isLoaded: true,
+    activeState: { nodes: [{ id: 1 }], links: [] },
+  }
+  const calls = []
+  const graph = { _nodes: [1], links: new Map(), setDirtyCanvas() {} }
+  const app = {
+    extensionManager: { workflow: { openWorkflows: [target], isActive: () => true } },
+    async loadGraphData(workflow, clean, restore, owner) {
+      calls.push({ workflow, owner })
+      app.rootGraphOrUndefined = graph
+    },
+  }
+  const hooks = { fit: async () => true, sync: async () => true }
+  const result = await switchTab(app, { name: 'portrait' }, hooks)
+  assert.equal(result.switched, 'portrait')
+  assert.equal(result.nodes, 1)
+  assert.equal(calls[0].owner, target, 'the tab owns the graph it loads')
+  assert.notEqual(calls[0].workflow, target.activeState, 'the tab state is cloned, so the store keeps its own copy')
+  assert.deepEqual(calls[0].workflow, target.activeState)
+  await assert.rejects(switchTab(app, { name: 'missing' }, hooks), /No open tab is named/)
+  await assert.rejects(switchTab(app, { name: 'portrait' }, { ...hooks, sync: async () => false }), /did not receive it/)
+}
+
+// Closing: a clean tab moves off first, a tab with unsaved work asks the user
+// through ComfyUI's own dialog, and the command answers before they do.
+{
+  const { closeTab } = mod.__ops
+  const makeApp = ({ modified = false, temporary = false, dialog = null, save = async () => {}, single = false } = {}) => {
+    const other = { path: 'workflows/other.json', filename: 'other', isLoaded: true, activeState: { nodes: [], links: [] } }
+    const target = {
+      path: 'workflows/portrait.json', filename: 'portrait', isLoaded: true,
+      isModified: modified, isTemporary: temporary, activeState: { nodes: [], links: [] },
+    }
+    const closed = []
+    const loaded = []
+    const manager = {
+      openWorkflows: single ? [target] : [target, other],
+      isActive: workflow => workflow === target,
+      saveWorkflow: save,
+      closeWorkflow(workflow) {
+        closed.push(workflow)
+        manager.openWorkflows = manager.openWorkflows.filter(entry => entry !== workflow)
+      },
+    }
+    const app = {
+      extensionManager: { dialog, workflow: manager },
+      async loadGraphData(workflow, clean, restore, owner) {
+        loaded.push(owner)
+        app.rootGraphOrUndefined = { _nodes: [], links: new Map(), setDirtyCanvas() {} }
+      },
+    }
+    return { app, target, closed, loaded }
+  }
+
+  {
+    const { app, target, closed, loaded } = makeApp()
+    let syncs = 0
+    const result = await closeTab(app, { name: 'portrait' }, { sync: async () => { syncs += 1; return true } })
+    assert.equal(result.status, 'closed')
+    assert.deepEqual(result.remaining, ['other'])
+    assert.deepEqual(closed, [target])
+    assert.deepEqual(loaded, [{ path: 'workflows/other.json', filename: 'other', isLoaded: true, activeState: { nodes: [], links: [] } }], 'the editor moves off the tab before it closes')
+    assert.equal(syncs, 1)
+  }
+
+  {
+    /** @type {any} */
+    let asked = null
+    const { app, closed } = makeApp({ modified: true, dialog: { confirm: input => { asked = input; return new Promise(() => {}) } } })
+    const result = await closeTab(app, { name: 'portrait' }, { sync: async () => true })
+    assert.equal(result.status, 'awaiting-confirmation', 'the command does not wait for the user')
+    assert.equal(asked.type, 'dirtyClose')
+    assert.deepEqual(asked.itemList, ['workflows/portrait.json'])
+    assert.equal(asked.denyLabel, 'Close without saving')
+    assert.equal(closed.length, 0, 'nothing closes before the user answers')
+  }
+
+  {
+    const saved = []
+    const { app, target, closed } = makeApp({
+      modified: true,
+      dialog: { confirm: async () => true },
+      save: async workflow => { saved.push(workflow) },
+    })
+    assert.equal((await closeTab(app, { name: 'portrait' }, { sync: async () => true })).status, 'awaiting-confirmation')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.deepEqual(saved, [target], 'confirming saves first')
+    assert.deepEqual(closed, [target], 'and only then closes')
+  }
+
+  {
+    const { app, closed } = makeApp({ modified: true, dialog: { confirm: async () => false } })
+    await closeTab(app, { name: 'portrait' }, { sync: async () => true })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.deepEqual(closed.map(workflow => workflow.filename), ['portrait'], 'closing without saving closes')
+  }
+
+  {
+    const { app, closed } = makeApp({ modified: true, dialog: { confirm: async () => null } })
+    await closeTab(app, { name: 'portrait' }, { sync: async () => true })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.equal(closed.length, 0, 'cancelling keeps the tab')
+  }
+
+  {
+    const { app } = makeApp({ modified: true, temporary: true })
+    await assert.rejects(closeTab(app, { name: 'portrait' }, { sync: async () => true }), /no file to save/)
+  }
+
+  // A frontend without a dialog cannot ask whether to save. Saying "awaiting
+  // the user" there would be a lie: nobody was asked.
+  {
+    const { app, closed } = makeApp({ modified: true, dialog: null })
+    await assert.rejects(
+      closeTab(app, { name: 'portrait' }, { sync: async () => true }),
+      /cannot ask whether to save/,
+    )
+    assert.equal(closed.length, 0)
+  }
+
+  // A save that fails must leave the tab open, not close over the work.
+  {
+    const { app, closed } = makeApp({
+      modified: true,
+      dialog: { confirm: async () => true },
+      save: async () => { throw new Error('disk full') },
+    })
+    const quiet = console.error
+    console.error = () => {}
+    try {
+      await closeTab(app, { name: 'portrait' }, { sync: async () => true })
+      await new Promise(resolve => setTimeout(resolve, 0))
+    } finally {
+      console.error = quiet
+    }
+    assert.equal(closed.length, 0, 'a failed save leaves the tab open')
+  }
+
+  // The last tab: the editor loads its default workflow instead of keeping a
+  // graph no tab owns.
+  {
+    const { app, target, closed } = makeApp({ single: true })
+    let defaults = 0
+    app.loadGraphData = async (...args) => {
+      if (args.length === 0) defaults += 1
+      app.rootGraphOrUndefined = { _nodes: [], links: new Map(), setDirtyCanvas() {} }
+    }
+    await closeTab(app, { name: 'portrait' }, { sync: async () => true })
+    assert.equal(defaults, 1, 'closing the only tab falls back to the default workflow')
+    assert.deepEqual(closed, [target])
+  }
+}
+
+// A path addresses exactly one tab; a label two files share names the
+// candidates instead of leaving the caller stuck.
+{
+  const { switchTab } = mod.__ops
+  const first = { path: 'workflows/a/portrait.json', filename: 'portrait', isLoaded: true, activeState: { nodes: [], links: [] } }
+  const second = { path: 'workflows/b/portrait.json', filename: 'portrait', isLoaded: true, activeState: { nodes: [], links: [] } }
+  const app = {
+    extensionManager: { workflow: { openWorkflows: [first, second], isActive: () => true } },
+    async loadGraphData(workflow, clean, restore, owner) {
+      app.owner = owner
+      app.rootGraphOrUndefined = { _nodes: [], links: new Map(), setDirtyCanvas() {} }
+    },
+  }
+  const hooks = { fit: async () => true, sync: async () => true }
+  const byPath = await switchTab(app, { path: 'workflows/b/portrait.json' }, hooks)
+  assert.equal(byPath.path, 'workflows/b/portrait.json')
+  assert.equal(app.owner, second, 'a path picks the exact tab, not the first label match')
+  await assert.rejects(
+    switchTab(app, { name: 'portrait' }, hooks),
+    /address one by its path instead: workflows\/a\/portrait\.json, workflows\/b\/portrait\.json/,
+  )
+  await assert.rejects(switchTab(app, { path: 'workflows/c/portrait.json' }, hooks), /No open tab has the path/)
+}
+
 // The editor's name is its file identity: the label ComfyUI shows and the path
 // Save writes to. The panel reports it to the Host, and shows a Host-side name
 // back once the file it names is known to exist (that check lives in
@@ -799,6 +1005,7 @@ const stage = (service, extra = {}) => overlayPlan({
     workflow,
     selection: [],
     name: null,
+    tabs: [],
     clientId: '0123456789abcdef',
     prompt: { output: { 1: { class_type: 'Test' } } },
   })
@@ -812,6 +1019,7 @@ const stage = (service, extra = {}) => overlayPlan({
         serialize: () => state.workflow,
         selection: () => state.selection,
         name: () => state.name,
+        tabs: () => state.tabs ?? [],
         clientId: () => state.clientId,
         project: () => ({ nodes: [], linkCount: 0, selection: state.selection }),
         toPrompt: () => Promise.resolve(state.prompt),
@@ -882,6 +1090,25 @@ const stage = (service, extra = {}) => overlayPlan({
     assert.equal('name' in calls[1], false, 'no name travels for a canvas that has none')
   }
 
+  // The tab list travels beside the graph, so a tab switch changes no node and
+  // still has to post — otherwise the Host keeps a list from before the switch.
+  {
+    const state = makeState()
+    state.tabs = [{ name: 'portrait', path: 'workflows/portrait.json', temporary: false, modified: false, active: true }]
+    const { sync, calls } = makeSync(state)
+    await sync.push(true)
+    assert.equal(calls[0].tabs.length, 1)
+    state.tabs = [
+      { name: 'portrait', path: 'workflows/portrait.json', temporary: false, modified: false, active: false },
+      { name: 'Unsaved Workflow', path: 'workflows/Unsaved Workflow.json', temporary: true, modified: false, active: true },
+    ]
+    const moved = await sync.push(false)
+    assert.equal(moved.posted, true, 'a tab switch is worth a sync even when the graph is unchanged')
+    assert.deepEqual(calls[1].tabs.map(tab => tab.name), ['portrait', 'Unsaved Workflow'])
+    assert.deepEqual(calls[1].workflow, calls[0].workflow, 'the graph is still the same graph')
+    assert.equal((await sync.push(false)).posted, false, 'an unchanged tab list is quiet again')
+  }
+
   // `extra.ds` is the camera. It must never reach the Host or every zoom and
   // pan would look like a graph edit, and an `extra` it leaves empty must be
   // dropped rather than posted as `{}`.
@@ -897,7 +1124,7 @@ const stage = (service, extra = {}) => overlayPlan({
     assert.equal('extra' in onlyCamera.workflow, false, 'an extra with only the camera is dropped')
     assert.deepEqual(
       Object.keys(kept).sort(),
-      ['clientId', 'file', 'prompt', 'revision', 'semantic', 'sessionId', 'workflow'],
+      ['clientId', 'file', 'prompt', 'revision', 'semantic', 'sessionId', 'tabs', 'workflow'],
       'the state body keeps its exact fields; no name is added when it did not change',
     )
   }
@@ -919,6 +1146,7 @@ const stage = (service, extra = {}) => overlayPlan({
         serialize: () => state.workflow,
         selection: () => state.selection,
         name: () => state.name,
+        tabs: () => [],
         clientId: () => state.clientId,
         project: () => ({}),
         toPrompt: () => {

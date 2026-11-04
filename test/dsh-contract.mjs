@@ -251,11 +251,13 @@ try {
     'comfyui_run',
     'comfyui_screenshot',
     'comfyui_status',
+    'comfyui_workflow_close',
     'comfyui_workflow_export',
     'comfyui_workflow_import',
     'comfyui_workflow_list',
     'comfyui_workflow_load',
     'comfyui_workflow_save',
+    'comfyui_workflow_switch',
   ]
   assert.deepEqual(ctx.tools.schemas(agent).map(tool => tool.name).sort(), expected)
   const loadSchema = ctx.tools.schemas(agent).find(tool => tool.name === 'comfyui_workflow_load')
@@ -356,6 +358,31 @@ try {
   const loaded = JSON.parse(loadedResult.content.find(part => part.type === 'text')?.text)
   assert.equal(loaded.name, 'imported')
   assert.equal(loaded.nodes, 1)
+
+  // ── Switch: the same channel, with a tab label instead of a graph ────────
+  const switchPending = post('/api/comfyui/commands/poll', { sessionId: SESSION_ID, timeoutMs: 1000 })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const switchTool = callTool('comfyui_workflow_switch', { name: 'imported' }, 'contract-workflow-switch')
+  const switchPolled = await (await switchPending).json()
+  assert.equal(switchPolled.command.kind, 'switch-tab')
+  assert.equal(switchPolled.command.name, 'imported')
+  const switchAnswered = await post('/api/comfyui/commands/result', {
+    sessionId: SESSION_ID,
+    id: switchPolled.command.id,
+    ok: true,
+    value: { switched: 'imported', path: 'workflows/imported.json', nodes: 1, links: 0 },
+  })
+  assert.equal((await switchAnswered.json()).accepted, true)
+  const switchedResult = await switchTool
+  const switched = JSON.parse(switchedResult.content.find(part => part.type === 'text')?.text)
+  assert.equal(switched.name, 'imported')
+
+  // Closing is destructive: without the user's consent the tool refuses before
+  // any command reaches the panel.
+  await assert.rejects(
+    callTool('comfyui_workflow_close', { name: 'imported' }, 'contract-workflow-close-unconfirmed'),
+    /confirm/,
+  )
 
   // ── The digest lands in the agent's runtime context, not the global one ──
   const assembly = await ctx.systemPrompt.assemble({ scope: agent })

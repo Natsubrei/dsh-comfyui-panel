@@ -574,6 +574,7 @@ window.__ModuleLoader__.load({
           'data-nodes': String(stats.nodes),
           'data-links': String(stats.links),
           'data-revision': String(stats.revision),
+          'data-tabs': String(stats.tabs ?? 0),
           'data-synced': String(syncAt),
         }, statText),
         h('div', { className: 'dsh-comfyui-tools' },
@@ -1045,6 +1046,86 @@ window.__ModuleLoader__.load({
       const name = base.replace(/\.json$/i, '').trim()
       if (name.length === 0 || UNSAVED_WORKFLOW.test(name)) return null
       return name
+    }
+
+    /**
+     * The editor's open workflows, as the host's tab list is built from.
+     *
+     * 1.57 keeps them on the workflow store; a frontend without that store
+     * reports no tabs rather than an error, because the graph beside them still
+     * syncs. An entry without a path cannot be addressed, so it is dropped.
+     * @param {any} app - the editor's `comfyAPI.app.app`.
+     * @returns {any[]} the open workflows, in tab order.
+     */
+    function openTabEntries(app) {
+      const raw = app?.extensionManager?.workflow?.openWorkflows
+      const list = Array.isArray(raw) ? raw : Array.isArray(raw?.value) ? raw.value : []
+      return list.filter(workflow => typeof workflow?.path === 'string' && workflow.path.trim().length > 0)
+    }
+
+    /**
+     * The label a tab shows, or null when the frontend never named it.
+     *
+     * Unlike a session's workflow name, a tab's "Unsaved Workflow" label is its
+     * identity here: it is how the user names the tab they want closed.
+     * @param {any} workflow - one entry of the store's `openWorkflows`.
+     * @returns {string | null} the label without `.json`.
+     */
+    function tabLabel(workflow) {
+      const filename = typeof workflow?.filename === 'string' ? workflow.filename : ''
+      const base = filename.split(/[\\/]/).pop() ?? ''
+      const label = base.replace(/\.json$/i, '').trim()
+      return label.length > 0 ? label : null
+    }
+
+    /**
+     * The editor's open tabs as the Host stores them.
+     *
+     * The Host mirrors one graph, so it cannot otherwise tell a settled session
+     * from one whose user is looking at a different tab.
+     * @param {any} app - the editor's `comfyAPI.app.app`.
+     * @returns {{name: string | null, path: string, temporary: boolean, modified: boolean, active: boolean}[]} the tabs.
+     */
+    function readTabs(app) {
+      const manager = app?.extensionManager?.workflow
+      return openTabEntries(app).map(workflow => ({
+        name: tabLabel(workflow),
+        path: workflow.path,
+        temporary: workflow?.isTemporary === true,
+        modified: workflow?.isModified === true,
+        active: typeof manager?.isActive === 'function' ? manager.isActive(workflow) === true : false,
+      }))
+    }
+
+    /**
+     * The open workflow a tab command addresses.
+     *
+     * A path is exact, so it settles the case two files share a label. A label
+     * is what the user reads, and is enough whenever it is unique — the common
+     * case.
+     * @param {any} app - the editor's `comfyAPI.app.app`.
+     * @param {{name?: string | null, path?: string | null}} target - a tab's label, its path, or both.
+     * @returns {any} that tab's workflow.
+     */
+    function findTab(app, { name = null, path = null } = {}) {
+      const entries = openTabEntries(app)
+      const wantedPath = typeof path === 'string' ? path.trim() : ''
+      if (wantedPath.length > 0) {
+        const byPath = entries.find(workflow => workflow.path === wantedPath)
+        if (byPath === undefined) throw new Error(`No open tab has the path "${wantedPath}"`)
+        return byPath
+      }
+      const wanted = typeof name === 'string' ? name.trim() : ''
+      const matches = entries.filter(workflow => tabLabel(workflow) === wanted)
+      if (matches.length === 0) {
+        throw new Error(`No open tab is named "${wanted}"; read the tabs from the session's status first`)
+      }
+      if (matches.length > 1) {
+        // Two files in different folders can share a label; the path is the
+        // identity, so name the candidates instead of leaving a dead end.
+        throw new Error(`More than one open tab is named "${wanted}"; address one by its path instead: ${matches.map(match => match.path).join(', ')}`)
+      }
+      return matches[0]
     }
 
     /**
@@ -1527,6 +1608,133 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Load one tab's own state into the canvas, without reading the file.
+     *
+     * A tab that is already open keeps its edits in `activeState`, so this is
+     * what "switch to that tab" means: the graph the user left there, not the
+     * file's older copy.
+     * @param {any} app - the editor's `comfyAPI.app.app`.
+     * @param {any} workflow - the store's workflow for that tab.
+     * @returns {Promise<{nodes: number, links: number}>} the loaded graph's size.
+     */
+    async function activateTab(app, workflow) {
+      if (workflow?.isLoaded !== true && typeof workflow?.load === 'function') await workflow.load()
+      const state = workflow?.activeState ?? workflow?.initialState
+      if (state === null || state === undefined) throw new Error('That tab has no graph to load')
+      return applyWorkflowGraph(app, JSON.parse(JSON.stringify(state)), workflow)
+    }
+
+    /**
+     * Switch the editor to a tab that is already open.
+     * @param {any} app - the editor's `comfyAPI.app.app`.
+     * @param {{name?: string | null, path?: string | null}} target - which tab; see `findTab`.
+     * @param {{fit: (app: any) => Promise<unknown>, sync: () => Promise<boolean>}} hooks - framing and mirroring.
+     * @returns {Promise<{switched: string, path: string, nodes: number, links: number}>} the tab that is now active.
+     */
+    async function switchTab(app, target, { fit, sync }) {
+      const workflow = findTab(app, target)
+      const value = await activateTab(app, workflow)
+      await fit(app).catch(() => {})
+      if (!(await sync())) throw new Error('The tab switched, but the Host did not receive it; retry Sync')
+      return { switched: tabLabel(workflow) ?? workflow.path, path: workflow.path, nodes: value.nodes, links: value.links }
+    }
+
+    /**
+     * Close one tab the user asked to close.
+     *
+     * A tab with a file and unsaved changes goes through ComfyUI's own dialog,
+     * which offers save, close-without-saving, and cancel; the command returns
+     * while that dialog is open, because the user may answer long after a
+     * command's lifetime. Everything the dialog needs is checked *before* that
+     * answer, so `awaiting-confirmation` only ever means a dialog is really
+     * open. A temporary tab with changes is refused: it has no file to save
+     * them to, and only the user can decide to discard them.
+     * @param {any} app - the editor's `comfyAPI.app.app`.
+     * @param {{name?: string | null, path?: string | null}} target - which tab; see `findTab`.
+     * @param {{sync: () => Promise<boolean>}} hooks - mirroring after the close.
+     * @returns {Promise<{status: 'closed' | 'awaiting-confirmation', name: string, path: string, remaining?: (string | null)[]}>} what happened.
+     */
+    async function closeTab(app, target, { sync }) {
+      const workflow = findTab(app, target)
+      const label = tabLabel(workflow) ?? workflow.path
+      if (workflow.isModified === true) {
+        if (workflow.isTemporary === true) {
+          throw new Error(`The tab "${label}" has unsaved changes and no file to save them to; ask the user to close it in ComfyUI, or save it as a workflow first`)
+        }
+        const dialog = app?.extensionManager?.dialog
+        const manager = app?.extensionManager?.workflow
+        if (typeof dialog?.confirm !== 'function' || typeof manager?.saveWorkflow !== 'function') {
+          throw new Error('This ComfyUI frontend cannot ask whether to save; close the tab in its own UI')
+        }
+        void closeModifiedTab(app, workflow, { dialog, sync }).catch(error => {
+          console.error('dsh-comfyui: closing the tab failed', error)
+        })
+        return { status: 'awaiting-confirmation', name: label, path: workflow.path }
+      }
+      await performClose(app, workflow, { sync })
+      return { status: 'closed', name: label, path: workflow.path, remaining: readTabs(app).map(tab => tab.name) }
+    }
+
+    /**
+     * Ask the user whether to save, then close — through ComfyUI's own dialog.
+     * @param {any} app - the editor's `comfyAPI.app.app`.
+     * @param {any} workflow - the tab's workflow; it has a file and unsaved changes.
+     * @param {{dialog: any, sync: () => Promise<boolean>}} hooks - the dialog that asks, and mirroring.
+     * @returns {Promise<void>} resolves once the tab closed, or the user cancelled.
+     */
+    async function closeModifiedTab(app, workflow, { dialog, sync }) {
+      const manager = app?.extensionManager?.workflow
+      const label = tabLabel(workflow) ?? workflow.path
+      // `dirtyClose` is the dialog ComfyUI itself shows on a tab's ×: confirm
+      // saves, deny closes without saving, cancel keeps the tab.
+      const answer = await dialog.confirm({
+        title: 'Close a workflow',
+        message: `"${label}" has unsaved changes.`,
+        type: 'dirtyClose',
+        itemList: [workflow.path],
+        denyLabel: 'Close without saving',
+      })
+      if (answer !== true && answer !== false) return
+      if (answer === true) {
+        try {
+          await manager.saveWorkflow(workflow)
+        } catch (error) {
+          // Losing the work is worse than a close the user has to repeat.
+          console.error('dsh-comfyui: the workflow did not save, so its tab stays open', error)
+          return
+        }
+      }
+      await performClose(app, workflow, { sync })
+    }
+
+    /**
+     * Remove a tab from the editor, moving the active tab first when needed.
+     *
+     * The store's close drops the entry without touching the canvas, so closing
+     * the active tab would leave the editor showing a workflow it no longer
+     * lists. With a neighbour we move to it; as the last tab we ask the editor
+     * for its default workflow, which is what ComfyUI's own close does.
+     * @param {any} app - the editor's `comfyAPI.app.app`.
+     * @param {any} workflow - the tab's workflow.
+     * @param {{sync: () => Promise<boolean>}} hooks - mirroring after the close.
+     * @returns {Promise<void>} resolves once the tab is closed.
+     */
+    async function performClose(app, workflow, { sync }) {
+      const manager = app?.extensionManager?.workflow
+      if (typeof manager?.closeWorkflow !== 'function') {
+        throw new Error('This ComfyUI frontend cannot close a tab; reload the panel')
+      }
+      const active = typeof manager.isActive === 'function' && manager.isActive(workflow) === true
+      if (active) {
+        const neighbour = openTabEntries(app).find(entry => entry !== workflow)
+        if (neighbour !== undefined) await activateTab(app, neighbour)
+        else if (typeof app?.loadGraphData === 'function') await app.loadGraphData()
+      }
+      manager.closeWorkflow(workflow)
+      if (!(await sync())) throw new Error('The tab closed, but the Host did not receive it; retry Sync')
+    }
+
+    /**
      * The editor surface one sync reads, bound to the app it was read from.
      *
      * A push needs exactly these seven facts and nothing else from the iframe,
@@ -1544,6 +1752,7 @@ window.__ModuleLoader__.load({
           .map(Number)
           .filter(Number.isInteger),
         name: () => workflowNameFromEditor(app),
+        tabs: () => readTabs(app),
         clientId: () => frontendClientId(win, app),
         project: () => projectGraph(app),
         toPrompt: () => app.graphToPrompt(),
@@ -1574,6 +1783,8 @@ window.__ModuleLoader__.load({
     function createSync({ sessionId, editor, post, now, onPost, bridgeError }) {
       let revision = 0
       let lastJson = ''
+      /** The tab list travels outside the graph, so it needs its own signature. */
+      let lastTabsJson = ''
       let lastClientId = null
       /** @type {string | null | undefined} */
       let lastEditorName
@@ -1583,6 +1794,7 @@ window.__ModuleLoader__.load({
       let displayName = null
       let lastNodes = 0
       let lastLinks = 0
+      let lastTabs = 0
       let lastAt = 0
       /** Bumped by every push; a slower one must not overtake a newer snapshot. */
       let generation = 0
@@ -1590,10 +1802,10 @@ window.__ModuleLoader__.load({
       /**
        * What the last successful sync left behind, for a caller that has no
        * state of its own.
-       * @returns {{revision: number, name: string | null, nodes: number, links: number, at: number}} the remembered snapshot.
+       * @returns {{revision: number, name: string | null, nodes: number, links: number, tabs: number, at: number}} the remembered snapshot.
        */
       function snapshot() {
-        return { revision, name: displayName, nodes: lastNodes, links: lastLinks, at: lastAt }
+        return { revision, name: displayName, nodes: lastNodes, links: lastLinks, tabs: lastTabs, at: lastAt }
       }
 
       /**
@@ -1604,6 +1816,7 @@ window.__ModuleLoader__.load({
        */
       function reset() {
         lastJson = ''
+        lastTabsJson = ''
         lastEditorName = undefined
         lastHostName = undefined
       }
@@ -1672,10 +1885,18 @@ window.__ModuleLoader__.load({
         // reports a file the editor already had: a quiet re-sync must not clear
         // a name that a workflow tool gave this session.
         const editorName = view.name()
+        // The open tabs are page state beside the graph: switching a tab changes
+        // none of the graph JSON, so without their own comparison the Host would
+        // keep a tab list from before the switch.
+        const tabs = view.tabs()
+        const tabsJson = JSON.stringify(tabs)
         const firstSync = lastEditorName === undefined
         const renamed = firstSync ? editorName !== null : lastEditorName !== editorName
-        if (!force && json === lastJson && !renamed) return { posted: false, ...snapshot() }
+        if (!force && json === lastJson && !renamed && tabsJson === lastTabsJson) {
+          return { posted: false, ...snapshot() }
+        }
         lastJson = json
+        lastTabsJson = tabsJson
         onPost?.()
         let semantic = null
         try {
@@ -1711,6 +1932,7 @@ window.__ModuleLoader__.load({
           // that no longer describes the canvas, and a quiet re-sync would
           // otherwise leave the old one attached.
           file: editorName,
+          tabs,
           // A canvas without a file reports only that. `file: null` is what
           // tells the Host to drop a name that came from a file, while a name a
           // workflow tool gave the canvas survives — which is what a temporary
@@ -1733,6 +1955,7 @@ window.__ModuleLoader__.load({
         if (saved !== null && saved !== undefined) displayName = hostName
         lastNodes = nodes
         lastLinks = links
+        lastTabs = tabs.length
         lastAt = now()
         return {
           posted: true,
@@ -1740,6 +1963,7 @@ window.__ModuleLoader__.load({
           name: displayName,
           nodes,
           links,
+          tabs: lastTabs,
           at: lastAt,
           adoptName: hostRenamed && hostName !== null && hostName !== editorName ? hostName : null,
         }
@@ -1759,7 +1983,7 @@ window.__ModuleLoader__.load({
       const workflowFileCacheRef = useRef(new Map())
       const [status, setStatus] = useState('loading')
       const [bootSeconds, setBootSeconds] = useState(0)
-      const [stats, setStats] = useState({ nodes: 0, links: 0, revision: 0, name: null })
+      const [stats, setStats] = useState({ nodes: 0, links: 0, revision: 0, name: null, tabs: 0 })
       const [message, setMessage] = useState('')
       const [run, setRun] = useState(null)
       const runRef = useRef(null)
@@ -1927,7 +2151,7 @@ window.__ModuleLoader__.load({
        */
       const applySync = useCallback((app, result) => {
         if (result.posted !== true) return
-        setStats({ nodes: result.nodes, links: result.links, revision: result.revision, name: result.name })
+        setStats({ nodes: result.nodes, links: result.links, revision: result.revision, name: result.name, tabs: result.tabs })
         // A tool can name the session (save, load) while the panel is open; the
         // editor's tab follows when the file it names really exists.
         if (result.adoptName !== null) void adoptWorkflowName(app, result.adoptName)
@@ -2006,11 +2230,22 @@ window.__ModuleLoader__.load({
         name,
       }), [syncNow])
 
+      const switchToTab = useCallback((app, target) => switchTab(app, target, {
+        fit: target => fitCanvas(target),
+        sync: () => syncNow(true),
+      }), [syncNow])
+
+      const closeEditorTab = useCallback((app, target) => closeTab(app, target, {
+        sync: () => syncNow(true),
+      }), [syncNow])
+
       const runCommand = useCallback(async (app, command) => {
         if (command.kind === 'screenshot') return captureGraph(app)
         if (command.kind === 'workflow') return applyWorkflow(app, command.workflow, command.name)
+        if (command.kind === 'switch-tab') return switchToTab(app, { name: command.name, path: command.path })
+        if (command.kind === 'close-tab') return closeEditorTab(app, { name: command.name, path: command.path })
         return applyOperations(app, command.operations ?? [])
-      }, [applyOperations, applyWorkflow])
+      }, [applyOperations, applyWorkflow, switchToTab, closeEditorTab])
 
       const commandRef = useRef(null)
       commandRef.current = runCommand
@@ -2457,7 +2692,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale', 'sidebarRightTabs'],
       // Editor operations, dictionaries, and the bar/stage rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, captureGraph, applyWorkflowGraph, loadWorkflow, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, mapApiEvent, relayEditorEvents, readPreview, progressSummary, applyRunEvent, runLabel, cancelLabel, TopBar, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, viewShowsAll, describeOperation, en, zh, createSync },
+      __ops: { applyOperation, captureGraph, applyWorkflowGraph, loadWorkflow, switchTab, closeTab, readTabs, tabLabel, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, mapApiEvent, relayEditorEvents, readPreview, progressSummary, applyRunEvent, runLabel, cancelLabel, TopBar, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, viewShowsAll, describeOperation, en, zh, createSync },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')

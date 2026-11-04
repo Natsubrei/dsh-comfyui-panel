@@ -170,6 +170,40 @@ Two rules keep the two sides from fighting:
 Verify after an upgrade: open the editor, read the `filename` above, and set it
 to `'probe.json'`; the tab label must follow immediately.
 
+## 5b. Tabs
+
+`app.extensionManager.workflow.openWorkflows` is the open-tab list, and
+`isActive(workflow)` says which one the canvas is showing. An entry carries
+`path` (its identity), `filename` (the label the user reads), `isTemporary`,
+`isModified`, `isLoaded`, and `activeState` — the graph as that tab left it.
+A tab is page state, like the socket id: it differs between two browsers on the
+same session, so the Host keeps the list in memory, out of the revision, and the
+next sync replaces it.
+
+- Switching is `loadGraphData(tab.activeState, true, false, tab)`. The store's
+  own `openWorkflow(tab)` only moves the active pointer; it does not repaint the
+  canvas, so a switch that stops there leaves the previous graph on screen.
+- Closing is the store's `closeWorkflow(tab)`, which removes the entry, drops
+  its draft, and does nothing else — no prompt, and no move to a neighbour. Close
+  the active tab without moving first and the editor keeps showing a workflow it
+  no longer lists.
+- The save question is `app.extensionManager.dialog.confirm({type: 'dirtyClose',
+  itemList: [path], denyLabel})`: confirm saves, deny closes without saving, and
+  cancel keeps the tab. It waits for the user, which is why the close command
+  answers once the dialog is open instead of after it resolves. Saving is the
+  store's own `saveWorkflow(workflow)`, so a frontend that renames or removes
+  either method makes the panel refuse the close instead of guessing.
+- Closing the only open tab asks the app for its default workflow
+  (`app.loadGraphData()` with no graph), which is what ComfyUI's own close does;
+  leaving the canvas on a graph no tab owns would make every later sync report a
+  workflow that is not open.
+
+Verify after an upgrade: open two workflows (a saved file and a new tab), read
+`openWorkflows`, and check that the first entry's `isActive` flips when you click
+between the tabs. Then close the new tab and confirm the file tab becomes active
+on its own. If `dialog.confirm` is gone, the close tool reports that it cannot
+ask rather than closing with unsaved work.
+
 ## 6. Execution events follow `server.client_id`
 
 ComfyUI sends `execution_start`, `executing`, `progress`, `executed`, and the

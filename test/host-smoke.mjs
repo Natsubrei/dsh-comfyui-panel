@@ -562,6 +562,49 @@ const cleared = await host.fetches.get('/api/comfyui/state').fetch(new Request(
 ))
 assert.equal((await cleared.json()).name, null, 'a null name means the canvas has no name')
 
+// Open tabs are page state beside the the graph: they never bump the revision,
+// a malformed entry costs only itself, and a body without the field keeps the
+// list the panel last sent.
+const tabsBody = JSON.stringify({
+  sessionId: 's1',
+  revision: 7,
+  workflow,
+  prompt: { 7: { class_type: 'KSampler', inputs: {} }, 4: { class_type: 'UNETLoader', inputs: {} } },
+  semantic,
+  tabs: [
+    { name: 'deepseek-chan-emoji', path: 'workflows/deepseek-chan-emoji.json', temporary: false, modified: false, active: true },
+    { name: 'Unsaved Workflow', path: 'workflows/Unsaved Workflow.json', temporary: true, modified: false, active: false },
+    { name: 'broken', path: '' },
+    'not-an-object',
+  ],
+})
+const tabsSync = await host.fetches.get('/api/comfyui/state').fetch(new Request(
+  'http://127.0.0.1/api/comfyui/state?sessionId=s1',
+  { method: 'POST', headers: { 'content-type': 'application/json' }, body: tabsBody },
+))
+const tabsSynced = await tabsSync.json()
+assert.equal(tabsSynced.revision, 1, 'open tabs are not graph content')
+assert.deepEqual(tabsSynced.tabs.map(tab => tab.name), ['deepseek-chan-emoji', 'Unsaved Workflow'], 'unusable entries are dropped, not fatal')
+assert.equal(tabsSynced.tabs[1].temporary, true)
+assert.equal(tabsSynced.tabs[1].active, false)
+assert.equal(tabsSynced.tabs[0].active, true)
+
+const tabsQuiet = await host.fetches.get('/api/comfyui/state').fetch(new Request(
+  'http://127.0.0.1/api/comfyui/state?sessionId=s1',
+  {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: 's1',
+      revision: 8,
+      workflow,
+      prompt: { 7: { class_type: 'KSampler', inputs: {} }, 4: { class_type: 'UNETLoader', inputs: {} } },
+      semantic,
+    }),
+  },
+))
+assert.equal((await tabsQuiet.json()).tabs.length, 2, 'a sync without the field keeps the last tab list')
+
 const rejected = await host.fetches.get('/api/comfyui/state').fetch(new Request(
   'http://127.0.0.1/api/comfyui/state?sessionId=s1',
   {
@@ -606,6 +649,7 @@ assert.ok(s1.digest().includes('rev 1'), 'digest names the current revision')
 assert.ok(s1.digest().includes('"portrait"'), 'digest names the workflow')
 assert.ok(s1.digest().includes('selected 7'))
 assert.equal(s1.digest().includes('panel'), true)
+assert.ok(s1.digest().includes('2 tabs'), 'the digest names the tabs the graph does not show')
 
 const exec = execOf('s1')
 const status = parse(await s1.tools.get('comfyui_status').execute({}, exec))
@@ -1374,6 +1418,109 @@ assert.equal(edited.links, 1)
       },
     ))
     await assert.rejects(oldPromise, /did not confirm/)
+
+    // Switching and closing use the same channel as a load. The tool reports
+    // what the panel answered, and a panel that refuses comes back as an error
+    // instead of a success the model would believe.
+    const pollSwitch = startPoll()
+    await delay(30)
+    const switchPromise = s1.tools.get('comfyui_workflow_switch').execute({ name: 'portrait' }, exec)
+    const switchCommand = (await (await pollSwitch).json()).command
+    assert.equal(switchCommand.kind, 'switch-tab')
+    assert.equal(switchCommand.name, 'portrait')
+    await host.fetches.get('/api/comfyui/commands/result').fetch(new Request(
+      'http://127.0.0.1/api/comfyui/commands/result',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: 's1', id: switchCommand.id, ok: true, value: { switched: 'portrait', path: 'workflows/portrait.json', nodes: 2, links: 1 } }),
+      },
+    ))
+    const switched = parse(await switchPromise)
+    assert.equal(switched.name, 'portrait')
+    assert.equal(switched.nodes, 2)
+
+    const pollNoTab = startPoll()
+    await delay(30)
+    const noTabPromise = s1.tools.get('comfyui_workflow_switch').execute({ name: 'nope' }, exec)
+    const noTabCommand = (await (await pollNoTab).json()).command
+    await host.fetches.get('/api/comfyui/commands/result').fetch(new Request(
+      'http://127.0.0.1/api/comfyui/commands/result',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: 's1', id: noTabCommand.id, ok: false, error: 'No open tab is named "nope"' }),
+      },
+    ))
+    await assert.rejects(noTabPromise, /No open tab is named/)
+
+    // Closing is destructive, so consent is checked before anything is queued.
+    await assert.rejects(
+      s1.tools.get('comfyui_workflow_close').execute({ name: 'portrait' }, exec),
+      /needs confirm: true/,
+    )
+    const pollClose = startPoll()
+    await delay(30)
+    const closePromise = s1.tools.get('comfyui_workflow_close').execute({ name: 'portrait', confirm: true }, exec)
+    const closeCommand = (await (await pollClose).json()).command
+    assert.equal(closeCommand.kind, 'close-tab')
+    assert.equal(closeCommand.name, 'portrait')
+    await host.fetches.get('/api/comfyui/commands/result').fetch(new Request(
+      'http://127.0.0.1/api/comfyui/commands/result',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: 's1', id: closeCommand.id, ok: true, value: { status: 'closed', name: 'portrait', path: 'workflows/portrait.json', remaining: ['imported'] } }),
+      },
+    ))
+    const closed = parse(await closePromise)
+    assert.equal(closed.status, 'closed')
+    assert.deepEqual(closed.remaining, ['imported'])
+
+    // The save question can still be open when the command answers: that is a
+    // result the model can report, not a failure it should retry.
+    const pollAsk = startPoll()
+    await delay(30)
+    const askPromise = s1.tools.get('comfyui_workflow_close').execute({ name: 'portrait', confirm: true }, exec)
+    const askCommand = (await (await pollAsk).json()).command
+    await host.fetches.get('/api/comfyui/commands/result').fetch(new Request(
+      'http://127.0.0.1/api/comfyui/commands/result',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: 's1', id: askCommand.id, ok: true, value: { status: 'awaiting-confirmation', name: 'portrait', path: 'workflows/portrait.json' } }),
+      },
+    ))
+    const asked = parse(await askPromise)
+    assert.equal(asked.status, 'awaiting-confirmation')
+    assert.match(asked.note, /save/)
+
+    // Two tabs can share a label, so a path addresses one exactly; a command
+    // with neither is refused before anything is queued.
+    const pollPath = startPoll()
+    await delay(30)
+    const pathPromise = s1.tools.get('comfyui_workflow_switch').execute({ path: 'workflows/portrait.json' }, exec)
+    const pathCommand = (await (await pollPath).json()).command
+    assert.equal(pathCommand.kind, 'switch-tab')
+    assert.equal(pathCommand.name, null)
+    assert.equal(pathCommand.path, 'workflows/portrait.json')
+    await host.fetches.get('/api/comfyui/commands/result').fetch(new Request(
+      'http://127.0.0.1/api/comfyui/commands/result',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: 's1', id: pathCommand.id, ok: true, value: { switched: 'portrait', path: 'workflows/portrait.json', nodes: 2, links: 1 } }),
+      },
+    ))
+    assert.equal(parse(await pathPromise).path, 'workflows/portrait.json')
+    await assert.rejects(
+      s1.tools.get('comfyui_workflow_switch').execute({}, exec),
+      /name or path is required/,
+    )
+    await assert.rejects(
+      s1.tools.get('comfyui_workflow_switch').execute({ path: '../escape.json' }, exec),
+      /path segments|control characters/,
+    )
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

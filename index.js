@@ -359,6 +359,9 @@ export function apply(ctx, rawConfig = {}) {
       // working one until a run's events go somewhere else. The id stays out
       // of the summary; only whether the panel reported one is public.
       clientIdKnown: typeof state.clientId === 'string' && state.clientId.length > 0,
+      // The editor's open tabs, which the synced workflow is only one of. The
+      // state POST returns them too, so the panel's own bar can name the tab.
+      tabs: state.tabs ?? [],
     }
   }
 
@@ -563,6 +566,8 @@ export function apply(ctx, rawConfig = {}) {
       add(() => sessionCtx.tools.register(workflowSaveTool(sessionId)))
       add(() => sessionCtx.tools.register(workflowListTool(sessionId)))
       add(() => sessionCtx.tools.register(workflowLoadTool(sessionId)))
+      add(() => sessionCtx.tools.register(workflowSwitchTool(sessionId)))
+      add(() => sessionCtx.tools.register(workflowCloseTool(sessionId)))
       add(() => sessionCtx.tools.register(workflowExportTool(sessionId)))
       add(() => sessionCtx.tools.register(workflowImportTool(sessionId)))
       add(() => sessionCtx.systemPrompt.context({
@@ -1556,6 +1561,165 @@ export function apply(ctx, rawConfig = {}) {
         }
       },
     }
+  }
+
+  /**
+   * Build the tool that switches the editor to another open tab.
+   *
+   * A switch loads that tab's own state, so it is the same graph the user sees
+   * when they click the tab — not a re-read of the file, which may be older
+   * than the unsaved edits the tab carries.
+   * @param {string} sessionId - the session whose panel switches.
+   * @returns {object} the tool definition.
+   */
+  function workflowSwitchTool(sessionId) {
+    return {
+      name: 'comfyui_workflow_switch',
+      description: 'Switch this session\'s ComfyUI editor to another tab that is already open. Tabs come from `tabs` in comfyui_status; address one by `name`, or by `path` when two tabs share a label. A tab that is not open is an error — use comfyui_workflow_load to open a saved workflow. The graph this session mirrors follows the tab.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Label of an open tab, as comfyui_status reports it.' },
+          path: { type: 'string', description: 'The tab\'s path from comfyui_status; exact, so it settles duplicate labels.' },
+        },
+        additionalProperties: false,
+      },
+      output: textOutput(),
+      /**
+       * @param {{ name?: unknown, path?: unknown }} args - the tab to switch to, by label or path.
+       * @returns {Promise<{ text: string }>} the tab that is now active.
+       */
+      async execute(args) {
+        const target = tabTarget(args)
+        const { id, value } = await askPanel(sessionId, { kind: 'switch-tab', ...target }, 'tab switch')
+        if (typeof value.switched !== 'string' || typeof value.path !== 'string') {
+          throw new Error('The panel did not confirm the tab switch. Hard-refresh the page so the panel learns the command, then retry.')
+        }
+        return {
+          text: JSON.stringify({
+            id,
+            sessionId,
+            name: value.switched,
+            path: value.path,
+            nodes: value.nodes ?? null,
+            links: value.links ?? null,
+            revision: sessionStore.get(sessionId)?.revision ?? null,
+          }, null, 2),
+        }
+      },
+    }
+  }
+
+  /**
+   * Build the tool that closes one of the editor's tabs.
+   *
+   * Closing is the one destructive tab operation, so it demands two things the
+   * model cannot supply on its own: `confirm: true`, which exists only after
+   * the user asked for the close in the conversation, and — for a tab with
+   * unsaved work — the user's answer to ComfyUI's own dialog, which decides
+   * whether the tab is saved. The command returns as soon as that dialog is
+   * open; the tab list in the next sync says what the user chose.
+   * @param {string} sessionId - the session whose panel closes a tab.
+   * @returns {object} the tool definition.
+   */
+  function workflowCloseTool(sessionId) {
+    return {
+      name: 'comfyui_workflow_close',
+      description: 'Close one open tab in this session\'s ComfyUI editor. Only call this after the user has explicitly asked for that tab to be closed; pass confirm: true to say so. Address the tab by `name`, or by `path` when two tabs share a label. A tab with a file and unsaved changes opens ComfyUI\'s own save dialog and the user decides — this tool never chooses for them, and never force-closes. A temporary tab (no file) with unsaved changes is refused: only the user can decide to discard that work. The command returns while the dialog may still be open; comfyui_status shows the tabs that remain.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Label of an open tab, as comfyui_status reports it.' },
+          path: { type: 'string', description: 'The tab\'s path from comfyui_status; exact, so it settles duplicate labels.' },
+          confirm: { type: 'boolean', description: 'Set to true only when the user asked for this tab to be closed.' },
+        },
+        required: ['confirm'],
+        additionalProperties: false,
+      },
+      output: textOutput(),
+      /**
+       * @param {{ name?: unknown, path?: unknown, confirm?: unknown }} args - the tab to close and the user's consent.
+       * @returns {Promise<{ text: string }>} whether the tab closed or is waiting on the user.
+       */
+      async execute(args) {
+        const target = tabTarget(args)
+        if (args?.confirm !== true) {
+          throw new Error('Closing a tab needs confirm: true, and only after the user asked for it. Ask them first, then retry.')
+        }
+        const { id, value } = await askPanel(sessionId, { kind: 'close-tab', ...target }, 'tab close')
+        if (typeof value.name !== 'string' || (value.status !== 'closed' && value.status !== 'awaiting-confirmation')) {
+          throw new Error('The panel did not confirm the tab close. Hard-refresh the page so the panel learns the command, then retry.')
+        }
+        return {
+          text: JSON.stringify({
+            id,
+            sessionId,
+            name: value.name,
+            path: value.path ?? null,
+            status: value.status,
+            ...(value.status === 'awaiting-confirmation'
+              ? { note: 'ComfyUI is asking the user whether to save. The next comfyui_status shows whether the tab closed.' }
+              : { remaining: Array.isArray(value.remaining) ? value.remaining : [] }),
+          }, null, 2),
+        }
+      },
+    }
+  }
+
+  /**
+   * Validate a tab path from `comfyui_status`.
+   *
+   * A tab's path is its identity, so it is compared exactly. It is not a
+   * filesystem path the Host joins anything onto, which is why the check is
+   * about shape rather than containment.
+   * @param {unknown} value - the reported path.
+   * @returns {string} the trimmed path.
+   */
+  function tabPath(value) {
+    if (typeof value !== 'string') throw new Error('path must be a string')
+    const path = value.trim()
+    if (path.length === 0 || path.length > 200) throw new Error('path must be 1-200 characters')
+    if (/[\u0000-\u001f\u007f]/u.test(path)) throw new Error('path must not contain control characters')
+    if (path.split('/').some(segment => segment === '' || segment === '.' || segment === '..')) {
+      throw new Error('path must not contain empty, "." or ".." path segments')
+    }
+    return path
+  }
+
+  /**
+   * Resolve which tab a command addresses.
+   *
+   * A label is what the user reads and what the model usually has; a path is
+   * exact, and is the way out when two tabs share a label.
+   * @param {{ name?: unknown, path?: unknown }} args - the tool arguments.
+   * @returns {{ name: string | null, path: string | null }} the target.
+   */
+  function tabTarget(args) {
+    const name = args?.name === undefined ? null : workflowName(args.name)
+    const path = args?.path === undefined ? null : tabPath(args.path)
+    if (name === null && path === null) throw new Error('name or path is required')
+    return { name, path }
+  }
+
+  /**
+   * Ask this session's panel to run one command and wait for its answer.
+   *
+   * Every tab command is the same round trip as a load: the panel is the only
+   * side that can touch the editor, and a command that never arrives is an
+   * error rather than a silent success.
+   * @param {string} sessionId - the session whose panel runs the command.
+   * @param {Record<string, unknown>} body - the command's `kind` and arguments.
+   * @param {string} what - the operation's name, for the error messages.
+   * @returns {Promise<{id: string, value: any}>} the command id and what the panel answered.
+   */
+  async function askPanel(sessionId, body, what) {
+    if (!commands.connected(sessionId)) {
+      throw new Error('The ComfyUI panel is not connected in this session. Open the ComfyUI tab in this session and wait for Connected, then retry.')
+    }
+    const id = randomUUID()
+    const answer = await commands.ask(sessionId, { id, ...body, at: Date.now() }, { timeoutMs: 20000, what })
+    if (answer.ok !== true) throw new Error(`ComfyUI rejected the ${what}: ${answer.error ?? 'unknown error'}`)
+    return { id, value: answer.value ?? {} }
   }
 
   /**

@@ -3,6 +3,18 @@
 Notable changes to the plugin. The version in `package.json` is the source of
 truth, and every release is pinned by a commit in `market/index.json`.
 
+## Unreleased
+
+- Two tab tools: `comfyui_workflow_switch` moves the editor to another open tab
+  without losing its unsaved edits, and `comfyui_workflow_close` closes one after
+  the user has asked for it — a tab with unsaved changes opens ComfyUI's own
+  save dialog, and a temporary tab with unsaved changes is refused.
+- The panel reports its open tabs with every sync: `comfyui_status` lists them
+  (`name`, `path`, `temporary`, `modified`, `active`), and the digest line names
+  the count and the active one when more than one is open.
+- Loading a workflow keeps it in its own tab instead of opening a second,
+  "Unsaved Workflow" one beside it.
+
 ## 0.8.1
 
 - Releases can be cut from GitHub Actions: Actions -> release -> Run workflow

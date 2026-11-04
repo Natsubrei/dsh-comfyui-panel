@@ -18,11 +18,24 @@ import { sanitizeSemantic, stripViewState } from './projection.js'
  * @property {string | null} name - the name the panel's editor would save under.
  * @property {'file' | 'tool' | null} nameSource - how the name was attached: the editor's workflow file, a workflow tool, or unknown.
  * @property {string | null} [clientId] - the panel's ComfyUI socket id.
+ * @property {TabRecord[]} tabs - the workflows the panel's editor has open, in tab order.
  * @property {number} revision - the descriptive revision the model reads.
  * @property {number} nodes - node count of `workflow`.
  * @property {number} links - link count of `workflow`.
  * @property {string[]} types - up to 64 node class names.
  * @property {number} updatedAt - when the content last changed.
+ *
+ * A tab's identity is `path`; `name` is the label the user reads, which is null
+ * only for a canvas the frontend never named. Tabs are page state like the
+ * socket id: they change when the user switches tabs, not when the graph
+ * changes, so they stay out of the revision and out of storage.
+ *
+ * @typedef {object} TabRecord
+ * @property {string | null} name
+ * @property {string} path
+ * @property {boolean} temporary
+ * @property {boolean} modified
+ * @property {boolean} active
  *
  * @typedef {object} StateSyncBody
  * @property {any} [workflow]
@@ -32,6 +45,7 @@ import { sanitizeSemantic, stripViewState } from './projection.js'
  * @property {any} [file]
  * @property {any} [clientId]
  * @property {any} [revision]
+ * @property {any} [tabs]
  *
  * @typedef {object} PersistedSession
  * @property {string} sessionId
@@ -206,6 +220,10 @@ export function createSessionStore({ persist, releaseCommands, logger }) {
       // starts has to use the panel's id or it never shows up in the UI.
       // Kept in memory only: it changes with the page, not with the workflow.
       clientId: sanitizeClientId(body?.clientId) ?? previous?.clientId ?? null,
+      // Open tabs follow the page the same way. A sync without the field — an
+      // older panel, or a body built before the list existed — keeps the last
+      // list instead of blanking it.
+      tabs: body?.tabs === undefined ? (previous?.tabs ?? []) : sanitizeTabs(body.tabs),
       // The panel's counter restarts with the page while the Host may hold a
       // higher persisted revision; keep the descriptive revision monotonic.
       revision: changed
@@ -266,6 +284,9 @@ export function createSessionStore({ persist, releaseCommands, logger }) {
       // Records written before this field existed carry no source, and an
       // unknown source must never be cleared automatically.
       nameSource: record.nameSource === 'file' || record.nameSource === 'tool' ? record.nameSource : null,
+      // Not persisted: tabs belong to the page that reported them, and the
+      // next sync replaces this list.
+      tabs: [],
       revision: record.revision,
       nodes: Array.isArray(workflow.nodes) ? workflow.nodes.length : 0,
       links: Array.isArray(workflow.links) ? workflow.links.length : 0,
@@ -516,6 +537,35 @@ export function validWorkflowName(value) {
 /** A ComfyUI socket id (hex uuid, or the panel's own), when it looks like one. */
 function sanitizeClientId(value) {
   return typeof value === 'string' && /^[0-9a-z]{8,64}$/i.test(value) ? value : null
+}
+
+/**
+ * Reduce the panel's tab list to the fields the Host reads.
+ *
+ * The list is page state, not graph content: a malformed entry is dropped
+ * rather than failing the sync, because losing a tab listing must never cost
+ * the workflow beside it. At most 64 tabs survive, which is far past what a
+ * person opens and short enough to stay out of a status reply's way.
+ * @param {unknown} value - the `tabs` field a panel sent.
+ * @returns {TabRecord[]} the usable tabs, in the order they arrived.
+ */
+export function sanitizeTabs(value) {
+  if (!Array.isArray(value)) return []
+  const tabs = []
+  for (const entry of value.slice(0, 64)) {
+    if (!isObject(entry)) continue
+    const path = typeof entry.path === 'string' ? entry.path.trim() : ''
+    if (path.length === 0 || path.length > 200) continue
+    const name = validWorkflowName(entry.name) ?? null
+    tabs.push({
+      name,
+      path,
+      temporary: entry.temporary === true,
+      modified: entry.modified === true,
+      active: entry.active === true,
+    })
+  }
+  return tabs
 }
 
 function isObject(value) {

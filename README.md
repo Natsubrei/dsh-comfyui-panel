@@ -62,7 +62,7 @@ read on for the panel itself.
   Host sees runs without polling. ComfyUI addresses those events to the socket
   that queued the prompt, so the panel relays the editor's connection instead of
   opening one of its own.
-- Registers thirteen model tools **on the Agent context of each session that has a
+- Registers fifteen model tools **on the Agent context of each session that has a
   synced workflow**. Other sessions see no ComfyUI tools:
   - `comfyui_status` — upstream reachability, panel connection, workflow
     summary, persistence backend, supervisor state, and the latest run. Its
@@ -117,10 +117,18 @@ read on for the panel itself.
     JSON file from a saved slot (or the session's graph) and read one back into
     a slot. Paths resolve against the session workspace, and a path outside it
     is rejected.
+  - `comfyui_workflow_switch` — switch the editor to another tab that is already
+    open, loading that tab's own state so its unsaved edits survive. Address a
+    tab by `name`, or by `path` when two tabs share a label.
+  - `comfyui_workflow_close` — close one open tab, which is why it takes
+    `confirm: true` and expects the user to have asked for it. A tab with
+    unsaved changes opens ComfyUI's own save dialog and the user answers it; a
+    temporary tab (no file) with unsaved changes is refused rather than
+    discarded.
 - Adds one runtime-context digest line to those sessions, e.g.
   `ComfyUI: rev 14 · "deepseek-chan-emoji" · 9 nodes · 9 links · selected 7 ·
   panel open.` The quoted part is the workflow's name, and appears only when the
-  graph has one.
+  graph has one; more than one open tab adds their count and the active one.
 - Keeps one name for one graph. Saving or loading a named workflow names the
   session, the panel bar shows it, and when `<name>.json` exists in ComfyUI's
   user data the editor's own tab is renamed too, so the panel and the embedded
@@ -272,7 +280,8 @@ than 16 pixels (exit code 2 when any do). Use it to judge a layout file, or
 
 - Edits require the ComfyUI panel to be open in the same session; the command
   channel is a long-poll and the panel applies operations inside the iframe.
-  `comfyui_workflow_load` has the same requirement; `save`, `list`, `export`,
+  `comfyui_workflow_load`, `comfyui_workflow_switch`, and
+  `comfyui_workflow_close` have the same requirement; `save`, `list`, `export`,
   and `import` work with the panel closed only in a session that has already
   synced or restored a workflow. Export and import resolve paths against that
   session's workspace and reject a path outside it.

@@ -153,6 +153,16 @@ export function digestLine(state, { connected = false, run = null } = {}) {
   if (typeof state.name === 'string' && state.name.length > 0) parts.splice(1, 0, `"${state.name}"`)
   const selection = state.semantic?.selection ?? []
   if (selection.length > 0) parts.push(`selected ${selection.slice(0, 8).join(', ')}`)
+  // One tab is the normal case and needs no words; more than one means the
+  // editor is holding a workflow the model cannot see in the graph alone, so
+  // the line names the one whose graph was synced.
+  const tabs = Array.isArray(state.tabs) ? state.tabs : []
+  if (tabs.length > 1) {
+    const active = tabs.find(tab => tab.active === true)
+    parts.push(active !== undefined && typeof active.name === 'string' && active.name.length > 0
+      ? `${tabs.length} tabs, on "${active.name}"`
+      : `${tabs.length} tabs`)
+  }
   if (run?.status === 'running') {
     const progress = run.max > 0 ? ` ${run.value ?? '?'}/${run.max}` : ''
     parts.push(`running${progress}`)

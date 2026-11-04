@@ -379,6 +379,41 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
   })()`, { label: 'counters to match the editor graph', timeout: 15_000 }).catch(() => null)
   graph = await readGraph(browser)
   record('counters match the editor', settled !== null, `${String(graph.nodes)} nodes, ${String(graph.links)} links`)
+
+  // The tab list is page state the Host cannot derive from the graph. The bar
+  // carries its size, so a panel that stops reporting tabs shows up here
+  // rather than only in a status read.
+  const tabsCheck = await browser.evaluate(`(async () => {
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+    const win = document.querySelector('${DOM.frame}')?.contentWindow
+    const app = win?.comfyAPI?.app?.app
+    const manager = app?.extensionManager?.workflow
+    const bar = document.querySelector('${DOM.stats}')
+    if (!manager || !bar) return { ok: false, why: 'no workflow store' }
+    const list = () => {
+      const value = manager.openWorkflows
+      return Array.isArray(value) ? value : (value?.value ?? [])
+    }
+    const shown = () => Number(bar.getAttribute('data-tabs'))
+    const waitFor = async wanted => {
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        if (shown() === wanted) return true
+        await sleep(250)
+      }
+      return false
+    }
+    const open = list().length
+    if (shown() !== open) return { ok: false, why: 'the bar shows ' + String(shown()) + ' of ' + String(open) + ' tabs' }
+    const probe = manager.createNewTemporary()
+    await manager.openWorkflow(probe)
+    const grew = await waitFor(open + 1)
+    await manager.closeWorkflow(probe)
+    const shrank = await waitFor(open)
+    if (!grew) return { ok: false, why: 'the bar missed the new tab' }
+    if (!shrank) return { ok: false, why: 'the bar kept the closed tab' }
+    return { ok: true, why: String(open) + ' tab(s)' }
+  })()`, { awaitPromise: true })
+  record('the bar reports the editor tabs', tabsCheck.ok === true, tabsCheck.why ?? '')
   if (settled === null) await shoot('02-stale-counters.png')
   else await shoot('02-ready.png')
 
