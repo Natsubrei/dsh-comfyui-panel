@@ -16,10 +16,7 @@
  * disappeared.
  */
 
-/**
- * Statuses after which a tracked prompt needs no more polls. Exported so the
- * Host can drop its prompt-to-session mapping at the same moment.
- */
+/** Statuses after which a tracked prompt needs no more polls. */
 export const TERMINAL_RUN_STATUSES = new Set(['completed', 'error', 'interrupted', 'lost'])
 
 /** One queue or history read. */
@@ -40,7 +37,7 @@ const PROBE_TIMEOUT_MS = 2500
 
 /**
  * @typedef {object} RunEntry
- * @property {string} sessionId
+ * @property {string | null} sessionId
  * @property {RunRecord} record
  * @property {number} deadline
  * @property {any} timer
@@ -57,12 +54,13 @@ const PROBE_TIMEOUT_MS = 2500
  * @property {() => number} [now] - clock, injectable for tests.
  * @property {(fn: () => void, ms: number) => any} [setTimer] - timer, injectable for tests.
  * @property {(handle: any) => void} [clearTimer] - timer cancellation, injectable for tests.
- * @property {(record: RunRecord) => void} [onChange] - called when a record's observed state changes.
+ * @property {(record: RunRecord, sessionId: string | null) => void} [onChange] - called when a record's observed state changes. `sessionId` is the session passed to `watch`, or null after `forget`. A listener that only takes the record still works.
  */
 
 /**
  * @typedef {object} RunTracker
  * @property {(sessionId: string, promptId: string) => void} watch - start watching one queued prompt; repeat calls are no-ops.
+ * @property {(sessionId: string) => void} forget - clear that session's association. Polling continues; later `onChange` calls pass a null session id.
  * @property {(promptId: string) => Promise<RunRecord | null>} refresh - poll once now and return the record; no network after the run ended or the tracker stopped.
  * @property {(promptId: string) => RunRecord | null} snapshot - the last observed record, without polling.
  * @property {() => void} stop - cancel every timer.
@@ -125,6 +123,23 @@ export function createRunTracker(options) {
     // session record is written before the first poll, not two seconds later.
     publish(entry)
     schedule(entry)
+  }
+
+  /**
+   * Drop the session association for every prompt that session queued.
+   *
+   * Polling continues until the tracker's own budget or a terminal status:
+   * the timers stay armed. Later `onChange` calls for those prompts pass
+   * `null`. `snapshot` and `refresh` still return the record, and a second
+   * `watch` of the same prompt stays a no-op.
+   * @param {string} sessionId - the session whose prompts should stop naming it.
+   * @returns {void}
+   */
+  function forget(sessionId) {
+    if (typeof sessionId !== 'string' || sessionId.length === 0) return
+    for (const entry of entries.values()) {
+      if (entry.sessionId === sessionId) entry.sessionId = null
+    }
   }
 
   /**
@@ -277,7 +292,7 @@ export function createRunTracker(options) {
     if (signature === entry.signature) return
     entry.signature = signature
     try {
-      onChange(clone(entry.record))
+      onChange(clone(entry.record), entry.sessionId)
     } catch {
       // A listener must not stop the poll loop.
     }
@@ -295,7 +310,7 @@ export function createRunTracker(options) {
     }
   }
 
-  return { watch, refresh, snapshot, stop }
+  return { watch, forget, refresh, snapshot, stop }
 }
 
 /** Return a copy: a reader must not be able to mutate the tracked record. */
@@ -321,7 +336,7 @@ function queueLocation(data, promptId) {
  * @param {string} promptId - the prompt to find.
  * @returns {boolean} whether the list holds it.
  */
-function queueHas(list, promptId) {
+export function queueHas(list, promptId) {
   if (!Array.isArray(list)) return false
   return list.some(entry => Array.isArray(entry) && entry[1] === promptId)
 }

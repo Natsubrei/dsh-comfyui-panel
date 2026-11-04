@@ -4,7 +4,7 @@
  * test advances fake time instead of sleeping.
  */
 import assert from 'node:assert/strict'
-import { createRunTracker } from '../run-tracker.js'
+import { createRunTracker, queueHas } from '../run-tracker.js'
 
 /** Let every promise the timer callback started run to completion. */
 const flush = () => new Promise(resolve => setImmediate(resolve))
@@ -252,6 +252,69 @@ function scripted(steps) {
   tracker.watch('s1', 'p7')
   assert.equal(tracker.snapshot('p7'), null, 'a stopped tracker does not start new watches')
   assert.equal(clock.pending(), 0)
+}
+
+// `onChange` is told which session queued the prompt. `forget` clears that
+// association without stopping the poll: later callbacks pass null, the
+// record stays readable, and the timer runs until the run settles. Watching
+// the same prompt again does not bring the session back.
+{
+  const clock = createClock()
+  const changes = []
+  const script = scripted([
+    { ok: true, status: 200, data: { queue_running: [[1, 'p-forget', {}, {}, []]], queue_pending: [] } },
+    { ok: true, status: 200, data: { queue_running: [], queue_pending: [] } },
+    {
+      ok: true,
+      status: 200,
+      data: { 'p-forget': { status: { status_str: 'success', completed: true, messages: [] }, outputs: {} } },
+    },
+  ])
+  const tracker = createRunTracker({
+    fetchJson: script.fetchJson,
+    now: clock.now,
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+    onChange: (record, sessionId) => changes.push({ status: record.status, sessionId }),
+  })
+  tracker.watch('s-forget', 'p-forget')
+  assert.deepEqual(changes, [{ status: 'queued', sessionId: 's-forget' }], 'onChange receives the session passed to watch')
+  assert.equal(clock.pending(), 1)
+
+  tracker.forget('s-forget')
+  assert.equal(clock.pending(), 1, 'forget leaves the timer armed')
+  assert.equal(tracker.snapshot('p-forget').status, 'queued', 'forget does not drop the record')
+  assert.deepEqual(changes, [{ status: 'queued', sessionId: 's-forget' }], 'forget itself does not emit')
+
+  tracker.watch('s-other', 'p-forget')
+  assert.equal(clock.pending(), 1, 'a second watch of the same prompt stays a no-op')
+  assert.equal(changes.length, 1, 'a second watch does not report the run again')
+
+  await clock.fire()
+  assert.equal(tracker.snapshot('p-forget').status, 'running')
+  assert.equal(changes.at(-1).sessionId, null, 'a poll after forget reports no session')
+  assert.equal(clock.pending(), 1, 'polling continues after forget')
+
+  const refreshed = await tracker.refresh('p-forget')
+  assert.equal(refreshed.status, 'completed')
+  assert.equal(tracker.snapshot('p-forget').status, 'completed', 'snapshot still returns the settled record')
+  assert.equal(changes.at(-1).status, 'completed')
+  assert.equal(changes.at(-1).sessionId, null, 'the settling callback also passes null')
+  assert.equal(clock.pending(), 0, 'the timer stays until the run settles, then stops')
+  tracker.stop()
+}
+
+// ComfyUI queue lists are tuples of [number, prompt_id, ...]. Anything that
+// is not an array is not a queue.
+{
+  assert.equal(queueHas([[4, 'prompt-a', {}, { extra: true }, []]], 'prompt-a'), true)
+  assert.equal(queueHas([[4, 'prompt-b', {}, {}, []]], 'prompt-a'), false)
+  assert.equal(queueHas([[4, 'prompt-a']], 'prompt-a'), true, 'only the prompt id slot is required')
+  assert.equal(queueHas([null, 'prompt-a', { 1: 'prompt-a' }], 'prompt-a'), false, 'a non-tuple entry is not a hit')
+  assert.equal(queueHas(null, 'prompt-a'), false)
+  assert.equal(queueHas(undefined, 'prompt-a'), false)
+  assert.equal(queueHas({ 1: 'prompt-a' }, 'prompt-a'), false)
+  assert.equal(queueHas('prompt-a', 'prompt-a'), false)
 }
 
 console.log('run tracker test passed')

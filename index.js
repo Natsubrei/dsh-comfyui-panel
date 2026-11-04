@@ -29,7 +29,7 @@ import { createWorkflowStore } from './storage.js'
 import { createServiceController, frontendReport } from './service.js'
 import { createCommandChannel } from './commands.js'
 import { createSessionStore, validWorkflowName } from './session-store.js'
-import { createRunTracker, TERMINAL_RUN_STATUSES } from './run-tracker.js'
+import { createRunTracker, queueHas } from './run-tracker.js'
 
 export { takeCommand } from './commands.js'
 
@@ -75,17 +75,13 @@ export function apply(ctx, rawConfig = {}) {
     logger: ctx.logger,
   })
   // A queued prompt's execution events only reach the panel's socket, so the
-  // Host follows the runs it started itself. `trackedRuns` maps a prompt back
-  // to its session because the tracker reports records, not sessions.
-  /** @type {Map<string, string>} */
-  const trackedRuns = new Map()
+  // Host follows the runs it started itself. `onChange` names the session that
+  // queued the prompt; `forget` drops that association when the agent goes.
   const tracker = createRunTracker({
     fetchJson,
-    onChange: record => {
-      const sessionId = trackedRuns.get(record.promptId)
-      if (sessionId === undefined) return
+    onChange: (record, sessionId) => {
+      if (typeof sessionId !== 'string' || sessionId.length === 0) return
       if (sessionStore.hasTools(sessionId)) sessionStore.mergeRun(sessionId, record)
-      if (TERMINAL_RUN_STATUSES.has(record.status)) trackedRuns.delete(record.promptId)
     },
   })
 
@@ -142,11 +138,10 @@ export function apply(ctx, rawConfig = {}) {
   ctx.on('agent/disposed', ({ agent }) => {
     const sessionId = agent?.session?.id
     if (typeof sessionId !== 'string') return
-    // The tracker keeps polling to its own budget, but a disposed agent's run
-    // record must not come back: `release` is the end of the session's memory.
-    for (const [promptId, owner] of trackedRuns) {
-      if (owner === sessionId) trackedRuns.delete(promptId)
-    }
+    // The tracker keeps polling to its own budget. `forget` drops the session
+    // first, so a later poll cannot merge the run back after `release` ends
+    // the session's memory.
+    tracker.forget(sessionId)
     sessionStore.release(sessionId)
   })
 
@@ -530,15 +525,15 @@ export function apply(ctx, rawConfig = {}) {
   /**
    * Start the Host's own poll for a prompt this session queued.
    *
-   * A repeat call is a no-op: the tracker ignores a second watch, and a
-   * settled prompt must not be registered again after its mapping was dropped.
+   * A repeat call is a no-op: a prompt the tracker already holds, including
+   * one whose session was dropped by `forget`, is not watched again.
    * @param {string} sessionId - the session that queued it.
    * @param {string} promptId - the id ComfyUI returned.
+   * @returns {void}
    */
   function trackRun(sessionId, promptId) {
     if (typeof promptId !== 'string' || promptId.length === 0) return
-    if (trackedRuns.has(promptId) || tracker.snapshot(promptId) !== null) return
-    trackedRuns.set(promptId, sessionId)
+    if (tracker.snapshot(promptId) !== null) return
     tracker.watch(sessionId, promptId)
   }
 
@@ -903,29 +898,41 @@ export function apply(ctx, rawConfig = {}) {
         }
         const timeout = clamp(args?.timeoutMs ?? 120000, 1000, 300000)
         const deadline = Date.now() + timeout
+        const timedOut = () => ({ text: JSON.stringify({ prompt_id: promptId, timedOut: true, seeds }, null, 2) })
         for (;;) {
-          if (Date.now() > deadline) return { text: JSON.stringify({ prompt_id: promptId, timedOut: true, seeds }, null, 2) }
-          await delay(1000)
-          const history = await fetchJson(`/history/${encodeURIComponent(promptId)}`, 5000).catch(() => undefined)
-          if (history?.ok === true && isObject(history.data) && isObject(history.data[promptId])) {
-            const settled = history.data[promptId]
-            const collected = collectOutputImages(settled)
-            const attached = await attachOutputImages(collected, exec)
-            const text = JSON.stringify({
-              prompt_id: promptId,
-              seeds,
-              history: settled,
-              images: collected.map(image => image.filename),
-              attachments: attached.images.length > 0 ? 'inline' : 'unavailable',
-              ...attached.note === null ? {} : { imageNote: attached.note },
-              ...attached.skipped.length > 0 ? { skippedImages: attached.skipped } : {},
-            }, null, 2)
-            return {
-              text,
-              ...attached.images.length > 0 ? { images: attached.images } : {},
-            }
-          }
           if (exec.signal.aborted) throw new Error('comfyui_run was cancelled')
+          if (Date.now() > deadline) return timedOut()
+          const record = await tracker.refresh(promptId).catch(() => null)
+          if (exec.signal.aborted) throw new Error('comfyui_run was cancelled')
+          // `lost` means the tracker stopped looking. Do not claim images for a
+          // run it no longer follows.
+          if (record?.status === 'lost') return timedOut()
+          if (record !== null && (record.status === 'completed' || record.status === 'error' || record.status === 'interrupted')) {
+            const history = await fetchJson(`/history/${encodeURIComponent(promptId)}`, 5000).catch(() => undefined)
+            if (history?.ok === true && isObject(history.data) && isObject(history.data[promptId])) {
+              const settled = history.data[promptId]
+              const collected = collectOutputImages(settled)
+              const attached = await attachOutputImages(collected, exec)
+              const text = JSON.stringify({
+                prompt_id: promptId,
+                seeds,
+                history: settled,
+                images: collected.map(image => image.filename),
+                attachments: attached.images.length > 0 ? 'inline' : 'unavailable',
+                ...attached.note === null ? {} : { imageNote: attached.note },
+                ...attached.skipped.length > 0 ? { skippedImages: attached.skipped } : {},
+              }, null, 2)
+              return {
+                text,
+                ...attached.images.length > 0 ? { images: attached.images } : {},
+              }
+            }
+            // The tracker can settle a moment before this read sees the entry.
+            // Keep looking until the deadline instead of reporting a timeout.
+          }
+          const waitMs = Math.min(1000, deadline - Date.now())
+          if (waitMs <= 0) return timedOut()
+          await delay(waitMs)
         }
       },
     }
@@ -990,16 +997,18 @@ export function apply(ctx, rawConfig = {}) {
         const wanted = typeof args?.promptId === 'string' && args.promptId.length > 0 ? args.promptId : null
         const before = wanted === null ? latest.run : sessionStore.runFor(sessionId, wanted)
         // Poll now rather than waiting for the tracker's timer: the tool answer
-        // must describe the run at the moment it was called.
-        const hostRun = before === null
-          ? null
-          : await tracker.refresh(before.promptId).catch(() => null)
+        // must describe the run at the moment it was called. That refresh already
+        // read history when the prompt left the queue, so a tracked prompt is
+        // not read again here. An id the tracker never watched still needs one
+        // history read, or a settled entry would stay invisible.
+        const watchedId = wanted ?? before?.promptId ?? null
+        const hostRun = watchedId === null ? null : await tracker.refresh(watchedId).catch(() => null)
         const run = wanted === null ? sessionStore.latestRun(sessionId).run : sessionStore.runFor(sessionId, wanted)
         const queue = await fetchJson('/queue', 2500).catch(error => ({
           ok: false, status: 0, data: null, error: error.message,
         }))
         let history = null
-        if (wanted !== null && (run === null || run.status === 'queued' || run.status === 'running')) {
+        if (wanted !== null && hostRun === null && (run === null || run.status === 'queued' || run.status === 'running')) {
           const settled = await fetchJson(`/history/${encodeURIComponent(wanted)}`, 2500).catch(() => undefined)
           if (settled?.ok === true && isObject(settled.data) && isObject(settled.data[wanted])) history = settled.data[wanted]
         }
@@ -2268,18 +2277,6 @@ function queryOf(requestUrl) {
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-/**
- * Whether a ComfyUI `/queue` list holds one prompt. An entry is
- * `[number, prompt_id, prompt, extra_data, outputs]`.
- * @param {any} list - `queue_running` or `queue_pending`.
- * @param {string} promptId - the prompt to find.
- * @returns {boolean} whether the list holds it.
- */
-function queueHas(list, promptId) {
-  if (!Array.isArray(list)) return false
-  return list.some(entry => Array.isArray(entry) && entry[1] === promptId)
 }
 
 const SEED_CONTROLS = new Set(['fixed', 'randomize', 'increment', 'decrement'])
