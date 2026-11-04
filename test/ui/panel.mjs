@@ -116,6 +116,82 @@ export function parseCookiePair(pair) {
   return { name: pair.slice(0, at), value: pair.slice(at + 1) }
 }
 
+/** The plugin's own service route, relative to the GUI origin. */
+const SERVICE_ROUTE = '/api/comfyui/service'
+
+/**
+ * Ask the plugin's service route whether ComfyUI answers, before the browser
+ * starts waiting for an editor that cannot boot. A stopped server leaves the
+ * iframe on a plain error page, so the editor wait would only delay the cause.
+ * @param {string} url - any URL on the GUI's origin.
+ * @param {{name: string, value: string}} cookie - the session cookie already parsed.
+ * @returns {Promise<{state: string, health: boolean, lastError: string | null} | {error: string}>} the service report, or why it could not be read.
+ */
+async function readServiceHealth(url, cookie) {
+  try {
+    const response = await fetch(new URL(SERVICE_ROUTE, url), {
+      headers: { cookie: `${cookie.name}=${cookie.value}` },
+    })
+    if (!response.ok) return { error: `HTTP ${String(response.status)}` }
+    const body = await response.json()
+    return {
+      state: typeof body?.state === 'string' ? body.state : 'unknown',
+      health: body?.health === true,
+      lastError: typeof body?.lastError === 'string' && body.lastError.trim() !== ''
+        ? body.lastError.replace(/\s+/gu, ' ').trim()
+        : null,
+    }
+  } catch (error) {
+    return { error: `could not be read: ${error instanceof Error ? error.message : String(error)}` }
+  }
+}
+
+/**
+ * Read the service report from the page itself, where the session cookie is
+ * already installed. Used only when the editor fails to boot.
+ * @param {Browser} browser - driver attached to the GUI page.
+ * @returns {Promise<string | null>} one line describing the service, or null when unreadable.
+ */
+async function readServiceLine(browser) {
+  const line = await browser.evaluate(`(async () => {
+    try {
+      const response = await fetch('${SERVICE_ROUTE}')
+      if (!response.ok) return 'HTTP ' + String(response.status)
+      const service = await response.json()
+      const state = typeof service?.state === 'string' ? service.state : 'unknown'
+      const health = service?.health === true ? 'health true' : 'health false'
+      const lastError = typeof service?.lastError === 'string' && service.lastError.trim() !== ''
+        ? '; last error: ' + service.lastError.replace(/\\s+/gu, ' ').trim()
+        : ''
+      return state + ' (' + health + lastError + ')'
+    } catch (error) {
+      return 'unreadable: ' + (error instanceof Error ? error.message : String(error))
+    }
+  })()`, { awaitPromise: true }).catch(() => null)
+  return typeof line === 'string' ? line : null
+}
+
+/**
+ * What the embedded iframe shows right now. The frame may be mid-navigation or
+ * on a foreign origin, so every read is guarded inside the page.
+ * @param {Browser} browser - driver attached to the GUI page.
+ * @returns {Promise<{href: string | null, text: string | null}>} the frame's address and visible text.
+ */
+async function readFrameState(browser) {
+  return await browser.evaluate(`(() => {
+    const frame = document.querySelector('${DOM.frame}')
+    if (frame === null) return { href: null, text: null }
+    try {
+      const href = frame.contentWindow?.location?.href ?? null
+      const body = frame.contentDocument?.body
+      const text = ((body?.innerText ?? body?.textContent ?? '').replace(/\\s+/gu, ' ').trim()).slice(0, 300)
+      return { href, text: text === '' ? null : text }
+    } catch {
+      return { href: null, text: null }
+    }
+  })()`)
+}
+
 /**
  * Click the button whose visible text is exactly the given label.
  * @param {Browser} browser - driver.
@@ -211,7 +287,21 @@ export async function openPanel(browser, { timeout = 90_000, scratch = true } = 
   if (clickedEntry !== true) throw new Error(`could not click the ${TAB_TITLE} sidebar entry at ${String(entry.x)},${String(entry.y)}`)
   await browser.waitFor(`document.querySelector('${DOM.panel}') !== null`, { label: 'the ComfyUI panel', timeout: 15_000 })
   const started = Date.now()
-  await browser.waitFor(`(() => { const app = ${APP}; return app !== null })()`, { label: 'the ComfyUI editor API', timeout })
+  try {
+    await browser.waitFor(`(() => { const app = ${APP}; return app !== null })()`, { label: 'the ComfyUI editor API', timeout })
+  } catch (error) {
+    // The timeout alone says nothing about why: the iframe usually shows the
+    // answer (an unreachable upstream, a 404, a crash page). Read it while the
+    // browser is still open, and the service route while the Host can answer.
+    const frame = await readFrameState(browser).catch(() => ({ href: null, text: null }))
+    const service = await readServiceLine(browser)
+    const shown = frame.text === null ? 'no readable text' : JSON.stringify(frame.text)
+    const suffix = service === null ? '' : `; ${SERVICE_ROUTE} reports ${service}`
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}; `
+      + `the iframe at ${frame.href ?? '(no address)'} shows ${shown}${suffix}`,
+    )
+  }
   const bootMs = Date.now() - started
   await browser.waitFor(`document.querySelector('.dsh-comfyui-overlay') === null`, {
     label: 'the editor to leave its loading overlay',
@@ -667,6 +757,18 @@ export async function main(argv) {
   try {
     await browser.setCookie({ name: cookie.name, value: cookie.value, url })
     await browser.goto(url)
+    // A stopped ComfyUI never boots the editor, and the iframe's error page is
+    // invisible to the driver: check the plugin's own view of the upstream
+    // before spending the editor budget on a page that cannot get there.
+    const service = await readServiceHealth(url, cookie)
+    if ('error' in service || !service.health) {
+      const state = 'error' in service ? 'unknown' : service.state
+      const detail = 'error' in service
+        ? ` (${service.error})`
+        : (service.lastError === null ? '' : `, last error: ${service.lastError}`)
+      console.error(`ComfyUI is not reachable: ${SERVICE_ROUTE} reports state ${state}${detail}; start ComfyUI from the panel's Server controls, then run this check again`)
+      return 2
+    }
     // Anything the host and its other plugins logged while booting is not this
     // check's business; only errors from here on belong to the panel.
     const errorsSince = browser.console.length
