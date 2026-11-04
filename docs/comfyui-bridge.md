@@ -120,6 +120,22 @@ cd <ComfyUI>/.venv/lib/python3.*/site-packages/comfyui_frontend_package/static/a
 grep -l 'Comfy.Canvas.FitView' *.js
 ```
 
+Each hashed bundle file is one minified line, so `grep -A` and `sed -n` print
+all of it. Find the offset and slice around it instead:
+
+```bash
+python3 -c "t=open('executionErrorStore-AFzyih5Y.js').read(); i=t.find('openWorkflows'); print(t[i-300:i+700])"
+```
+
+Three names answer most questions; match the stem, not the hash, and re-read
+the stems after an upgrade:
+
+| Entry | It is | Where in 1.57.1 |
+| --- | --- | --- |
+| `activeWorkflow` / `openWorkflows` | the workflow store, the chunk that returns both keys | `executionErrorStore-*.js` |
+| `loadGraphData(` | the graph loader; its first four arguments are `(graph, clean, restore, workflow)` | `app-*.js` |
+| `dialog.confirm` | the dialog service behind `extensionManager.dialog`; the save question is `{ type: 'dirtyClose', itemList, denyLabel }` | `dialogService-*.js` |
+
 ## 5. The workflow's name
 
 The tab label, and the path Ctrl+S writes to, come from the active workflow's
