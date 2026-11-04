@@ -1519,9 +1519,13 @@ export function apply(ctx, rawConfig = {}) {
           throw new Error('The ComfyUI panel is not connected in this session. Open the ComfyUI tab in this session and wait for Connected, then retry.')
         }
         const id = randomUUID()
+        // `name` rides along so the panel can load the graph into the tab that
+        // already holds `workflows/<name>.json`. Without it the frontend opens a
+        // temporary workflow beside that tab, and the sync that follows reports
+        // its "Unsaved Workflow" label as a rename of the session's workflow.
         const answer = await commands.ask(
           sessionId,
-          { id, kind: 'workflow', workflow, at: Date.now() },
+          { id, kind: 'workflow', workflow, name, at: Date.now() },
           { timeoutMs: 20000, what: 'workflow load' },
         )
         if (answer.ok !== true) throw new Error(`ComfyUI rejected the workflow load: ${answer.error ?? 'unknown error'}`)

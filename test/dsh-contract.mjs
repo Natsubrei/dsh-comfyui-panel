@@ -341,6 +341,7 @@ try {
   assert.ok(command !== null && typeof command === 'object', 'the poll should take the load command')
   assert.equal(command.kind, 'workflow')
   assert.equal(command.workflow.nodes.length, 1)
+  assert.equal(command.name, 'imported', 'the load names the workflow, so the panel can open its own tab')
 
   const answered = await post('/api/comfyui/commands/result', {
     sessionId: SESSION_ID,

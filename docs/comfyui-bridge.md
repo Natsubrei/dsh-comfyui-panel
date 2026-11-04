@@ -135,6 +135,19 @@ browser and restores it without a file identity. The Host mirrors the name as
 the session's workflow name, so the panel bar, the digest, `comfyui_status`, and
 the saved-slot list all use one word for one graph.
 
+The 1.57 store writes that label into `filename` rather than leaving it empty,
+so `Unsaved Workflow` (and its `(2)` copies) has to be read as "no file": it is
+the string the frontend itself compares against, not a workflow anyone saved.
+
+Loading a graph is `app.loadGraphData(graph, clean, restore, workflow)`. The
+fourth argument is the tab the graph lands in, and leaving it null asks the
+frontend for a temporary one — a second tab labelled "Unsaved Workflow" beside
+the file the user already had open. The load command therefore carries the
+workflow's `name`, and the panel passes the store's workflow for
+`workflows/<name>.json` (from `app.extensionManager.workflow.getWorkflowByPath`)
+when one exists; a slot with no file behind it has none and opens temporarily, as
+it must.
+
 Two rules keep the two sides from fighting:
 
 - the panel reports the name only when it changed, and a quiet re-sync omits it,

@@ -1016,6 +1016,17 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The label ComfyUI gives a workflow that has no file, plus its "(2)" copies.
+     *
+     * Older frontends left `filename` empty for a temporary canvas. 1.57 writes
+     * this label instead — the same string its own store compares against to
+     * decide a workflow needs saving — so a panel that only checks for an empty
+     * name reports it as the session's file and hands the model a name no file
+     * has.
+     */
+    const UNSAVED_WORKFLOW = /^Unsaved Workflow(?: \(\d+\))?$/u
+
+    /**
      * The name the editor would save its workflow under, or null when the
      * canvas has never been saved.
      *
@@ -1023,7 +1034,7 @@ window.__ModuleLoader__.load({
      * active workflow's `filename`: a temporary canvas has none, which is why
      * the tab reads "Unsaved Workflow". The Host uses this value as the
      * session's workflow name, so the two sides name the same graph the same
-     * way.
+     * way. That placeholder is not a name — see `UNSAVED_WORKFLOW`.
      * @param {any} app - the editor's `comfyAPI.app.app`.
      * @returns {string | null} the file stem, without folders or `.json`.
      */
@@ -1032,7 +1043,8 @@ window.__ModuleLoader__.load({
       const filename = typeof workflow?.filename === 'string' ? workflow.filename : ''
       const base = filename.split(/[\\/]/).pop() ?? ''
       const name = base.replace(/\.json$/i, '').trim()
-      return name.length > 0 ? name : null
+      if (name.length === 0 || UNSAVED_WORKFLOW.test(name)) return null
+      return name
     }
 
     /**
@@ -1443,22 +1455,48 @@ window.__ModuleLoader__.load({
      * current graph, configures the new one, and runs the frontend's load
      * hooks. The saved camera is ignored (`restore_view` false) because synced
      * workflows strip view state; the caller frames the result instead.
+     *
+     * Its fourth argument is the workflow the graph belongs to. Passed null, the
+     * frontend opens a temporary one — a second tab labelled "Unsaved
+     * Workflow", with no file path for the next sync to report. Passed the
+     * workflow the store already holds, the graph lands in that tab and keeps
+     * its file identity.
      * @param {any} app - the editor's `comfyAPI.app.app`.
      * @param {any} workflow - a serialized UI workflow.
+     * @param {any | null} [target] - the store's workflow for the file being loaded.
      * @returns {Promise<{nodes: number, links: number}>} the loaded graph's size.
      */
-    async function applyWorkflowGraph(app, workflow) {
+    async function applyWorkflowGraph(app, workflow, target = null) {
       if (workflow === null || typeof workflow !== 'object' || Array.isArray(workflow) || !Array.isArray(workflow.nodes)) {
         throw new Error('The saved workflow is not a ComfyUI UI workflow')
       }
       if (typeof app?.loadGraphData !== 'function') {
         throw new Error('This ComfyUI frontend cannot load a workflow; reload the panel')
       }
-      await app.loadGraphData(workflow, true, false)
+      await app.loadGraphData(workflow, true, false, target)
       const graph = app.rootGraphOrUndefined ?? app.rootGraph ?? app.graph
       graph?.setDirtyCanvas?.(true, true)
       const links = graph?.links instanceof Map ? graph.links.size : Object.keys(graph?.links ?? {}).length
       return { nodes: graph?._nodes?.length ?? workflow.nodes.length, links }
+    }
+
+    /**
+     * The workflow the editor's store holds for `workflows/<name>.json`.
+     *
+     * Loading a graph into it is what keeps a loaded file one tab: the tab
+     * carries the file's name and path, Save targets that file, and the sync
+     * reports a name instead of the "Unsaved Workflow" placeholder. A slot with
+     * no file behind it has no entry here, which is the answer the caller needs
+     * — that graph has to open as a temporary workflow, as it must.
+     * @param {any} app - the editor's `comfyAPI.app.app`.
+     * @param {string | null | undefined} name - the workflow name being loaded.
+     * @returns {any | null} the store's workflow for that file, or null.
+     */
+    function fileWorkflow(app, name) {
+      if (typeof name !== 'string' || name.length === 0) return null
+      const manager = app?.extensionManager?.workflow
+      if (typeof manager?.getWorkflowByPath !== 'function') return null
+      return manager.getWorkflowByPath(`workflows/${name}.json`) ?? null
     }
 
     /**
@@ -1470,12 +1508,14 @@ window.__ModuleLoader__.load({
      * a workflow that loaded but did not reach the Host is an error.
      * @param {any} app - the editor's `comfyAPI.app.app`.
      * @param {any} workflow - a serialized UI workflow.
-     * @param {{fit: (app: any) => Promise<unknown>, sync: () => Promise<boolean>}} hooks
-     *   `fit` frames the loaded graph; `sync` reports whether the state POST landed.
+     * @param {{fit: (app: any) => Promise<unknown>, sync: () => Promise<boolean>, name?: string | null}} hooks
+     *   `fit` frames the loaded graph; `sync` reports whether the state POST
+     *   landed; `name` is the workflow the Host asked for, so a file-backed
+     *   load can land in its own tab.
      * @returns {Promise<{applied: number, nodes: number, links: number, operations: {op: string}[]}>}
      */
-    async function loadWorkflow(app, workflow, { fit, sync }) {
-      const value = await applyWorkflowGraph(app, workflow)
+    async function loadWorkflow(app, workflow, { fit, sync, name = null }) {
+      const value = await applyWorkflowGraph(app, workflow, fileWorkflow(app, name))
       // Synced workflows carry no camera, so frame the loaded graph instead of
       // leaving it wherever the previous workflow was panned to. A framing
       // failure must not fail the load.
@@ -1671,7 +1711,11 @@ window.__ModuleLoader__.load({
           // that no longer describes the canvas, and a quiet re-sync would
           // otherwise leave the old one attached.
           file: editorName,
-          ...(renamed ? { name: editorName } : {}),
+          // A canvas without a file reports only that. `file: null` is what
+          // tells the Host to drop a name that came from a file, while a name a
+          // workflow tool gave the canvas survives — which is what a temporary
+          // tab opened over a saved slot should do.
+          ...(renamed && editorName !== null ? { name: editorName } : {}),
         })
         // The Host keeps the revision monotonic across page reloads, so adopt
         // its number: showing the page-local counter made the panel say rev 14
@@ -1956,14 +2000,15 @@ window.__ModuleLoader__.load({
         return { applied: applied.length, nodes: graph._nodes?.length ?? 0, links, operations: applied }
       }, [syncNow, t])
 
-      const applyWorkflow = useCallback((app, workflow) => loadWorkflow(app, workflow, {
+      const applyWorkflow = useCallback((app, workflow, name) => loadWorkflow(app, workflow, {
         fit: target => fitCanvas(target),
         sync: () => syncNow(true),
+        name,
       }), [syncNow])
 
       const runCommand = useCallback(async (app, command) => {
         if (command.kind === 'screenshot') return captureGraph(app)
-        if (command.kind === 'workflow') return applyWorkflow(app, command.workflow)
+        if (command.kind === 'workflow') return applyWorkflow(app, command.workflow, command.name)
         return applyOperations(app, command.operations ?? [])
       }, [applyOperations, applyWorkflow])
 

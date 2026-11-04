@@ -642,15 +642,21 @@ const stage = (service, extra = {}) => overlayPlan({
   }
   const app = {
     isGraphReady: true,
-    async loadGraphData(workflow, clean, restore) {
-      calls.push({ nodes: workflow.nodes.length, clean, restore })
+    async loadGraphData(workflow, clean, restore, owner) {
+      calls.push({ nodes: workflow.nodes.length, clean, restore, owner })
       app.rootGraphOrUndefined = graph
     },
   }
   const value = await applyWorkflowGraph(app, { nodes: [1, 2, 3], links: [] })
   assert.deepEqual(value, { nodes: 3, links: 2 })
-  assert.deepEqual(calls[0], { nodes: 3, clean: true, restore: false })
+  assert.deepEqual(calls[0], { nodes: 3, clean: true, restore: false, owner: null })
   assert.equal(calls[1], 'dirty')
+  // The fourth argument is the tab the graph belongs to. Passing the store's
+  // workflow keeps the graph in that file's tab; null asks the frontend for a
+  // temporary one, the tab that then reports itself as "Unsaved Workflow".
+  const owner = { path: 'workflows/portrait.json' }
+  await applyWorkflowGraph(app, { nodes: [1], links: [] }, owner)
+  assert.equal(calls[2].owner, owner, 'the workflow the caller named owns the loaded graph')
   await assert.rejects(applyWorkflowGraph(app, { links: [] }), /not a ComfyUI UI workflow/)
   await assert.rejects(applyWorkflowGraph({}, { nodes: [] }), /cannot load a workflow/)
 }
@@ -690,6 +696,33 @@ const stage = (service, extra = {}) => overlayPlan({
   assert.equal(syncCalls, 1)
   assert.equal(app.loadedNodes, 2)
 
+  // The name the Host loaded decides which tab owns the graph. A file the
+  // editor's store knows keeps its own tab — one tab, its own name — while a
+  // slot with no file behind it has to open temporarily, because there is no
+  // file whose name it could carry.
+  {
+    const owners = []
+    const store = {
+      isGraphReady: true,
+      extensionManager: {
+        workflow: {
+          getWorkflowByPath: path => (path === 'workflows/portrait.json' ? { path } : undefined),
+        },
+      },
+      async loadGraphData(workflow, clean, restore, owner) {
+        owners.push(owner)
+        store.rootGraphOrUndefined = graph
+      },
+    }
+    const hooks = { fit: async () => true, sync: async () => true }
+    await loadWorkflow(store, { nodes: [1], links: [] }, { ...hooks, name: 'portrait' })
+    assert.equal(owners[0]?.path, 'workflows/portrait.json', 'the file tab owns the loaded graph')
+    await loadWorkflow(store, { nodes: [1], links: [] }, { ...hooks, name: 'slot-only' })
+    assert.equal(owners[1], null, 'a slot with no file behind it opens as a temporary workflow')
+    await loadWorkflow(store, { nodes: [1], links: [] }, hooks)
+    assert.equal(owners[2], null, 'a load without a name has no file to look up')
+  }
+
   // The editor accepted the workflow but the Host did not: the load rejects
   // rather than returning counts the Host's mirrored graph does not match.
   await assert.rejects(
@@ -715,6 +748,13 @@ const stage = (service, extra = {}) => overlayPlan({
   assert.equal(workflowNameFromEditor(editor('sub/folder/pack.v2.json')), 'pack.v2')
   assert.equal(workflowNameFromEditor(editor(null)), null, 'an unsaved canvas has no name')
   assert.equal(workflowNameFromEditor(editor('')), null)
+  // 1.57 writes ComfyUI's own "Unsaved Workflow" label into `filename` instead
+  // of leaving it empty. It is a label, not a file: reporting it renamed the
+  // session's workflow after every load made into a temporary tab.
+  assert.equal(workflowNameFromEditor(editor('Unsaved Workflow')), null)
+  assert.equal(workflowNameFromEditor(editor('workflows/Unsaved Workflow.json')), null)
+  assert.equal(workflowNameFromEditor(editor('Unsaved Workflow (2)')), null, 'a duplicated draft keeps the label')
+  assert.equal(workflowNameFromEditor(editor('Unsaved')), 'Unsaved', 'only the whole label is the placeholder')
   assert.equal(workflowNameFromEditor({}), null, 'a frontend without a workflow service has no name')
   assert.equal(workflowNameFromEditor(null), null)
 
@@ -821,6 +861,25 @@ const stage = (service, extra = {}) => overlayPlan({
     assert.deepEqual(calls[1].workflow, calls[0].workflow, 'the workflow itself did not change')
     assert.equal((await sync.push(false)).posted, false, 'a steady name is not sent again')
     assert.equal(calls.length, 2)
+  }
+
+  // The tab can also lose its file — a load into a temporary workflow, or the
+  // user opening a new canvas. That is reported as `file: null` and no `name`:
+  // the Host drops a name it took from a file and keeps one a tool gave the
+  // session, which is the distinction the two fields exist for.
+  {
+    const state = makeState()
+    const { sync, calls } = makeSync(state, [
+      { revision: 1, name: 'portrait' },
+      { revision: 2, name: 'portrait' },
+    ])
+    state.name = 'portrait'
+    await sync.push(true)
+    state.name = null
+    const dropped = await sync.push(false)
+    assert.equal(dropped.posted, true, 'losing the file is a change worth reporting')
+    assert.equal(calls[1].file, null)
+    assert.equal('name' in calls[1], false, 'no name travels for a canvas that has none')
   }
 
   // `extra.ds` is the camera. It must never reach the Host or every zoom and
