@@ -46,12 +46,13 @@ What the headless check cannot see, in order:
 1. Hard-refresh the GUI, open the **ComfyUI** tab, wait for **Connected**.
 2. The header digest should read `ComfyUI: rev … · "name" · N nodes · … ·
    panel open.` (the quoted part appears only when the workflow has a name).
-3. The bar reads left to right: status label (`Running` / `Stopped` /
-   `External` / `Starting…`), the lifecycle buttons that fit it (Start when
-   stopped, Stop + Restart when running and owned), the counters with the
-   last sync time, then the panel tools (fit, `Sync`, `Reload`, open, gear).
-   The gear opens settings only; settings hold configuration, not lifecycle
-   buttons.
+3. The bar is a chip over the bottom-left of the canvas: a status dot and its
+   label (`Running` / `Stopped` / `External` / `Starting…`). Click it to
+   expand: the lifecycle buttons that fit the state (Start when stopped,
+   Stop + Restart when running and owned), the counters with the last sync
+   time, then the panel tools (fit, `Sync`, `Reload`, open, gear). Cancel
+   stays outside the chip while a run is active. The gear opens settings only;
+   settings hold configuration, not lifecycle buttons.
 4. On first open the graph is framed in the canvas and the counter shows
    `synced HH:MM`. The stage has three faces and never spins forever: a stopped
    server shows `ComfyUI is not running` with Start (plus Server settings), a

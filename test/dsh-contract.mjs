@@ -429,6 +429,10 @@ try {
   const deskUnsentBody = await deskUnsent.json()
   assert.equal(deskUnsent.status, 502)
   assert.match(deskUnsentBody.error, /No session service is available/)
+  const deskNoTranscript = await shared.fetch(new Request('http://host/api/comfyui/desk/transcript'), ctx.connection.browserPeer)
+  const deskNoTranscriptBody = await deskNoTranscript.json()
+  assert.equal(deskNoTranscript.status, 502)
+  assert.match(deskNoTranscriptBody.error, /No session service is available/)
 
   const statusResponse = await shared.fetch(new Request(
     'http://host/api/comfyui/service',

@@ -3,7 +3,7 @@
  * into it are the whole interface. The Host services are fakes.
  */
 import assert from 'node:assert/strict'
-import { DeskSessionMissing, ensureDeskSession, sendDeskMessage } from '../desk.js'
+import { DeskSessionMissing, ensureDeskSession, sendDeskMessage, transcriptRows } from '../desk.js'
 
 {
   const calls = []
@@ -93,6 +93,36 @@ import { DeskSessionMissing, ensureDeskSession, sendDeskMessage } from '../desk.
   assert.equal(turn.ok, false)
   assert.equal(turn.status, 502)
   assert.match(turn.error, /session is gone/)
+}
+
+{
+  const records = [
+    // The stored form: the user message is the event data itself.
+    { type: 'event', event: { type: 'user/message', seq: 1, data: {
+      role: 'user',
+      source: { kind: 'user' },
+      content: [{ type: 'text', text: 'set steps to 20' }],
+    } } },
+    // Injected context is not the human speaking.
+    { type: 'event', event: { type: 'user/message', seq: 2, data: {
+      role: 'user',
+      source: { kind: 'agent' },
+      content: [{ type: 'text', text: 'AGENTS.md contents' }],
+    } } },
+    { type: 'event', event: { type: 'tool/call', seq: 3, data: { name: 'comfyui_edit', arguments: '{}' } } },
+    { type: 'event', event: { type: 'assistant/message', seq: 4, data: { message: {
+      role: 'assistant',
+      source: { kind: 'model' },
+      content: [{ type: 'reasoning', text: 'skip me' }, { type: 'text', text: 'Done.' }],
+    } } } },
+  ]
+  assert.deepEqual(transcriptRows(records), [
+    { id: '1', role: 'user', text: 'set steps to 20' },
+    { id: '3', role: 'tool', text: 'comfyui_edit' },
+    { id: '4', role: 'assistant', text: 'Done.' },
+  ])
+  assert.deepEqual(transcriptRows([]), [])
+  assert.deepEqual(transcriptRows([{ type: 'event', event: { type: 'step/start', seq: 1, data: {} } }]), [])
 }
 
 console.log('desk test passed')

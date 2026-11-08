@@ -30,7 +30,7 @@ import { createServiceController, frontendReport } from './service.js'
 import { createCommandChannel } from './commands.js'
 import { createSessionStore, validWorkflowName } from './session-store.js'
 import { createRunTracker, queueHas, TERMINAL_RUN_STATUSES } from './run-tracker.js'
-import { DeskSessionMissing, ensureDeskSession, sendDeskMessage } from './desk.js'
+import { DeskSessionMissing, ensureDeskSession, sendDeskMessage, transcriptRows } from './desk.js'
 
 export { takeCommand } from './commands.js'
 
@@ -219,6 +219,16 @@ export function apply(ctx, rawConfig = {}) {
     })
     return () => { void dispose() }
   }, 'dsh-comfyui: desk session route')
+
+  ctx.effect(() => {
+    const dispose = ctx.connection.fetch.register({
+      path: '/api/comfyui/desk/transcript',
+      methods: ['GET'],
+      requestBody: 'buffered',
+      fetch: request => bridgeDeskTranscript(request),
+    })
+    return () => { void dispose() }
+  }, 'dsh-comfyui: desk transcript route')
 
   ctx.effect(() => {
     const dispose = ctx.connection.fetch.register({
@@ -510,6 +520,11 @@ export function apply(ctx, rawConfig = {}) {
         const created = await sessions.create({})
         const sessionId = typeof created?.sessionId === 'string' ? created.sessionId : ''
         if (sessionId.length === 0) throw new Error('The desk session was not created')
+        // Name it once so the sidebar list separates it from conversations.
+        // A first-prompt titler may replace this; the id still identifies it.
+        if (typeof sessions.rename === 'function') {
+          await sessions.rename({ sessionId, title: 'ComfyUI' }).catch(() => {})
+        }
         return sessionId
       },
       resume: async sessionId => {
@@ -540,6 +555,35 @@ export function apply(ctx, rawConfig = {}) {
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       return json({ ok: false, error: detail || 'The desk session is unavailable' }, 502)
+    }
+  }
+
+  /**
+   * @param {Request} request - GET returns the desk session's turns.
+   * @returns {Promise<Response>} the rows the dock renders.
+   */
+  async function bridgeDeskTranscript(request) {
+    if (request.method !== 'GET') return json({ ok: false, error: 'method not allowed' }, 405)
+    let sessionId
+    try {
+      sessionId = await deskSessionId()
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      return json({ ok: false, error: detail || 'The desk session is unavailable' }, 502)
+    }
+    const sessions = sessionController()
+    if (sessions === null || typeof sessions.events !== 'function') {
+      return json({ ok: false, error: 'No session service is available' }, 502)
+    }
+    try {
+      const page = await sessions.events({
+        address: { kind: 'session', sessionId },
+        maxMessages: 40,
+      }, request.signal)
+      return json({ ok: true, sessionId, rows: transcriptRows(page?.records ?? []) })
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      return json({ ok: false, error: detail || 'The transcript could not be read' }, 502)
     }
   }
 

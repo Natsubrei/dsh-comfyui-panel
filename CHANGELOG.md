@@ -15,7 +15,9 @@ the version bump.
 
 - The ComfyUI page is a left-sidebar panel. It keeps one real session, and the
   column on the right sends into that session so the model can use the existing
-  tools on the open canvas.
+  tools on the open canvas. The column reads that session back, so the model's
+  reply and each tool call appear there. The server controls are a chip over
+  the bottom-left of the canvas instead of a bar across the top.
 
 ## [0.9.1] - 2026-11-04
 

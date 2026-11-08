@@ -5,6 +5,52 @@
 
 const MAX_MESSAGE = 4000
 
+/** Rows the dock shows at most; the session keeps the full history. */
+const MAX_TRANSCRIPT = 40
+
+/**
+ * Reduce session wire records to the rows the dock renders.
+ *
+ * Only the human prompt and the model's visible text are shown. Injected
+ * context (`source.kind !== 'user'`), reasoning, and tool results stay out;
+ * a tool call appears by name so a long run is visible before the reply.
+ *
+ * @param {readonly any[]} records - `SessionHistoryRecord`s from `sessionController.events`.
+ * @returns {{ id: string, role: string, text: string }[]} the rows, oldest first.
+ */
+export function transcriptRows(records) {
+  const rows = []
+  for (const record of records) {
+    if (record?.type !== 'event') continue
+    const event = record.event
+    if (event === null || typeof event !== 'object') continue
+    const id = String(event.seq)
+    const data = event.data
+    if (data === null || typeof data !== 'object') continue
+    if (event.type === 'tool/call') {
+      if (typeof data.name === 'string' && data.name.length > 0) {
+        rows.push({ id, role: 'tool', text: data.name })
+      }
+      continue
+    }
+    if (event.type !== 'user/message' && event.type !== 'assistant/message') continue
+    // A user message stores the message itself; an assistant message stores
+    // `{ message, stream, usage }`. Both fields are optional in the wire type.
+    const message = data.message === undefined ? data : data.message
+    if (message === null || typeof message !== 'object') continue
+    if (event.type === 'user/message' && message.source?.kind !== 'user') continue
+    if (!Array.isArray(message.content)) continue
+    const text = message.content
+      .filter(block => block?.type === 'text' && typeof block.text === 'string')
+      .map(block => block.text)
+      .join('\n')
+      .trim()
+    if (text.length === 0) continue
+    rows.push({ id, role: event.type === 'user/message' ? 'user' : 'assistant', text })
+  }
+  return rows.slice(-MAX_TRANSCRIPT)
+}
+
 /** The stored desk session is not in the session service anymore. */
 export class DeskSessionMissing extends Error {
   constructor() {

@@ -1890,9 +1890,33 @@ assert.throws(
 // ── Panel-managed service settings ────────────────────────────────────────
 
 const deskPrompts = []
+const deskRenames = []
 host.services.set('sessionController', {
   async create() { return { sessionId: 'desk-session' } },
   async resolveAgent() { return { agent: { id: 'desk-session' } } },
+  async rename(request) {
+    deskRenames.push(request)
+    return { title: request.title, seq: 1 }
+  },
+  async events() {
+    return {
+      records: [{
+        type: 'event',
+        event: {
+          type: 'assistant/message',
+          seq: 9,
+          data: {
+            message: {
+              role: 'assistant',
+              source: { kind: 'model' },
+              content: [{ type: 'text', text: 'Steps are 20.' }],
+            },
+          },
+        },
+      }],
+      hasMore: false,
+    }
+  },
   async prompt(request) {
     deskPrompts.push(request)
     return { accepted: true }
@@ -1924,6 +1948,11 @@ assert.equal(deskPrompts.length, 1)
 assert.equal(deskPrompts[0].sessionId, 'desk-session')
 assert.equal(deskPrompts[0].content[0].text, 'set steps to 20')
 assert.equal(storage.state.desk.get('session').sessionId, 'desk-session')
+assert.deepEqual(deskRenames, [{ sessionId: 'desk-session', title: 'ComfyUI' }])
+const transcript = await host.fetches.get('/api/comfyui/desk/transcript').fetch(new Request('http://127.0.0.1/api/comfyui/desk/transcript'))
+const transcriptBody = await transcript.json()
+assert.equal(transcript.status, 200)
+assert.deepEqual(transcriptBody.rows, [{ id: '9', role: 'assistant', text: 'Steps are 20.' }])
 
 const serviceGet = await host.fetches.get('/api/comfyui/service').fetch(new Request('http://127.0.0.1/api/comfyui/service'))
 const initialService = await serviceGet.json()

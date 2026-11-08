@@ -422,6 +422,36 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
   const state = await readPanel(browser)
   record('server state is known', state.status === 'ok' || state.status === 'warn', `tone ${String(state.status)}`)
 
+  // The right column is a view of the desk session, not a private log. It must
+  // reach the page under the same auth as the rest of the panel.
+  const dock = await browser.evaluate(`(async () => {
+    const aside = document.querySelector('.dsh-comfyui-dock')
+    const composer = document.querySelector('.dsh-comfyui-dock-input')
+    const response = await fetch('/api/comfyui/desk/transcript')
+    const body = await response.json().catch(() => null)
+    return JSON.stringify({
+      aside: aside !== null,
+      composer: composer !== null,
+      status: response.status,
+      ok: body?.ok === true,
+      rows: Array.isArray(body?.rows),
+    })
+  })()`, { awaitPromise: true })
+  const dockFacts = JSON.parse(dock)
+  record('the right column reads the desk session',
+    dockFacts.aside && dockFacts.composer && dockFacts.status === 200 && dockFacts.ok && dockFacts.rows,
+    `status ${String(dockFacts.status)}, rows ${String(dockFacts.rows)}`)
+
+  // The canvas belongs to the desk session, not to the conversation this check
+  // started in. Every state query below must use the id the page actually syncs.
+  const deskSessionId = await browser.evaluate(`(async () => {
+    const response = await fetch('/api/comfyui/desk')
+    const body = await response.json().catch(() => null)
+    return body?.ok === true && typeof body.sessionId === 'string' ? body.sessionId : null
+  })()`, { awaitPromise: true })
+  record('the page owns one desk session', typeof deskSessionId === 'string' && deskSessionId.length > 0,
+    typeof deskSessionId === 'string' ? deskSessionId : 'no session id')
+
   let graph = await readGraph(browser)
   const synced = await browser.waitFor(`Number(document.querySelector('${DOM.stats}')?.getAttribute('data-synced') ?? 0) > 0`, {
     label: 'the first accepted sync', timeout: 20_000,
@@ -432,12 +462,13 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
   // the Host queues under an id no socket owns: the image lands on disk and
   // the editor stays blank. The summary the model reads must say so, and this
   // is the only check that sees the id the browser actually sent.
-  const identity = sessionId === null ? 'no session id' : await (async () => {
+  const stateSessionId = typeof deskSessionId === 'string' ? deskSessionId : sessionId
+  const identity = stateSessionId === null ? 'no session id' : await (async () => {
     const deadline = Date.now() + 10_000
     let answer = 'unqueried'
     for (;;) {
       answer = await browser.evaluate(`(async () => {
-        const response = await fetch('/api/comfyui/state?sessionId=' + encodeURIComponent(${JSON.stringify(sessionId)}))
+        const response = await fetch('/api/comfyui/state?sessionId=' + encodeURIComponent(${JSON.stringify(stateSessionId)}))
         if (!response.ok) return 'HTTP ' + String(response.status)
         const body = await response.json()
         if (body.found !== true) return 'no record'
@@ -612,9 +643,15 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
   if (graph.nodes === 0) {
     record('Fit frames the graph', true, 'skipped: empty graph')
   } else {
-    await browser.wheel(center.x, center.y, 480)
+    // Zoom in, not out: the fitted scale is also the minimum, so zooming out
+    // can leave Fit with nothing to change and the check with nothing to see.
+    await browser.wheel(center.x, center.y, -480)
     await sleep(500)
     const zoomedOut = await readGraph(browser)
+    // The bar is a chip until it is clicked; its tools are not hit-testable
+    // while collapsed, and this is the same gesture a person makes.
+    await browser.evaluate(`document.querySelector('.dsh-comfyui-chip')?.click()`)
+    await sleep(300)
     await browser.click('[data-tool="fit"]')
     await sleep(1200)
     const fitted = await readGraph(browser)

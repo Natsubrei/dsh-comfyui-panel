@@ -27,6 +27,7 @@ window.__ModuleLoader__.load({
     const PANEL_URL = '/comfyui/'
     const DESK_URL = '/api/comfyui/desk'
     const DESK_CHAT_URL = '/api/comfyui/desk/chat'
+    const DESK_TRANSCRIPT_URL = '/api/comfyui/desk/transcript'
     const INTERRUPT_URL = `${PANEL_URL}interrupt`
     /** How long a successful Cancel waits for its event before re-enabling. */
     const CANCEL_FALLBACK_MS = 10_000
@@ -103,7 +104,6 @@ window.__ModuleLoader__.load({
       assistantSending: 'Sending…',
       assistantFailed: 'The assistant did not answer',
       assistantEmpty: 'Say what to change. The model uses the tools on this canvas.',
-      assistantSent: 'Sent. The model is working in this session.',
       assistantClosed: 'The editor is still opening.',
     }
     const zh = {
@@ -171,27 +171,46 @@ window.__ModuleLoader__.load({
       assistantSending: '发送中…',
       assistantFailed: '助手没有回复',
       assistantEmpty: '直接说要改哪里。模型会用这张画布上的工具。',
-      assistantSent: '已发送。模型正在这个会话里处理。',
       assistantClosed: '编辑器还在打开。',
     }
 
     const CSS = `
       .dsh-comfyui-panel {
+        position: relative;
         display: flex; flex-direction: column; height: 100%; min-height: 0;
         color: inherit;
         background: transparent;
         font: inherit;
       }
       .dsh-comfyui-bar {
-        /* The editor has its own toolbar under this one. This row is the
-           glass strip used by the media desk, not a second boxed toolbar. */
-        display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-        min-height: 48px; padding: 8px 12px;
+        /* ComfyUI owns every corner of the canvas, so this is not a point in
+           one. It is a chip over the bottom-left, where only the frame-rate
+           readout sits, and it expands to the full row on click. */
+        position: absolute; left: 12px; bottom: 12px; z-index: 4;
+        display: flex; align-items: center; gap: 6px;
+        max-width: calc(100% - 24px);
+        padding: 4px;
         font-size: 13px; line-height: 20px;
-        border-bottom: .5px solid var(--line, var(--dsw-alias-border-l1));
+        border: .5px solid var(--line, var(--dsw-alias-border-l1));
+        border-radius: 999px;
         background: var(--glass, var(--dsw-alias-bg-layer-1));
         backdrop-filter: blur(24px) saturate(160%);
-        flex: 0 0 auto;
+      }
+      .dsh-comfyui-bar[data-expanded="true"] {
+        flex-wrap: wrap; align-items: flex-start;
+        padding: 8px 10px; border-radius: var(--r-md, 12px);
+      }
+      .dsh-comfyui-chip {
+        display: flex; align-items: center; gap: 6px;
+        height: 26px; padding: 0 10px 0 8px;
+        border: 0; border-radius: 999px;
+        background: transparent; color: var(--ink2, var(--dsw-alias-label-secondary));
+        font: inherit; cursor: pointer;
+      }
+      .dsh-comfyui-chip:hover { background: var(--hover, var(--dsw-alias-bg-layer-2)); }
+      .dsh-comfyui-bar:not([data-expanded="true"]) .dsh-comfyui-bar-body { display: none; }
+      .dsh-comfyui-bar[data-expanded="true"] .dsh-comfyui-bar-body {
+        display: flex; flex: 1 1 100%; align-items: center; gap: 6px; flex-wrap: wrap;
       }
       .dsh-comfyui-bar .dsh-comfyui-button { height: 32px; padding: 0 12px; }
       .dsh-comfyui-bar .dsh-comfyui-icon { width: 32px; }
@@ -415,6 +434,11 @@ window.__ModuleLoader__.load({
         background: var(--active);
         color: var(--ink);
       }
+      .dsh-comfyui-dock-row[data-role="tool"] .dsh-comfyui-dock-msg {
+        color: var(--ink3);
+        font-family: var(--dsw-font-family-mono, ui-monospace, monospace);
+        font-size: 12px; line-height: 18px;
+      }
       .dsh-comfyui-dock-error {
         flex: 0 0 auto; margin: 0; padding: 0 18px 8px;
         color: var(--dsw-alias-state-error-primary);
@@ -635,6 +659,7 @@ window.__ModuleLoader__.load({
     }
 
     function TopBar({ stats, synced, syncAt, runText, previewUrl, previewTitle, filesTitle, run, plan, serviceOpen, onSync, onReload, onFit, onOpen, onService, onAction, onCancel, t }) {
+      const [expanded, setExpanded] = useState(false)
       const counts = t('stats')
         .replace('{{nodes}}', String(stats.nodes))
         .replace('{{links}}', String(stats.links))
@@ -651,9 +676,28 @@ window.__ModuleLoader__.load({
       const canCancel = run !== null && run !== undefined
         && run.status === 'running'
         && typeof run.promptId === 'string' && run.promptId.length > 0
-      return h('div', { className: 'dsh-comfyui-bar' },
-        h('span', { className: 'dsh-comfyui-dot', 'data-status': plan.tone, title: plan.chipTitle }),
-        h('span', { className: 'dsh-comfyui-state', 'data-tone': plan.tone, title: plan.chipTitle }, plan.label),
+      return h('div', { className: 'dsh-comfyui-bar', 'data-expanded': expanded ? 'true' : 'false' },
+        h('button', {
+          className: 'dsh-comfyui-chip',
+          type: 'button',
+          title: plan.chipTitle,
+          'aria-expanded': expanded,
+          onClick: () => setExpanded(value => !value),
+        },
+        h('span', { className: 'dsh-comfyui-dot', 'data-status': plan.tone }),
+        h('span', { className: 'dsh-comfyui-state', 'data-tone': plan.tone }, plan.label),
+        ),
+        // Cancel stays outside the collapsed body: it is the one control a
+        // running session must reach without expanding anything.
+        canCancel ? h('button', {
+          key: 'cancel',
+          className: 'dsh-comfyui-button',
+          'data-action': 'cancel',
+          type: 'button',
+          disabled: run.cancel === 'busy',
+          onClick: onCancel,
+        }, cancelLabel(run, t)) : null,
+        h('div', { className: 'dsh-comfyui-bar-body' },
         // State first, its controls second, counters after: the server switch
         // is the click this bar exists for, and putting it here keeps it on
         // the first line when a narrow panel makes the bar wrap.
@@ -667,16 +711,6 @@ window.__ModuleLoader__.load({
             title: action.title,
             onClick: () => onAction(action.action),
           }, action.label)),
-          // Cancel sits with the lifecycle controls because it acts on the
-          // same server state, and only exists while this session's prompt runs.
-          canCancel ? h('button', {
-            key: 'cancel',
-            className: 'dsh-comfyui-button',
-            'data-action': 'cancel',
-            type: 'button',
-            disabled: run.cancel === 'busy',
-            onClick: onCancel,
-          }, cancelLabel(run, t)) : null,
         ),
         previewUrl ? h('img', {
           className: 'dsh-comfyui-preview',
@@ -727,6 +761,7 @@ window.__ModuleLoader__.load({
             'aria-expanded': serviceOpen,
             onClick: onService,
           }, '\u2699\uFE0E'),
+        ),
         ),
       )
     }
@@ -2859,16 +2894,41 @@ window.__ModuleLoader__.load({
      * @returns {any} the column.
      */
     function AssistantDock({ t, sessionId }) {
-      const [messages, setMessages] = useState([])
+      const [rows, setRows] = useState([])
+      const [pending, setPending] = useState(null)
       const [draft, setDraft] = useState('')
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState(null)
       const [open, setOpen] = useState(true)
       const logRef = useRef(null)
+      /** The newest read wins; an older poll must not overwrite it. */
+      const readAt = useRef(0)
+      const load = useCallback(async () => {
+        const stamp = Date.now()
+        if (stamp < readAt.current) return
+        readAt.current = stamp
+        const response = await fetch(DESK_TRANSCRIPT_URL).catch(() => null)
+        if (response === null) return
+        const body = await response.json().catch(() => null)
+        if (readAt.current !== stamp) return
+        if (body?.ok === true && Array.isArray(body.rows)) {
+          setRows(body.rows)
+          setPending(current => {
+            if (current === null) return null
+            return body.rows.some(row => row.role === 'user' && row.text === current.text) ? null : current
+          })
+        }
+      }, [])
+      useEffect(() => {
+        if (sessionId === null || !open) return undefined
+        void load()
+        const timer = setInterval(() => { void load() }, 3000)
+        return () => { clearInterval(timer) }
+      }, [load, sessionId, open])
       useEffect(() => {
         const log = logRef.current
         if (log !== null) log.scrollTop = log.scrollHeight
-      }, [messages, open])
+      }, [rows, pending, open])
       /**
        * Admit the draft to the desk session.
        * @param {SubmitEvent} event - the form submit.
@@ -2882,11 +2942,10 @@ window.__ModuleLoader__.load({
           setError(t('assistantClosed'))
           return
         }
-        const pendingId = `local-${Date.now()}`
         setBusy(true)
         setError(null)
         setDraft('')
-        setMessages(current => [...current, { id: pendingId, role: 'user', text: message }])
+        setPending({ text: message })
         try {
           const response = await fetch(DESK_CHAT_URL, {
             method: 'POST',
@@ -2895,20 +2954,21 @@ window.__ModuleLoader__.load({
           })
           const body = await response.json()
           if (body?.ok !== true) {
-            setMessages(current => current.filter(row => row.id !== pendingId))
+            setPending(null)
             setDraft(message)
             setError(typeof body?.error === 'string' && body.error.length > 0 ? body.error : t('assistantFailed'))
           } else {
-            setMessages(current => [...current, { id: `${pendingId}-sent`, role: 'assistant', text: t('assistantSent') }])
+            void load()
           }
         } catch {
-          setMessages(current => current.filter(row => row.id !== pendingId))
+          setPending(null)
           setDraft(message)
           setError(t('assistantFailed'))
         } finally {
           setBusy(false)
         }
       }
+      const shown = pending === null ? rows : [...rows, { id: 'pending', role: 'user', text: pending.text }]
       return h('aside', {
         className: open ? 'dsh-comfyui-dock' : 'dsh-comfyui-dock is-closed',
         'aria-label': t('assistant'),
@@ -2923,9 +2983,9 @@ window.__ModuleLoader__.load({
           }, open ? '\u203a' : '\u2039'),
         ),
         open ? h('div', { className: 'dsh-comfyui-dock-log', ref: logRef },
-          messages.length === 0
+          shown.length === 0
             ? h('p', { className: 'dsh-comfyui-dock-empty' }, t('assistantEmpty'))
-            : messages.map(row => h('div', {
+            : shown.map(row => h('div', {
               key: row.id,
               className: 'dsh-comfyui-dock-row',
               'data-role': row.role,
