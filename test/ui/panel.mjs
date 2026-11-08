@@ -389,11 +389,12 @@ export async function bumpWidget(browser) {
  */
 export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exceptionsSince = 0, sessionId = null }) {
   mkdirSync(out, { recursive: true })
-  /** @type {Array<{name: string, ok: boolean, detail: string}>} */
+  /** @type {Array<{layer: string, name: string, ok: boolean, detail: string}>} */
   const results = []
   /** @type {string[]} */
   const shots = []
-  const record = (name, ok, detail = '') => { results.push({ name, ok, detail }) }
+  let layer = 'page'
+  const record = (name, ok, detail = '') => { results.push({ layer, name, ok, detail }) }
   const shoot = async name => {
     const path = join(out, name)
     await browser.screenshot(path)
@@ -404,6 +405,47 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
   await shoot('01-panel.png')
   record('panel mounts in the sidebar', true, 'ComfyUI tab rendered')
 
+  // Page: the column, and the tab that brings it back. These do not touch the graph.
+  const dockOpen = await browser.evaluate(`(() => {
+    const aside = document.querySelector('.dsh-comfyui-dock:not(.is-closed)')
+    const composer = document.querySelector('.dsh-comfyui-dock-input')
+    return aside !== null && composer !== null
+  })()`)
+  record('the right column is open', dockOpen === true, dockOpen === true ? '' : 'the composer is not in the page')
+
+  await browser.click('.dsh-comfyui-dock-toggle')
+  await sleep(300)
+  const tab = await browser.evaluate(`(() => {
+    const button = document.querySelector('.dsh-comfyui-dock.is-closed .dsh-comfyui-dock-toggle')
+    if (button === null) return null
+    const rect = button.getBoundingClientRect()
+    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, w: rect.width, h: rect.height, text: (button.textContent ?? '').trim() }
+  })()`)
+  record('collapsing leaves a reopen tab',
+    tab !== null && tab.w >= 16 && tab.h >= 48 && tab.text.length > 0,
+    tab === null ? 'no tab' : `${tab.text} ${String(Math.round(tab.w))}×${String(Math.round(tab.h))}`)
+  if (tab !== null) {
+    await browser.move(tab.x, tab.y)
+    await sleep(200)
+    const hovered = await browser.evaluate(`(() => {
+      const button = document.querySelector('.dsh-comfyui-dock.is-closed .dsh-comfyui-dock-toggle')
+      if (button === null) return null
+      const rect = button.getBoundingClientRect()
+      const bg = getComputedStyle(button).backgroundColor
+      return { w: rect.width, h: rect.height, bg }
+    })()`)
+    const opaque = hovered !== null && hovered.bg !== 'transparent' && !/rgba\([^)]*,\s*0(?:\.0+)?\s*\)/u.test(hovered.bg)
+    record('the reopen tab stays visible on hover',
+      hovered !== null && hovered.w >= 16 && hovered.h >= 48 && opaque,
+      hovered === null ? 'the tab disappeared' : hovered.bg)
+    await shoot('02-collapsed.png')
+    await browser.clickAt(tab.x, tab.y)
+    await sleep(300)
+  }
+  const reopened = await browser.evaluate(`document.querySelector('.dsh-comfyui-dock:not(.is-closed) .dsh-comfyui-dock-input') !== null`)
+  record('the tab opens the column', reopened === true, '')
+
+  layer = 'editor'
   const editor = await browser.waitFor(`(() => { const app = ${APP}; return app ? true : null })()`, {
     label: 'the editor', timeout: 5_000,
   }).catch(() => false)
@@ -422,26 +464,6 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
   const state = await readPanel(browser)
   record('server state is known', state.status === 'ok' || state.status === 'warn', `tone ${String(state.status)}`)
 
-  // The right column is a view of the desk session, not a private log. It must
-  // reach the page under the same auth as the rest of the panel.
-  const dock = await browser.evaluate(`(async () => {
-    const aside = document.querySelector('.dsh-comfyui-dock')
-    const composer = document.querySelector('.dsh-comfyui-dock-input')
-    const response = await fetch('/api/comfyui/desk/transcript')
-    const body = await response.json().catch(() => null)
-    return JSON.stringify({
-      aside: aside !== null,
-      composer: composer !== null,
-      status: response.status,
-      ok: body?.ok === true,
-      rows: Array.isArray(body?.rows),
-    })
-  })()`, { awaitPromise: true })
-  const dockFacts = JSON.parse(dock)
-  record('the right column reads the desk session',
-    dockFacts.aside && dockFacts.composer && dockFacts.status === 200 && dockFacts.ok && dockFacts.rows,
-    `status ${String(dockFacts.status)}, rows ${String(dockFacts.rows)}`)
-
   // The canvas belongs to the desk session, not to the conversation this check
   // started in. Every state query below must use the id the page actually syncs.
   const deskSessionId = await browser.evaluate(`(async () => {
@@ -449,9 +471,6 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
     const body = await response.json().catch(() => null)
     return body?.ok === true && typeof body.sessionId === 'string' ? body.sessionId : null
   })()`, { awaitPromise: true })
-  record('the page owns one desk session', typeof deskSessionId === 'string' && deskSessionId.length > 0,
-    typeof deskSessionId === 'string' ? deskSessionId : 'no session id')
-
   let graph = await readGraph(browser)
   const synced = await browser.waitFor(`Number(document.querySelector('${DOM.stats}')?.getAttribute('data-synced') ?? 0) > 0`, {
     label: 'the first accepted sync', timeout: 20_000,
@@ -660,6 +679,39 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
     await shoot('05-fitted.png')
   }
 
+  layer = 'desk'
+  record('the page owns one desk session', typeof deskSessionId === 'string' && deskSessionId.length > 0,
+    typeof deskSessionId === 'string' ? deskSessionId : 'no session id')
+  const transcript = await browser.evaluate(`(async () => {
+    const response = await fetch('/api/comfyui/desk/transcript')
+    const body = await response.json().catch(() => null)
+    return JSON.stringify({ status: response.status, ok: body?.ok === true, rows: Array.isArray(body?.rows), sessionId: body?.sessionId ?? null })
+  })()`, { awaitPromise: true })
+  const transcriptFacts = JSON.parse(transcript)
+  record('the column reads the transcript',
+    transcriptFacts.status === 200 && transcriptFacts.ok && transcriptFacts.rows,
+    `status ${String(transcriptFacts.status)}`)
+
+  // Last, because it points the page at a new session and remounts the editor.
+  await browser.click('.dsh-comfyui-dock-new')
+  let replaced = ''
+  {
+    const deadline = Date.now() + 15_000
+    for (;;) {
+      const id = await browser.evaluate(`(async () => {
+        const response = await fetch('/api/comfyui/desk')
+        const body = await response.json().catch(() => null)
+        return typeof body?.sessionId === 'string' ? body.sessionId : ''
+      })()`, { awaitPromise: true })
+      if (typeof id === 'string' && id.length > 0 && id !== deskSessionId) { replaced = id; break }
+      if (Date.now() > deadline) break
+      await sleep(250)
+    }
+  }
+  const composerBack = await browser.evaluate(`document.querySelector('.dsh-comfyui-dock-input') !== null`)
+  record('New starts another session', replaced.length > 0 && composerBack === true,
+    replaced.length > 0 ? replaced : 'the page kept the same session')
+
   // Only what the panel's own open/close cycle logs counts: the host and its
   // other plugins may have been complaining before this check ever started,
   // and a namespaced `[other-plugin]` error is that plugin's own report.
@@ -672,7 +724,7 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
 
 /**
  * Format results as a plain-text report.
- * @param {Array<{name: string, ok: boolean, detail: string}>} results - outcomes.
+ * @param {Array<{layer?: string, name: string, ok: boolean, detail: string}>} results - outcomes.
  * @param {object} meta - run metadata.
  * @param {string} meta.sessionId - session the panel ran in.
  * @param {number} meta.width - viewport width.
@@ -682,7 +734,13 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
  */
 export function formatReport(results, { sessionId, width, height, shots }) {
   const lines = [`ComfyUI panel check · session ${sessionId ?? '(unknown)'} · ${String(width)}×${String(height)}`]
+  let current = ''
   for (const result of results) {
+    const group = result.layer ?? 'page'
+    if (group !== current) {
+      current = group
+      lines.push(`── ${group}`)
+    }
     const detail = result.detail === '' ? '' : `  (${result.detail})`
     lines.push(`  ${result.ok ? 'PASS' : 'FAIL'}  ${result.name}${detail}`)
   }

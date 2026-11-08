@@ -13,11 +13,15 @@ the version bump.
 
 ### Changed
 
-- The ComfyUI page is a left-sidebar panel. It keeps one real session, and the
-  column on the right sends into that session so the model can use the existing
-  tools on the open canvas. The column reads that session back, so the model's
-  reply and each tool call appear there. The server controls are a chip over
-  the bottom-left of the canvas instead of a bar across the top.
+- The ComfyUI page opens from the left sidebar. The editor fills the main
+  column, and an assistant sits on the right. That column talks to one real
+  session, so the model can use the existing tools, and the column shows that
+  session's replies and tool calls.
+- The server controls are a chip at the bottom-left of the canvas. The sidebar
+  entry uses the official single-colour ComfyUI mark. Collapsing the column
+  leaves a tab on the right edge.
+- Archiving that session, or pressing New, starts another one. The previous
+  session keeps its history.
 
 ## [0.9.1] - 2026-11-04
 

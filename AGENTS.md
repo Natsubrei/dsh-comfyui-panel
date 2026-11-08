@@ -9,7 +9,7 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
 ## Where things are
 
 - `index.js` — Host half: authenticated `/comfyui` HTTP + WebSocket proxy, the
-  `/api/comfyui/{state,events,commands/poll,commands/result,service,desk,desk/chat}` bridges,
+  `/api/comfyui/{state,events,commands/poll,commands/result,service,desk,desk/transcript,desk/chat}` bridges,
   per-session tools, and the runtime-context digest. Session facts and the
   command channel live in the two modules below; this file wires them to routes
   and tools.
@@ -70,7 +70,7 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
 ```bash
 npm install       # once: typescript and @types/node for the type check
 npm run typecheck # checkJs over index.js, client.js, the tests and the scripts
-npm test          # checks, host smoke, editor ops, hygiene, market index, contract when available
+npm test          # syntax, then unit, module, system, release; see test/README.md
 npm run contract  # real DSH runtime; needs checkout at ../deepseek-harness
 npm run ui        # live panel in a headless browser; needs a running dsh web
 npm run shot -- workflow.json   # render a workflow file to a PNG
@@ -89,9 +89,7 @@ for the panel's own canvas, `npm run shot` for a workflow file. Both print or
 return a path to open with `read_image`; `comfyui_graph_read layout=true` adds
 the overlapping pairs when only the numbers are in question.
 
-A new route or tool needs a case in `host-smoke.mjs`; a new integration point
-(path, service, scope, tool schema) additionally needs a case in
-`dsh-contract.mjs`. The pre-commit hook runs `npm test`, plus `npm run
+Adding or moving a test: read [test/README.md](test/README.md) and put the file in that layer's list in `test/run.mjs`. A new route or tool needs a case in `host-smoke.mjs`; a new integration point (path, service, scope, tool schema) additionally needs a case in `dsh-contract.mjs`. The pre-commit hook runs `npm test`, plus `npm run
 typecheck` when `node_modules` exists; it is enabled with `git config
 core.hooksPath .githooks` (already set in this checkout, and not inherited by a
 fresh clone).
@@ -110,7 +108,7 @@ checks cannot enforce.
 
 `docs/panel-check.md` is the whole loop: reload the live plugin, run `npm run
 ui`, then the manual pass for what the headless check cannot see (the digest
-line, the bar's labels, the stopped stage, a queued run).
+line, the chip's labels, the stopped stage, a queued run).
 
 ## Parallel work
 

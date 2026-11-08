@@ -213,7 +213,7 @@ export function apply(ctx, rawConfig = {}) {
   ctx.effect(() => {
     const dispose = ctx.connection.fetch.register({
       path: '/api/comfyui/desk',
-      methods: ['GET'],
+      methods: ['GET', 'POST'],
       requestBody: 'buffered',
       fetch: request => bridgeDesk(request),
     })
@@ -497,7 +497,61 @@ export function apply(ctx, rawConfig = {}) {
   }
 
   /**
-   * The one session that owns the canvas. Created once, then reused.
+   * Whether the workspace registry has archived this session. An archived
+   * session still exists, but its agent will not run a turn.
+   * @param {string} sessionId - the stored desk session.
+   * @returns {boolean} whether it is in the archive set.
+   */
+  function sessionArchived(sessionId) {
+    try {
+      const ids = ctx.get('workspaceRegistry')?.archivedSessionIds
+      return Array.isArray(ids) && ids.includes(sessionId)
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Create a session and title it. The first-prompt titler may rename it later.
+   * @returns {Promise<string>} the new session id.
+   */
+  async function createDeskSession() {
+    const sessions = sessionController()
+    if (sessions === null || typeof sessions.create !== 'function') {
+      throw new Error('No session service is available')
+    }
+    const created = await sessions.create({})
+    const sessionId = typeof created?.sessionId === 'string' ? created.sessionId : ''
+    if (sessionId.length === 0) throw new Error('The desk session was not created')
+    if (typeof sessions.rename === 'function') {
+      await sessions.rename({ sessionId, title: 'ComfyUI' }).catch(() => {})
+    }
+    return sessionId
+  }
+
+  /**
+   * Resume the session, or report that the page must stop using it.
+   * @param {string} sessionId - the candidate desk session.
+   * @returns {Promise<void>}
+   */
+  async function resumeDeskSession(sessionId) {
+    if (sessionArchived(sessionId)) throw new DeskSessionMissing()
+    const sessions = sessionController()
+    if (sessions === null || typeof sessions.resolveAgent !== 'function') {
+      throw new Error('No session service is available')
+    }
+    const resolved = await sessions.resolveAgent(sessionId)
+    if (resolved?.agent) return
+    // This method reports failure in the result. Swallowing it reused a
+    // deleted session, and the tools never registered.
+    if (resolved?.error?.code === 'session/not-found') throw new DeskSessionMissing()
+    const detail = resolved?.error?.message
+    throw new Error(typeof detail === 'string' && detail.length > 0 ? detail : 'The desk session is unavailable')
+  }
+
+  /**
+   * The session that owns the canvas. A stored id is reused until it is gone
+   * or archived, which starts a new one.
    * @returns {Promise<string>} the session id the page syncs under.
    */
   function deskSessionId() {
@@ -512,35 +566,21 @@ export function apply(ctx, rawConfig = {}) {
         rememberedDeskId = sessionId
         await store.saveDeskSession(sessionId)
       },
-      create: async () => {
-        const sessions = sessionController()
-        if (sessions === null || typeof sessions.create !== 'function') {
-          throw new Error('No session service is available')
-        }
-        const created = await sessions.create({})
-        const sessionId = typeof created?.sessionId === 'string' ? created.sessionId : ''
-        if (sessionId.length === 0) throw new Error('The desk session was not created')
-        // Name it once so the sidebar list separates it from conversations.
-        // A first-prompt titler may replace this; the id still identifies it.
-        if (typeof sessions.rename === 'function') {
-          await sessions.rename({ sessionId, title: 'ComfyUI' }).catch(() => {})
-        }
-        return sessionId
-      },
-      resume: async sessionId => {
-        const sessions = sessionController()
-        if (sessions === null || typeof sessions.resolveAgent !== 'function') {
-          throw new Error('No session service is available')
-        }
-        const resolved = await sessions.resolveAgent(sessionId)
-        if (resolved?.agent) return
-        // This method reports failure in the result. Swallowing it reused a
-        // deleted session, and the tools never registered.
-        if (resolved?.error?.code === 'session/not-found') throw new DeskSessionMissing()
-        const detail = resolved?.error?.message
-        throw new Error(typeof detail === 'string' && detail.length > 0 ? detail : 'The desk session is unavailable')
-      },
+      create: createDeskSession,
+      resume: resumeDeskSession,
     })
+  }
+
+  /**
+   * Point the page at a new session. The previous one keeps its history.
+   * @returns {Promise<string>} the new session id.
+   */
+  async function replaceDeskSession() {
+    const sessionId = await createDeskSession()
+    rememberedDeskId = sessionId
+    await store.saveDeskSession(sessionId)
+    await resumeDeskSession(sessionId)
+    return sessionId
   }
 
   /**
@@ -548,8 +588,21 @@ export function apply(ctx, rawConfig = {}) {
    * @returns {Promise<Response>} the id, or why it could not be created.
    */
   async function bridgeDesk(request) {
-    if (request.method !== 'GET') return json({ ok: false, error: 'method not allowed' }, 405)
+    if (request.method !== 'GET' && request.method !== 'POST') {
+      return json({ ok: false, error: 'method not allowed' }, 405)
+    }
     try {
+      if (request.method === 'POST') {
+        let body
+        try {
+          body = JSON.parse(await request.text())
+        } catch {
+          return json({ ok: false, error: 'invalid JSON body' }, 400)
+        }
+        if (body?.action !== 'new') return json({ ok: false, error: 'unknown action' }, 400)
+        const sessionId = await replaceDeskSession()
+        return json({ ok: true, sessionId })
+      }
       const sessionId = await deskSessionId()
       return json({ ok: true, sessionId })
     } catch (error) {

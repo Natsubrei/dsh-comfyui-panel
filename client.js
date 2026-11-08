@@ -99,6 +99,7 @@ window.__ModuleLoader__.load({
       barUnknown: 'Checking…',
       barConnecting: 'connecting…',
       assistant: 'Assistant',
+      assistantNew: 'New',
       assistantPlaceholder: 'Say what to change',
       assistantSend: 'Send',
       assistantSending: 'Sending…',
@@ -166,6 +167,7 @@ window.__ModuleLoader__.load({
       barUnknown: '检查中…',
       barConnecting: '连接中…',
       assistant: '助手',
+      assistantNew: '新建',
       assistantPlaceholder: '说要改什么',
       assistantSend: '发送',
       assistantSending: '发送中…',
@@ -404,13 +406,38 @@ window.__ModuleLoader__.load({
         flex-basis: 0; width: 0; border-left: 0; overflow: visible;
       }
       .dsh-comfyui-dock.is-closed .dsh-comfyui-dock-head {
-        position: absolute; right: 12px; top: 12px; padding: 0; z-index: 2;
+        position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+        padding: 0; z-index: 5;
       }
-      .dsh-comfyui-dock.is-closed .dsh-comfyui-dock-head strong { display: none; }
+      .dsh-comfyui-dock.is-closed .dsh-comfyui-dock-head strong,
+      .dsh-comfyui-dock.is-closed .dsh-comfyui-dock-new { display: none; }
+      .dsh-comfyui-dock-new {
+        margin-left: auto;
+        height: 28px; padding: 0 10px; border: 0; border-radius: 8px;
+        background: transparent; color: var(--ink2, var(--dsw-alias-label-secondary));
+        cursor: pointer; font: inherit; font-size: 13px;
+      }
+      .dsh-comfyui-dock-new:hover { color: var(--ink, var(--dsw-alias-label-primary)); }
+      .dsh-comfyui-dock-new:disabled { opacity: .45; cursor: default; }
       .dsh-comfyui-dock-toggle {
         width: 28px; height: 28px; border: 0; border-radius: 8px;
         background: transparent; color: var(--ink2, var(--dsw-alias-label-secondary));
         cursor: pointer; font: inherit; font-size: 18px;
+      }
+      .dsh-comfyui-dock.is-closed .dsh-comfyui-dock-toggle {
+        width: auto; height: auto; min-height: 72px; padding: 14px 8px;
+        writing-mode: vertical-rl;
+        border: .5px solid var(--line, var(--dsw-alias-border-l1));
+        border-right: 0; border-radius: 12px 0 0 12px;
+        background: var(--card, var(--dsw-alias-bg-layer-2));
+        color: var(--ink, var(--dsw-alias-label-primary));
+        font-size: 13px; line-height: 18px; letter-spacing: .04em;
+        box-shadow: var(--dsw-elevation-soft);
+      }
+      .dsh-comfyui-dock.is-closed .dsh-comfyui-dock-toggle:hover {
+        /* --hover is a translucent wash. Using it as the only fill makes the
+           tab vanish against the canvas, so mix it into the opaque card. */
+        background: color-mix(in srgb, var(--ink, var(--dsw-alias-label-primary)) 10%, var(--card, var(--dsw-alias-bg-layer-2)));
       }
       .dsh-comfyui-dock-log {
         flex: 1 1 auto; min-height: 0; overflow: auto;
@@ -2865,8 +2892,15 @@ window.__ModuleLoader__.load({
     /** Locale bound in `apply`. The main panel renders after that assignment. */
     let deskT = key => key
 
+    /** Badge outline of the ComfyUI mark: a rounded square on a 520 grid. */
+    const COMFY_BADGE = 'M0 184.335C0 119.812 0 87.5502 12.5571 62.9055C23.6026 41.2274 41.2274 23.6026 62.9055 12.5571C87.5502 0 119.812 0 184.335 0H335.665C400.188 0 432.45 0 457.094 12.5571C478.773 23.6026 496.397 41.2274 507.443 62.9055C520 87.5502 520 119.812 520 184.335V335.665C520 400.188 520 432.45 507.443 457.094C496.397 478.773 478.773 496.397 457.094 507.443C432.45 520 400.188 520 335.665 520H184.335C119.812 520 87.5502 520 62.9055 507.443C41.2274 496.397 23.6026 478.773 12.5571 457.094C0 432.45 0 400.188 0 335.665V184.335Z'
+    /** The C inside it, knocked out of the badge. */
+    const COMFY_MARK = 'M176.484 428.831C168.649 428.831 162.327 425.919 158.204 420.412C153.966 414.755 152.861 406.857 155.171 398.749L164.447 366.178C165.187 363.585 164.672 360.794 163.059 358.636C161.446 356.483 158.921 355.216 156.241 355.216H129.571C121.731 355.216 115.409 352.308 111.289 346.802C107.051 341.14 105.946 333.242 108.258 325.134L140.124 213.748L143.642 201.51C148.371 184.904 165.62 171.407 182.097 171.407H214.009C217.817 171.407 221.167 168.868 222.215 165.183L232.769 128.135C237.494 111.545 254.742 98.048 271.219 98.048L339.468 97.9264L389.431 97.9221C397.268 97.9221 403.59 100.831 407.711 106.337C411.949 111.994 413.054 119.892 410.744 128L396.457 178.164C391.734 194.75 374.485 208.242 358.009 208.242L289.607 208.372H257.706C253.902 208.372 250.557 210.907 249.502 214.588L222.903 307.495C222.159 310.093 222.673 312.892 224.291 315.049C225.904 317.202 228.428 318.469 231.107 318.469C231.113 318.469 276.307 318.381 276.307 318.381H326.122C333.959 318.381 340.281 321.29 344.402 326.796C348.639 332.457 349.744 340.355 347.433 348.463L333.146 398.619C328.423 415.209 311.174 428.701 294.698 428.701L226.299 428.831H176.484Z'
+
     /**
-     * Left-sidebar glyph. The shell supplies the square size.
+     * Left-sidebar glyph: the official ComfyUI mark, single colour. The badge
+     * paints in the column's own ink and the C is cut out, so it reads on a
+     * light and a dark sidebar without a second asset.
      * @param {{ size?: number }} props - the shell's icon size.
      * @returns {any} the svg.
      */
@@ -2875,25 +2909,30 @@ window.__ModuleLoader__.load({
       return h('svg', {
         width: s,
         height: s,
-        viewBox: '0 0 24 24',
-        fill: 'none',
-        stroke: 'currentColor',
-        strokeWidth: 1.5,
-        strokeLinejoin: 'round',
+        viewBox: '0 0 520 520',
         'aria-hidden': 'true',
       },
-      h('rect', { x: 3, y: 4, width: 7, height: 5, rx: 1 }),
-      h('rect', { x: 14, y: 4, width: 7, height: 5, rx: 1 }),
-      h('rect', { x: 8, y: 15, width: 8, height: 5, rx: 1 }),
-      h('path', { d: 'M6.5 9v2.5h11V9M12 11.5V15' }))
+      h('mask', {
+        id: 'dsh-comfyui-badge',
+        maskUnits: 'userSpaceOnUse',
+        x: 0,
+        y: 0,
+        width: 520,
+        height: 520,
+      },
+      h('path', { d: COMFY_BADGE, fill: '#fff' }),
+      h('path', { d: COMFY_MARK, fill: '#000' }),
+      ),
+      h('path', { d: COMFY_BADGE, fill: 'currentColor', mask: 'url(#dsh-comfyui-badge)' }),
+      )
     }
 
     /**
      * The session's composer. A line is admitted to the desk session, not answered here.
-     * @param {{ t: (key: string) => string, sessionId: string | null }} props - locale and the desk session.
+     * @param {{ t: (key: string) => string, sessionId: string | null, onSession: (sessionId: string) => void }} props - locale, the desk session, and how a replacement is adopted.
      * @returns {any} the column.
      */
-    function AssistantDock({ t, sessionId }) {
+    function AssistantDock({ t, sessionId, onSession }) {
       const [rows, setRows] = useState([])
       const [pending, setPending] = useState(null)
       const [draft, setDraft] = useState('')
@@ -2911,6 +2950,9 @@ window.__ModuleLoader__.load({
         if (response === null) return
         const body = await response.json().catch(() => null)
         if (readAt.current !== stamp) return
+        if (body?.ok === true && typeof body.sessionId === 'string' && body.sessionId !== sessionId) {
+          onSession(body.sessionId)
+        }
         if (body?.ok === true && Array.isArray(body.rows)) {
           setRows(body.rows)
           setPending(current => {
@@ -2918,7 +2960,7 @@ window.__ModuleLoader__.load({
             return body.rows.some(row => row.role === 'user' && row.text === current.text) ? null : current
           })
         }
-      }, [])
+      }, [onSession, sessionId])
       useEffect(() => {
         if (sessionId === null || !open) return undefined
         void load()
@@ -2977,10 +3019,37 @@ window.__ModuleLoader__.load({
           h('strong', null, t('assistant')),
           h('button', {
             type: 'button',
+            className: 'dsh-comfyui-dock-new',
+            disabled: busy,
+            onClick: () => {
+              if (busy) return
+              setBusy(true)
+              setError(null)
+              fetch(DESK_URL, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ action: 'new' }),
+              })
+                .then(response => response.json())
+                .then(body => {
+                  if (body?.ok === true && typeof body.sessionId === 'string') {
+                    setRows([])
+                    setPending(null)
+                    onSession(body.sessionId)
+                  } else {
+                    setError(typeof body?.error === 'string' && body.error.length > 0 ? body.error : t('assistantFailed'))
+                  }
+                })
+                .catch(() => setError(t('assistantFailed')))
+                .finally(() => setBusy(false))
+            },
+          }, t('assistantNew')),
+          h('button', {
+            type: 'button',
             className: 'dsh-comfyui-dock-toggle',
             'aria-label': t('assistant'),
             onClick: () => setOpen(value => !value),
-          }, open ? '\u203a' : '\u2039'),
+          }, open ? '\u203a' : t('assistant')),
         ),
         open ? h('div', { className: 'dsh-comfyui-dock-log', ref: logRef },
           shown.length === 0
@@ -3043,8 +3112,8 @@ window.__ModuleLoader__.load({
             h('style', null, CSS),
             h('div', { className: 'dsh-comfyui-notice' }, failed ?? deskT('loading')),
           )
-          : h(ComfyPanel, { sessionId, t: deskT }),
-        h(AssistantDock, { t: deskT, sessionId }),
+          : h(ComfyPanel, { key: sessionId, sessionId, t: deskT }),
+        h(AssistantDock, { t: deskT, sessionId, onSession: setSessionId }),
       )
     }
 

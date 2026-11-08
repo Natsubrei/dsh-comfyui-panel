@@ -10,7 +10,7 @@ npm test
 npm run typecheck
 ```
 
-`npm test` covers the proxy, the bridges, editor operations, packaging, and repository hygiene. It does not need ComfyUI or a running DSH.
+`npm test` runs four layers in order: unit, module, the composed plugin, then the release checks. The file list is in `test/run.mjs`. It does not need ComfyUI or a running DSH.
 
 Two checks stay local, and continuous integration skips both:
 

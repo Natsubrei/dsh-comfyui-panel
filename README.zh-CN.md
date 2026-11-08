@@ -38,10 +38,10 @@ https://raw.githubusercontent.com/Natsubrei/dsh-comfyui-panel/main/market/index.
 1. 点左侧栏的 **ComfyUI**。编辑器占满中间主区，右侧是助手。
 2. 右侧一列把话发进这一页的会话。模型随后用下表里的工具改当前画布。
 3. 服务地址保持 `http://127.0.0.1:8188`，或在[配置](#配置)中改成别的地址。
-4. 如果还没有服务，打开页面里的 **Server**，选中含 `main.py` 的目录，按 **Start**。常见位置会自动识别。**Start with DSH** 会被记住。已经在运行的服务会被接管，不会再启动一个。
-5. 等编辑器显示已连接。在右侧说话。模型使用这一页的工具，包括发起运行。离开这一页后，需要编辑器在场的工具会失败。
+4. 如果还没有服务，点画布左下角的状态芯片。含 `main.py` 的目录在 **服务设置** 里选，**Start** 在芯片上。常见位置会自动识别。**Start with DSH** 会被记住。已经在运行的服务会被接管，不会再启动一个。
+5. 等芯片显示 **Running**。在右侧说话。模型使用这一页的工具，包括发起运行。离开这一页后，需要编辑器在场的工具会失败。**新建** 会让这一页换一个会话，原来的会话和记录都还在。收起右栏后，画布右缘有一条标签，点它展开。
 
-还没有 ComfyUI：运行 `node test/mock-comfyui.mjs`，打开标签，等待 **Connected**。mock 是单节点图，`comfyui_run` 返回 `p1`。在真正的 ComfyUI 使用 8188 端口前，先停掉 mock。
+还没有 ComfyUI：运行 `node test/mock-comfyui.mjs`，在左侧栏打开 **ComfyUI**，等芯片显示 **Running**。mock 是单节点图，`comfyui_run` 返回 `p1`。在真正的 ComfyUI 使用 8188 端口前，先停掉 mock。
 
 贡献者运行 `npm test` 和 `npm run typecheck`。覆盖范围见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
@@ -56,9 +56,9 @@ Panel 列的 **需打开** 表示该会话必须打开面板，**可关闭** 表
 | 能力 | 你得到什么 |
 | --- | --- |
 | 编辑器 | 在 `/comfyui/` 提供真实的 ComfyUI 前端，走已认证的 HTTP 和 WebSocket。同源 iframe 保留第三方节点的界面。面板不使用 DSH 主题变量。自定义节点界面以 DSH 页面的身份运行，见 [SECURITY.md](SECURITY.md)。 |
-| 桥接 | `window.comfyAPI.app.app` 出现后，标签可见时大约每秒同步一次：UI 工作流、只读投影，以及 `graphToPrompt()` 给出的 API 提示。UI 工作流是权威图。编辑器事件（`execution_start`、`executing`、`progress`、`executed`、成功、错误、中断和队列状态）经编辑器自己的 socket 转发，运行就发往这个 socket。面板不再单独开一个 ComfyUI socket。 |
+| 桥接 | `window.comfyAPI.app.app` 出现后，页面打开时大约每秒同步一次：UI 工作流、只读投影，以及 `graphToPrompt()` 给出的 API 提示。UI 工作流是权威图。编辑器事件（`execution_start`、`executing`、`progress`、`executed`、成功、错误、中断和队列状态）经编辑器自己的 socket 转发，运行就发往这个 socket。面板不再单独开一个 ComfyUI socket。 |
 | 摘要行 | 一行，例如 `ComfyUI: rev 14 · "deepseek-chan-emoji" · 9 nodes · 9 links · selected 7 · panel open.`。只有图有名字时才出现名称。打开多个标签时附加数量和当前标签。缩放、平移和改变面板大小不会增加 `rev`。 |
-| 名称 | 保存或加载具名工作流会给会话和顶栏命名。当 ComfyUI 用户数据中存在 `<name>.json` 时，编辑器标签也改成同名。 |
+| 名称 | 保存或加载具名工作流会给会话命名，摘要行里也会出现这个名字。当 ComfyUI 用户数据中存在 `<name>.json` 时，编辑器标签也改成同名。 |
 | 存储 | 域 `dsh_comfyui`。Host 重启不丢图。记录为 `sessionId -> { workflow, prompt, semantic, revision, name, nameSource }`，保留最近更新的 20 个会话。`nameSource` 是 `file` 或 `tool`。模型看到的是投影和它自己的编辑结果。存储失败时退回内存，不阻塞桥接。具名工作流放在 `workflows` 表。 |
 | 进程 | **Server** 启动、停止和重启 ComfyUI。命令由检出目录推导（Unix 上是 `.venv/bin/python`，Windows 上是 `.venv/Scripts/python.exe`，否则用 `python3` 或 `python`），参数来自上游端口，不接受任意命令。目录和 **Start with DSH** 存在 `dsh_comfyui` 中，不写入 DSH profile。 |
 
@@ -111,7 +111,7 @@ Panel 列的 **需打开** 表示该会话必须打开面板，**可关闭** 表
 ## 限制
 
 - ComfyUI 用户工作流通过 `/userdata` 从 `workflows/` 读取，每次加载一个 JSON 文件。名称是 `workflows/` 下的路径去掉 `.json`，所以区分大小写，子目录会留在名称里。只列出 `.json` 文件。插件从不写入或移动这些文件。加载一个只改变面板画布。
-- 预览、逐节点进度、耗时和顶栏的 Cancel 只在面板挂载期间存在。Queue 按钮发起的运行从第一个执行事件起获得 `hostRun` 跟踪。面板挂载前就开始的运行没有 `hostRun`，也没有步骤进度。Host 在 30 分钟后停止跟踪并报告 `lost`，含义是没观察到结束，不是运行失败。
+- 预览、逐节点进度、耗时和芯片上的 Cancel 只在面板挂载期间存在。Queue 按钮发起的运行从第一个执行事件起获得 `hostRun` 跟踪。面板挂载前就开始的运行没有 `hostRun`，也没有步骤进度。Host 在 30 分钟后停止跟踪并报告 `lost`，含义是没观察到结束，不是运行失败。
 - 插件只是接管的 ComfyUI 在插件卸载后继续运行。那个进程不是插件启动的，重载后插件也分不清它是自己的幸存进程还是你手动启动的。要关掉它，先在面板里停止。插件自己启动的子进程会在卸载时停止。
 - 进程管理器分不清卡死的 ComfyUI 和长时间生成、暂时不回应 `/system_stats` 的 ComfyUI。健康重启要按工作负载调整。
 

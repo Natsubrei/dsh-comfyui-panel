@@ -9,9 +9,7 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { apply, applySeedControls, collectOutputImages, outputImageMediaType, redactCookieHeader, redactRawHeaderPairs, takeCommand } from '../index.js'
-import { createCommandChannel } from '../commands.js'
-import { createSessionStore } from '../session-store.js'
+import { apply, applySeedControls, collectOutputImages, outputImageMediaType, redactCookieHeader, redactRawHeaderPairs } from '../index.js'
 import { createSupervisor } from '../supervisor.js'
 import { stopsOnUnload } from '../service.js'
 
@@ -1664,166 +1662,6 @@ assert.equal(edited.links, 1)
   assert.equal((await revived.json()).command, null, 'the abandoned edit must not reach the next agent')
 }
 
-// A command whose tool call has already failed must not be replayed when the
-// panel comes back later: the graph would change and no tool call would own it.
-{
-  const now = Date.now()
-  const queue = [{ id: 'stale', at: now - 120_000 }, { id: 'fresh', at: now - 5_000 }]
-  assert.equal(takeCommand(queue, now).id, 'fresh', 'the expired command is skipped, not returned after it')
-  assert.equal(queue.length, 0, 'skipping discards it: a later poll must not revive it')
-  assert.equal(takeCommand([{ id: 'stale', at: now - 61_000 }], now), null)
-  assert.equal(takeCommand([], now), null)
-}
-
-// The session store and the command channel are the two modules behind
-// `apply()`; their rules are checkable without a Host. A session's memory ends
-// in one release, and sync keeps the revision meaning "a change was synced".
-{
-  const written = []
-  const channels = createCommandChannel()
-  const store = createSessionStore({
-    logger: { warn() {} },
-    releaseCommands: sessionId => channels.release(sessionId),
-    persist: (sessionId, state) => { written.push({ sessionId, revision: state.revision }) },
-  })
-  const graph = { nodes: [{ id: 1, type: 'KSampler' }], links: [] }
-  assert.equal(store.get('s-store'), undefined, 'an unknown session has no record')
-  const synced = store.sync('s-store', {
-    revision: 3,
-    name: 'lifecycle',
-    workflow: { ...graph, extra: { ds: { scale: 0.5, offset: [12, 34] } } },
-    prompt: { 1: { class_type: 'KSampler', inputs: {} } },
-    semantic: { nodes: [], linkCount: 0, selection: [] },
-    clientId: '0f3c2b1a9d8e7f60',
-  })
-  assert.equal(synced.ok, true)
-  const state = store.get('s-store')
-  assert.equal(state.revision, 3)
-  assert.equal(state.name, 'lifecycle')
-  assert.equal(state.clientId, '0f3c2b1a9d8e7f60')
-  assert.equal('ds' in (state.workflow.extra ?? {}), false, 'view state is stripped before the comparison')
-  assert.equal(state.semantic, null, 'an empty projection over a non-empty graph is dropped')
-  assert.equal(written.length, 0, 'persistence is debounced, not immediate')
-  // The same content at a higher counter is not an edit.
-  const resync = { revision: 9, workflow: graph, prompt: { 1: { class_type: 'KSampler', inputs: {} } }, semantic: { nodes: [], linkCount: 0, selection: [] } }
-  const idle = store.sync('s-store', resync)
-  assert.equal(idle.ok && idle.state.revision, 3, 'an idle re-sync keeps the revision')
-  const grew = store.sync('s-store', { revision: 9, workflow: { nodes: [{ id: 1, type: 'KSampler' }, { id: 2, type: 'UNETLoader' }], links: [] } })
-  assert.equal(grew.ok && grew.state.revision, 9, 'an edit moves the revision forward')
-  store.rename('s-store', 'renamed')
-  assert.equal(store.get('s-store').name, 'renamed')
-  assert.equal(store.get('s-store').revision, 9, 'the name is metadata, not a graph edit')
-  // A refused body leaves the record untouched.
-  assert.deepEqual(store.sync('s-store', { workflow: null }), { ok: false, error: 'workflow must be an object' })
-  assert.deepEqual(
-    store.sync('s-store', { workflow: { nodes: [] }, name: '' }),
-    { ok: false, error: 'name must be 1-80 characters without control characters' },
-  )
-  assert.equal(store.get('s-store').name, 'renamed', 'a refused sync does not consume the name')
-
-  store.recordEvent('s-store', {
-    kind: 'execution_start', promptId: 'p7', node: null, value: null, max: null, queueRemaining: null, error: null, at: Date.now(),
-  })
-  assert.equal(store.latestRun('s-store').run.status, 'running')
-  assert.equal(store.runFor('s-store', 'p7').status, 'running')
-  assert.equal(store.runFor('s-store', 'p-missing'), null)
-  // A run the Host tracked lives beside the panel's record for the same
-  // session. The panel's run stays the one latestRun reports while it exists;
-  // the host record is still addressable and is what latestRun falls back to
-  // when no panel event ever arrived.
-  store.mergeRun('s-store', {
-    promptId: 'p-host', status: 'queued', startedAt: null, updatedAt: Date.now(), node: null, value: null, max: null, error: null, outputs: null,
-  })
-  assert.equal(store.latestRun('s-store').run.promptId, 'p7', 'a panel-reported run stays the visible one')
-  assert.equal(store.runFor('s-store', 'p-host').status, 'queued')
-  store.mergeRun('s-store', {
-    promptId: 'p-host', status: 'completed', startedAt: null, updatedAt: Date.now(), node: null, value: null, max: null, error: null, outputs: { 7: { images: [{ filename: 'p-host.png' }] } },
-  })
-  assert.equal(store.latestRun('s-store').run.promptId, 'p7')
-  assert.equal(store.runFor('s-store', 'p-host').outputs[7].images[0].filename, 'p-host.png')
-  assert.equal(store.runFor('s-store', 'p7').outputs, undefined, 'a panel run is not given host outputs')
-  const cursor = store.seedCursor('s-store')
-  cursor.set('8', { from: 5, used: 6 })
-  store.commitSeedCursor('s-store', cursor)
-  assert.equal(store.seedCursor('s-store').get('8').used, 6)
-  store.trackTools('s-store', () => {})
-  assert.equal(store.hasTools('s-store'), true)
-
-  // A tool call parked on the old agent must not outlive it, and the edit it
-  // queued must never reach the next panel.
-  const parked = channels.ask('s-store', { id: 'cmd-1', operations: [] }, { timeoutMs: 5000, what: 'edit' })
-  assert.equal((await channels.poll('s-store', { timeoutMs: 1000 })).body.command.id, 'cmd-1')
-  store.release('s-store')
-  await assert.rejects(parked, /session closed/)
-  assert.ok(store.get('s-store'), 'the canvas survives: a resumed agent still reads it')
-  assert.equal(store.latestRun('s-store').run, null, 'the run record goes with the agent')
-  assert.equal(store.runFor('s-store', 'p-host'), null, 'a tracked run goes with the agent too')
-  assert.equal(store.seedCursor('s-store').size, 0, 'the seed walk goes with the agent')
-  assert.equal(store.hasTools('s-store'), false)
-  assert.equal(channels.connected('s-store'), false)
-
-  await delay(1600)
-  assert.deepEqual(written.at(-1), { sessionId: 's-store', revision: 9 }, 'the debounced write carries the latest revision')
-  store.close()
-}
-
-// The command channel on its own: ask, poll, answer; an unanswered command
-// expires with its tool call; a poll parked on a session that goes away comes
-// back empty so the panel's loop can re-arm under the next agent.
-{
-  const channels = createCommandChannel()
-  const operations = [{ op: 'remove_node', id: 1 }]
-  const awaited = channels.ask('s-cmd', { id: 'cmd-2', operations }, { timeoutMs: 5000, what: 'edit' })
-  const polled = await channels.poll('s-cmd', { timeoutMs: 1000 })
-  assert.equal(polled.status, 200)
-  assert.deepEqual(polled.body.command, { id: 'cmd-2', operations })
-  assert.equal(channels.connected('s-cmd'), true)
-  assert.equal(channels.answer('cmd-2', { ok: true, value: { nodes: 2, links: 1 } }), true)
-  assert.deepEqual(await awaited, { ok: true, value: { nodes: 2, links: 1 }, error: null })
-  assert.equal(channels.answer('cmd-2', { ok: true }), false, 'a command is answered once')
-
-  const expired = channels.ask('s-cmd', { id: 'cmd-3', at: Date.now() }, { timeoutMs: 20, what: 'screenshot' })
-  await assert.rejects(expired, /did not answer the screenshot in time/)
-  assert.equal(
-    (await channels.poll('s-cmd', { timeoutMs: 1000 })).body.command,
-    null,
-    'an expired command is never handed to a later poll',
-  )
-
-  const waiting = channels.poll('s-gone', { timeoutMs: 5000 })
-  channels.release('s-gone')
-  assert.deepEqual(await waiting, { body: { ok: true, command: null }, status: 200 })
-  assert.equal(channels.connected('s-gone'), false)
-}
-
-// A name is only as good as the file behind it. The panel reports the file its
-// editor holds on every sync, so a name that came from a file is dropped when
-// the editor stops holding it — the frontend fell back to a default graph —
-// while a name a tool gave the canvas survives the same report.
-{
-  const store = createSessionStore({
-    logger: { warn() {} },
-    releaseCommands: () => {},
-    persist: () => {},
-  })
-  const graph = { nodes: [{ id: 1, type: 'KSampler' }], links: [] }
-  store.sync('s-file', { revision: 1, file: 'emoji', workflow: graph })
-  assert.equal(store.get('s-file').name, 'emoji')
-  assert.equal(store.get('s-file').nameSource, 'file')
-  store.sync('s-file', { revision: 2, file: null, workflow: { nodes: [{ id: 2, type: 'UNETLoader' }], links: [] } })
-  assert.equal(store.get('s-file').name, null, 'the name goes when the editor holds no file')
-  store.sync('s-file', { revision: 3, file: null, workflow: graph })
-  store.rename('s-file', 'slot')
-  store.sync('s-file', { revision: 4, file: null, workflow: graph })
-  assert.equal(store.get('s-file').name, 'slot', 'a name a tool gave the canvas survives a file-less editor')
-  assert.equal(store.get('s-file').nameSource, 'tool')
-  assert.deepEqual(
-    store.sync('s-file', { workflow: graph, file: '' }),
-    { ok: false, error: 'file must be 1-80 characters without control characters' },
-  )
-  store.close()
-}
-
 // An older panel (or a record persisted before projections) still reads:
 // widgets are positional, but links resolve to their source.
 const legacyPost = await host.fetches.get('/api/comfyui/state').fetch(new Request(
@@ -1891,8 +1729,12 @@ assert.throws(
 
 const deskPrompts = []
 const deskRenames = []
+let deskCreated = 0
 host.services.set('sessionController', {
-  async create() { return { sessionId: 'desk-session' } },
+  async create() {
+    deskCreated += 1
+    return { sessionId: deskCreated === 1 ? 'desk-session' : `desk-session-${deskCreated}` }
+  },
   async resolveAgent() { return { agent: { id: 'desk-session' } } },
   async rename(request) {
     deskRenames.push(request)
@@ -1953,6 +1795,26 @@ const transcript = await host.fetches.get('/api/comfyui/desk/transcript').fetch(
 const transcriptBody = await transcript.json()
 assert.equal(transcript.status, 200)
 assert.deepEqual(transcriptBody.rows, [{ id: '9', role: 'assistant', text: 'Steps are 20.' }])
+const deskUnknown = await host.fetches.get('/api/comfyui/desk').fetch(new Request('http://127.0.0.1/api/comfyui/desk', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ action: 'other' }),
+}))
+assert.equal(deskUnknown.status, 400)
+host.services.set('workspaceRegistry', { archivedSessionIds: ['desk-session'] })
+const deskArchived = await (await host.fetches.get('/api/comfyui/desk').fetch(new Request('http://127.0.0.1/api/comfyui/desk'))).json()
+assert.equal(deskArchived.sessionId, 'desk-session-2')
+assert.equal(storage.state.desk.get('session').sessionId, 'desk-session-2')
+host.services.set('workspaceRegistry', { archivedSessionIds: [] })
+const deskNew = await host.fetches.get('/api/comfyui/desk').fetch(new Request('http://127.0.0.1/api/comfyui/desk', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ action: 'new' }),
+}))
+const deskNewBody = await deskNew.json()
+assert.equal(deskNew.status, 200)
+assert.equal(deskNewBody.sessionId, 'desk-session-3')
+assert.equal(storage.state.desk.get('session').sessionId, 'desk-session-3')
 
 const serviceGet = await host.fetches.get('/api/comfyui/service').fetch(new Request('http://127.0.0.1/api/comfyui/service'))
 const initialService = await serviceGet.json()

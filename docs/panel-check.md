@@ -43,7 +43,7 @@ covers both.
 
 What the headless check cannot see, in order:
 
-1. Hard-refresh the GUI, open the **ComfyUI** tab, wait for **Connected**.
+1. Hard-refresh the GUI, open **ComfyUI** in the left sidebar, and wait until the chip says **Running**.
 2. The header digest should read `ComfyUI: rev … · "name" · N nodes · … ·
    panel open.` (the quoted part appears only when the workflow has a name).
 3. The bar is a chip over the bottom-left of the canvas: a status dot and its
@@ -58,7 +58,7 @@ What the headless check cannot see, in order:
    server shows `ComfyUI is not running` with Start (plus Server settings), a
    starting one shows `Starting ComfyUI… Ns`, and a frontend that never hands
    over `comfyAPI.app` within 45 s shows `The editor did not load` with Reload.
-   (The stopped state needs a manual run: stop the server from the bar and look.)
+   (The stopped state needs a manual run: stop the server from the chip and look.)
 5. Zoom, pan, and resize the panel; `rev` must not change. Edit a widget in
    the editor or let the model do it; the revision goes up by exactly one and a
    short toast names what changed.

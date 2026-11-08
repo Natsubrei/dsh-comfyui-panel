@@ -38,10 +38,10 @@ Restart DSH if it was already running. Hard-refresh the browser after a bundle c
 1. Click **ComfyUI** in the left sidebar. The editor fills the main column. An assistant sits on the right.
 2. The column on the right sends into that page's session. The model then uses the tools in the table below on the open canvas.
 3. Leave the server at `http://127.0.0.1:8188`, or set another address under [Configuration](#configuration).
-4. If nothing is running, open **Server** on the page, choose the folder that contains `main.py`, and press **Start**. A common location is detected. **Start with DSH** is remembered. A server that is already running is adopted, not started twice.
-5. Wait until the editor says connected. Ask in the right column. The model uses this page's tools, including a run. A tool that needs the editor fails when you leave the page.
+4. If nothing is running, open the chip at the bottom-left of the canvas. **Server settings** is where the folder that contains `main.py` is chosen; **Start** is on the chip. A common location is detected. **Start with DSH** is remembered. A server that is already running is adopted, not started twice.
+5. Wait until the chip says **Running**. Ask in the right column. The model uses this page's tools, including a run. A tool that needs the editor fails when you leave the page. **New** starts another session for this page; the previous one keeps its history. Collapsing the column leaves a tab on the right edge that opens it again.
 
-No ComfyUI yet: `node test/mock-comfyui.mjs`, open the tab, and wait for **Connected**. The mock is a one-node graph, and `comfyui_run` returns `p1`. Stop the mock before a real ComfyUI uses port 8188.
+No ComfyUI yet: `node test/mock-comfyui.mjs`, open **ComfyUI** in the sidebar, and wait until the chip says **Running**. The mock is a one-node graph, and `comfyui_run` returns `p1`. Stop the mock before a real ComfyUI uses port 8188.
 
 Contributors run `npm test` and `npm run typecheck`. What those cover is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -56,9 +56,9 @@ Tools exist only on a session that has synced a workflow. After a Host restart, 
 | Capability | What you get |
 | --- | --- |
 | Editor | The real ComfyUI frontend at `/comfyui/`, over authenticated HTTP and WebSocket. The same-origin iframe keeps third-party node UIs. It does not use DSH theme tokens. A custom node UI runs as the DSH page. See [SECURITY.md](SECURITY.md). |
-| Bridge | Once `window.comfyAPI.app.app` exists, the panel syncs about once a second while the tab is visible. It sends the UI workflow, a read-only projection, and the API prompt from `graphToPrompt()`. The UI workflow is canonical. Editor events (`execution_start`, `executing`, `progress`, `executed`, success, error, interrupted, and queue status) are relayed on the editor's own socket. That socket is the one a run is addressed to. The panel does not open a second ComfyUI socket. |
+| Bridge | Once `window.comfyAPI.app.app` exists, the panel syncs about once a second while the page is open. It sends the UI workflow, a read-only projection, and the API prompt from `graphToPrompt()`. The UI workflow is canonical. Editor events (`execution_start`, `executing`, `progress`, `executed`, success, error, interrupted, and queue status) are relayed on the editor's own socket. That socket is the one a run is addressed to. The panel does not open a second ComfyUI socket. |
 | Digest | One line, for example `ComfyUI: rev 14 · "deepseek-chan-emoji" · 9 nodes · 9 links · selected 7 · panel open.` The name appears only when the graph has one. More than one open tab adds the count and the active tab. Zoom, pan, and resize do not advance `rev`. |
-| Name | Saving or loading a named workflow names the session and the bar. When `<name>.json` exists in ComfyUI's user data, the editor tab is renamed to match. |
+| Name | Saving or loading a named workflow names the session, and the digest line includes that name. When `<name>.json` exists in ComfyUI's user data, the editor tab is renamed to match. |
 | Storage | Domain `dsh_comfyui`. A Host restart keeps the graph. The record is `sessionId -> { workflow, prompt, semantic, revision, name, nameSource }` for the 20 most recently updated sessions. `nameSource` is `file` or `tool`. The model sees the projection and its own edit results. A storage failure stays in memory and does not block the bridge. Named workflows live in the `workflows` table. |
 | Process | **Server** starts, stops, and restarts ComfyUI. The command comes from the checkout (`.venv/bin/python` on Unix, `.venv/Scripts/python.exe` on Windows, otherwise `python3` or `python`) and the upstream port. It is not an arbitrary command. The directory and **Start with DSH** are stored in `dsh_comfyui`, not in the DSH profile. |
 
@@ -111,7 +111,7 @@ Starting ComfyUI from the panel needs no profile configuration. A `supervise` bl
 ## Limits
 
 - ComfyUI user workflows are read from `workflows/` through `/userdata`, one JSON file per load. A name is the path below `workflows/` without `.json`, so it is case-sensitive and a subfolder stays in the name. Only `.json` files are listed. The plugin never writes or moves those files. Loading one changes the panel canvas only.
-- Previews, per-node progress, elapsed time, and the bar's Cancel exist only while the panel is mounted. A run the Queue button started gets a `hostRun` watch from its first execution event. A run that started before this panel attached has no `hostRun` and no step progress. The Host stops watching after 30 minutes and reports `lost`, which means the end was not observed, not that the run failed.
+- Previews, per-node progress, elapsed time, and the chip's Cancel exist only while the panel is mounted. A run the Queue button started gets a `hostRun` watch from its first execution event. A run that started before this panel attached has no `hostRun` and no step progress. The Host stops watching after 30 minutes and reports `lost`, which means the end was not observed, not that the run failed.
 - A ComfyUI the plugin only adopted keeps running when the plugin unloads. The plugin did not start that process, and after a reload it cannot tell that process from one you started by hand. Stop it from the panel first if you want it gone. A child the plugin spawned is stopped on unload.
 - The process manager cannot tell a hung ComfyUI from a long generation that stops answering `/system_stats`. Tune health restarts per workload.
 

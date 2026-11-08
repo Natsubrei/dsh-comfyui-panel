@@ -24,23 +24,15 @@ check says so when it sees a URL without `?token=…`.
 
 ## What it checks
 
-| Check | Why it exists |
-| --- | --- |
-| panel mounts from the left sidebar | the ComfyUI button opens the main page |
-| editor boots | `/comfyui/` serves a frontend that exposes `comfyAPI.app.app` |
-| bar publishes counters | the bar reports nodes, links, revision, and last sync |
-| server state is known | the lifecycle chip resolved to a real state |
-| workflow reaches the host | a state POST was accepted |
-| panel reports the editor client id | the socket id a run is addressed to actually reached the Host |
-| counters match the editor | the projection describes the graph on screen |
-| zooming does not count as an edit | the viewport must not bump the revision |
-| a widget edit bumps the revision once | real edits still do, exactly once |
-| editor events reach the bar | execution events relayed from the editor's bus actually arrive |
-| preview reaches the bar | a `b_preview` Blob becomes a thumbnail with an object URL |
-| per-node progress reaches the bar | `progress_state` reduces to the running node and its steps |
-| Cancel shows progress and recovers | the bar's Cancel disables as "Cancelling…" and re-enables after the 10 s fallback when no interruption event arrives |
-| Fit frames the graph | the Fit button goes through ComfyUI's own command |
-| no errors from the panel | no exception or unnamed console error during the run |
+One browser, three layers, printed in that order. A later layer still runs when an earlier check fails, except when the editor never boots or the counters never appear: the rest of the editor has nothing to read.
+
+**page.** The shell of this plugin's page. The sidebar entry opens it, the right column is there, collapsing it leaves a tab, hovering that tab does not hide it, and the tab opens the column again.
+
+**editor.** The canvas, once the page is up. The editor boots, the chip knows the server, a sync is accepted, the socket id reached the Host, the counters match the graph, open tabs are reported, zooming is not an edit, a widget edit bumps the revision once, bus events reach the bar (progress, preview, per-node progress, Cancel), and Fit frames the graph.
+
+**desk.** The column's session. The page owns one session id, the transcript route answers, and New points the page at a different session. New runs last because it remounts the editor.
+
+The run then records whether the panel itself logged an error.
 
 Screenshots of each state land in `.ui-out/` together with `report.txt`; the
 exit code is non-zero when a check fails.
@@ -83,6 +75,9 @@ is useful for inspecting a session you prepared yourself.
 The check does not queue a run. `comfyui_run` needs a model tool call, and the
 panel's run events follow the socket that queued the prompt, so a run is checked
 by asking the model and watching `comfyui_progress`.
+
+The desk layer clicks New. That points the live page at a new session; the
+previous one keeps its history, and the open canvas syncs under the new id.
 
 ## Requirements and quirks
 

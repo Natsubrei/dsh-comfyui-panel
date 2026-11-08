@@ -411,9 +411,19 @@ export class Browser {
    * @param {number} y - CSS pixels.
    * @returns {Promise<void>} resolves after the release.
    */
+  /**
+   * Move the pointer without pressing, so a `:hover` rule actually applies.
+   * @param {number} x - CSS pixels.
+   * @param {number} y - CSS pixels.
+   * @returns {Promise<void>} resolves after the move.
+   */
+  async move(x, y) {
+    await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+  }
+
   async clickAt(x, y) {
     const base = { x, y, button: 'left', clickCount: 1, buttons: 1 }
-    await this.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+    await this.move(x, y)
     await this.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...base })
     await this.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...base, buttons: 0 })
   }
