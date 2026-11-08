@@ -24,6 +24,7 @@
     "storage.js",
     "service.js",
     "supervisor.js",
+    "desk.js",
     "test/**/*.mjs",
     "scripts/**/*.mjs"
   ]

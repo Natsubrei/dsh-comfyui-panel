@@ -11,6 +11,12 @@ the version bump.
 
 ## [Unreleased]
 
+### Changed
+
+- The ComfyUI page is a left-sidebar panel. It keeps one real session, and the
+  column on the right sends into that session so the model can use the existing
+  tools on the open canvas.
+
 ## [0.9.1] - 2026-11-04
 
 ### Added

@@ -9,7 +9,7 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
 ## Where things are
 
 - `index.js` — Host half: authenticated `/comfyui` HTTP + WebSocket proxy, the
-  `/api/comfyui/{state,events,commands/poll,commands/result,service}` bridges,
+  `/api/comfyui/{state,events,commands/poll,commands/result,service,desk,desk/chat}` bridges,
   per-session tools, and the runtime-context digest. Session facts and the
   command channel live in the two modules below; this file wires them to routes
   and tools.
@@ -24,7 +24,7 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
   runtime.
 - `projection.js` — semantic projection and digest line used by the Host.
 - `storage.js` — the `dsh_comfyui` domain spec (`sessions`, `workflows`,
-  `settings`). Adding a table is compatible, and so is an optional field that a
+  `settings`, `desk`). Adding a table is compatible, and so is an optional field that a
   reader can treat as absent (`sessions.name` is one); changing or dropping an
   existing field needs a version bump and a migration (the domain layer has no
   migrations).

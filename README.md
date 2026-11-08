@@ -5,7 +5,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
-ComfyUI inside the DeepSeek Harness Web UI: the real editor in a right-side panel, a workflow the model can read and edit, and runs the model can start.
+ComfyUI inside the DeepSeek Harness Web UI: the real editor as its own page. The column on the right talks to the session that owns the canvas.
 
 ## Contents
 
@@ -35,10 +35,11 @@ Restart DSH if it was already running. Hard-refresh the browser after a bundle c
 
 ## Use
 
-1. Open the **ComfyUI** tab in the right sidebar. The tab belongs to this session and can go full screen.
-2. Leave the server at `http://127.0.0.1:8188`, or set another address under [Configuration](#configuration).
-3. If nothing is running, open **Server** in the panel, choose the folder that contains `main.py`, and press **Start**. A common location is detected. **Start with DSH** is remembered. A server that is already running is adopted, not started twice.
-4. Wait until the tab is connected. This session then gets the tools in the table below. Other sessions do not.
+1. Click **ComfyUI** in the left sidebar. The editor fills the main column. An assistant sits on the right.
+2. The column on the right sends into that page's session. The model then uses the tools in the table below on the open canvas.
+3. Leave the server at `http://127.0.0.1:8188`, or set another address under [Configuration](#configuration).
+4. If nothing is running, open **Server** on the page, choose the folder that contains `main.py`, and press **Start**. A common location is detected. **Start with DSH** is remembered. A server that is already running is adopted, not started twice.
+5. Wait until the editor says connected. Ask in the right column. The model uses this page's tools, including a run. A tool that needs the editor fails when you leave the page.
 
 No ComfyUI yet: `node test/mock-comfyui.mjs`, open the tab, and wait for **Connected**. The mock is a one-node graph, and `comfyui_run` returns `p1`. Stop the mock before a real ComfyUI uses port 8188.
 

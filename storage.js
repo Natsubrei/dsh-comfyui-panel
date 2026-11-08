@@ -20,6 +20,8 @@ const TABLE = 'sessions'
 const WORKFLOWS_TABLE = 'workflows'
 const SETTINGS_TABLE = 'settings'
 const SETTINGS_KEY = 'service'
+const DESK_TABLE = 'desk'
+const DESK_KEY = 'session'
 const DOMAIN = 'dsh_comfyui'
 const MAX_RECORDS = 20
 const MAX_PENDING = 20
@@ -91,6 +93,15 @@ function parseSettings(value) {
   return value
 }
 
+/** Validate the one session that owns the canvas. */
+function parseDeskSession(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) invalid('desk session must be an object')
+  if (typeof value.sessionId !== 'string' || value.sessionId.length === 0 || value.sessionId.length > 200) {
+    invalid('desk session needs a sessionId')
+  }
+  return value
+}
+
 /** The domain declaration; `parse` is the only schema method the domain layer uses at open. */
 export const WORKFLOW_DOMAIN = {
   name: DOMAIN,
@@ -99,6 +110,7 @@ export const WORKFLOW_DOMAIN = {
     [TABLE]: { valueSchema: { parse: parseRecord } },
     [WORKFLOWS_TABLE]: { valueSchema: { parse: parseNamedWorkflow } },
     [SETTINGS_TABLE]: { valueSchema: { parse: parseSettings } },
+    [DESK_TABLE]: { valueSchema: { parse: parseDeskSession } },
   },
 }
 
@@ -138,6 +150,8 @@ export function createWorkflowStore(ctx, logger) {
   const pendingWorkflows = new Map()
   /** Service settings written before the domain finished opening. */
   let pendingSettings = null
+  /** Desk session id written before the domain finished opening. */
+  let pendingDesk = null
   let domain = null
   let backend = 'memory'
   let reason = 'storageDomain is not mounted'
@@ -166,6 +180,12 @@ export function createWorkflowStore(ctx, logger) {
           logger?.warn(`dsh-comfyui: could not persist service settings: ${String(error)}`)
         })
         pendingSettings = null
+      }
+      if (pendingDesk !== null) {
+        await opened.table(DESK_TABLE).put(DESK_KEY, { sessionId: pendingDesk }).catch(error => {
+          logger?.warn(`dsh-comfyui: could not persist the desk session: ${String(error)}`)
+        })
+        pendingDesk = null
       }
       return {
         sessions: [...opened.table(TABLE).entries()].map(([, record]) => record),
@@ -208,6 +228,29 @@ export function createWorkflowStore(ctx, logger) {
         if (oldestKey === null) break
         await table.delete(oldestKey)
       }
+    },
+    /**
+     * The session that owns the canvas, or null before the first visit.
+     * @returns {Promise<string | null>} the stored id.
+     */
+    async deskSession() {
+      if (pendingDesk !== null) return pendingDesk
+      await ready
+      if (domain === null) return null
+      const record = domain.table(DESK_TABLE).get(DESK_KEY)
+      return typeof record?.sessionId === 'string' ? record.sessionId : null
+    },
+    /**
+     * Remember the session that owns the canvas.
+     * @param {string} sessionId - the created session.
+     * @returns {Promise<void>}
+     */
+    async saveDeskSession(sessionId) {
+      if (domain === null) {
+        pendingDesk = sessionId
+        return
+      }
+      await domain.table(DESK_TABLE).put(DESK_KEY, { sessionId })
     },
     /** Store the panel-managed service settings; buffered like workflow writes. */
     async saveSettings(record) {

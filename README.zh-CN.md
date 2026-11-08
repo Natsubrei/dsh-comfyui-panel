@@ -5,7 +5,7 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
-在 DeepSeek Harness Web UI 里使用 ComfyUI：右侧面板中是真实的编辑器，工作流可被模型读取和编辑，模型也能发起运行。
+在 DeepSeek Harness Web UI 里使用 ComfyUI：编辑器是独立的一页。右侧一列和拥有这张画布的会话对话。
 
 ## 目录
 
@@ -35,10 +35,11 @@ https://raw.githubusercontent.com/Natsubrei/dsh-comfyui-panel/main/market/index.
 
 ## 使用
 
-1. 打开右侧边栏的 **ComfyUI** 标签。标签属于当前会话，可以全屏。
-2. 服务地址保持 `http://127.0.0.1:8188`，或在[配置](#配置)中改成别的地址。
-3. 如果还没有服务，打开面板里的 **Server**，选中含 `main.py` 的目录，按 **Start**。常见位置会自动识别。**Start with DSH** 会被记住。已经在运行的服务会被接管，不会再启动一个。
-4. 等标签显示已连接。这个会话随后获得下表中的工具，其他会话没有。
+1. 点左侧栏的 **ComfyUI**。编辑器占满中间主区，右侧是助手。
+2. 右侧一列把话发进这一页的会话。模型随后用下表里的工具改当前画布。
+3. 服务地址保持 `http://127.0.0.1:8188`，或在[配置](#配置)中改成别的地址。
+4. 如果还没有服务，打开页面里的 **Server**，选中含 `main.py` 的目录，按 **Start**。常见位置会自动识别。**Start with DSH** 会被记住。已经在运行的服务会被接管，不会再启动一个。
+5. 等编辑器显示已连接。在右侧说话。模型使用这一页的工具，包括发起运行。离开这一页后，需要编辑器在场的工具会失败。
 
 还没有 ComfyUI：运行 `node test/mock-comfyui.mjs`，打开标签，等待 **Connected**。mock 是单节点图，`comfyui_run` 返回 `p1`。在真正的 ComfyUI 使用 8188 端口前，先停掉 mock。
 

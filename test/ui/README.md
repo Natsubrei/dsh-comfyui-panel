@@ -26,7 +26,7 @@ check says so when it sees a URL without `?token=…`.
 
 | Check | Why it exists |
 | --- | --- |
-| panel mounts in the sidebar | the tab is registered and the guide entry opens it |
+| panel mounts from the left sidebar | the ComfyUI button opens the main page |
 | editor boots | `/comfyui/` serves a frontend that exposes `comfyAPI.app.app` |
 | bar publishes counters | the bar reports nodes, links, revision, and last sync |
 | server state is known | the lifecycle chip resolved to a real state |

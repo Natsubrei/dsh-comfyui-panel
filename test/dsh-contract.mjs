@@ -142,7 +142,12 @@ ctx.provide('webServer', {
 })
 
 /** sessionId -> tableName -> Map. Mirrors the domain KV surface the store uses. */
-const tables = new Map([['sessions', new Map()], ['workflows', new Map()], ['settings', new Map()]])
+const tables = new Map([
+  ['sessions', new Map()],
+  ['workflows', new Map()],
+  ['settings', new Map()],
+  ['desk', new Map()],
+])
 /** @type {any} */
 let openedSpec
 ctx.provide('storageDomain', {
@@ -410,6 +415,20 @@ try {
   assert.equal(stored.cwd, tempDir)
   assert.equal(stored.autoStart, false)
   assert.ok(Number.isSafeInteger(stored.updatedAt) && stored.updatedAt > 0)
+
+  const deskEmpty = await post('/api/comfyui/desk/chat', { message: '' })
+  assert.equal(deskEmpty.status, 400)
+  // This host does not mount the session service. The routes must still exist
+  // and refuse before they invent a session.
+  const deskMissing = await shared.fetch(new Request('http://host/api/comfyui/desk'), ctx.connection.browserPeer)
+  const deskMissingBody = await deskMissing.json()
+  assert.equal(deskMissing.status, 502)
+  assert.equal(deskMissingBody.ok, false)
+  assert.match(deskMissingBody.error, /No session service is available/)
+  const deskUnsent = await post('/api/comfyui/desk/chat', { message: 'set steps to 20' })
+  const deskUnsentBody = await deskUnsent.json()
+  assert.equal(deskUnsent.status, 502)
+  assert.match(deskUnsentBody.error, /No session service is available/)
 
   const statusResponse = await shared.fetch(new Request(
     'http://host/api/comfyui/service',

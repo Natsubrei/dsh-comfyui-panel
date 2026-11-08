@@ -260,31 +260,22 @@ export async function openPanel(browser, { timeout = 90_000, scratch = true } = 
   if (await browser.evaluate(`document.querySelector('${DOM.panel}') !== null`)) {
     return { sessionId, bootMs: 0 }
   }
-  // The panel is a sidebar tab. With no tab open the sidebar shows guide
-  // entries, and ours is one of them; that entry is the only stable,
-  // locale-free way in.
-  if (await browser.evaluate(`document.querySelector('${DOM.expand}') !== null`)) {
-    await browser.click(DOM.expand)
-  }
+  // The page is a left-sidebar panel. The button's accessible name is the
+  // title, in every locale, including when the column is collapsed to icons.
   const entry = await waitForPoint(browser, `(() => {
-    const found = [...document.querySelectorAll('${DOM.guide}, ${DOM.tab}')]
-      .find(element => element.textContent.includes(${JSON.stringify(TAB_TITLE)}))
+    const found = document.querySelector('button[aria-label=${JSON.stringify(TAB_TITLE)}]')
     if (!found) return null
     const rect = found.getBoundingClientRect()
     if (rect.width === 0 && rect.height === 0) return null
     return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
-  })()`, { label: `a ${TAB_TITLE} sidebar entry`, timeout: 15_000 })
-  // The right sidebar slides open, so coordinates sampled mid-transition can
-  // land beside the entry. The entry is a real button: wait until it is laid
-  // out, then click the element instead of the point it happened to have.
+  })()`, { label: `the ${TAB_TITLE} sidebar button`, timeout: 15_000 })
   const clickedEntry = await browser.evaluate(`(() => {
-    const found = [...document.querySelectorAll('${DOM.guide}, ${DOM.tab}')]
-      .find(element => element.textContent.includes(${JSON.stringify(TAB_TITLE)}))
+    const found = document.querySelector('button[aria-label=${JSON.stringify(TAB_TITLE)}]')
     if (!found) return false
     found.click()
     return true
   })()`)
-  if (clickedEntry !== true) throw new Error(`could not click the ${TAB_TITLE} sidebar entry at ${String(entry.x)},${String(entry.y)}`)
+  if (clickedEntry !== true) throw new Error(`could not click the ${TAB_TITLE} sidebar button at ${String(entry.x)},${String(entry.y)}`)
   await browser.waitFor(`document.querySelector('${DOM.panel}') !== null`, { label: 'the ComfyUI panel', timeout: 15_000 })
   const started = Date.now()
   try {

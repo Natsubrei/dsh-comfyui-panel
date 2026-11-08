@@ -15,6 +15,7 @@ import { createSessionStore } from '../session-store.js'
 import { createSupervisor } from '../supervisor.js'
 import { stopsOnUnload } from '../service.js'
 
+
 /**
  * Ports come as a contiguous block of five so several checkouts can run the
  * suite at once: `DSH_COMFYUI_TEST_PORT=19188 npm test`. The default block is
@@ -125,7 +126,7 @@ function addAgent(host, sessionId) {
 }
 
 /** Storage medium shared across Host instances, like the JSON backend file. */
-function createStorage(state = { sessions: new Map(), workflows: new Map(), settings: new Map() }) {
+function createStorage(state = { sessions: new Map(), workflows: new Map(), settings: new Map(), desk: new Map() }) {
   const opened = []
   return {
     state,
@@ -1249,7 +1250,7 @@ assert.ok(searched.matches.includes('KSampler'))
 // The edit needs this session's panel; the restored session has none.
 await assert.rejects(
   restoredScope.tools.get('comfyui_edit').execute({ operations: [{ op: 'remove_node', id: 1 }] }, execOf('s-restored')),
-  /not connected in this session/,
+  /editor is closed/,
 )
 
 // Simulate the open panel: keep a long-poll pending, enqueue an edit, answer it.
@@ -1654,7 +1655,7 @@ assert.equal(edited.links, 1)
   assert.equal(after.progress.run, null, 'its run record went with it')
   await assert.rejects(
     s1.tools.get('comfyui_edit').execute({ operations: [{ op: 'remove_node', id: 7 }] }, exec),
-    /not connected in this session/,
+    /editor is closed/,
   )
   const revived = await host.fetches.get('/api/comfyui/commands/poll').fetch(new Request(
     'http://127.0.0.1/api/comfyui/commands/poll',
@@ -1887,6 +1888,42 @@ assert.throws(
 )
 
 // ── Panel-managed service settings ────────────────────────────────────────
+
+const deskPrompts = []
+host.services.set('sessionController', {
+  async create() { return { sessionId: 'desk-session' } },
+  async resolveAgent() { return { agent: { id: 'desk-session' } } },
+  async prompt(request) {
+    deskPrompts.push(request)
+    return { accepted: true }
+  },
+})
+const deskGet = await host.fetches.get('/api/comfyui/desk').fetch(new Request('http://127.0.0.1/api/comfyui/desk'))
+const deskBody = await deskGet.json()
+assert.equal(deskGet.status, 200)
+assert.equal(deskBody.ok, true)
+assert.equal(deskBody.sessionId, 'desk-session')
+const deskAgain = await (await host.fetches.get('/api/comfyui/desk').fetch(new Request('http://127.0.0.1/api/comfyui/desk'))).json()
+assert.equal(deskAgain.sessionId, 'desk-session')
+const deskEmpty = await host.fetches.get('/api/comfyui/desk/chat').fetch(new Request('http://127.0.0.1/api/comfyui/desk/chat', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ message: '   ' }),
+}))
+assert.equal(deskEmpty.status, 400)
+const deskSent = await host.fetches.get('/api/comfyui/desk/chat').fetch(new Request('http://127.0.0.1/api/comfyui/desk/chat', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ message: 'set steps to 20' }),
+}))
+const deskSentBody = await deskSent.json()
+assert.equal(deskSent.status, 200)
+assert.equal(deskSentBody.ok, true)
+assert.equal(deskSentBody.sessionId, 'desk-session')
+assert.equal(deskPrompts.length, 1)
+assert.equal(deskPrompts[0].sessionId, 'desk-session')
+assert.equal(deskPrompts[0].content[0].text, 'set steps to 20')
+assert.equal(storage.state.desk.get('session').sessionId, 'desk-session')
 
 const serviceGet = await host.fetches.get('/api/comfyui/service').fetch(new Request('http://127.0.0.1/api/comfyui/service'))
 const initialService = await serviceGet.json()

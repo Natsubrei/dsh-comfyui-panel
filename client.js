@@ -1,8 +1,9 @@
 /**
  * Browser half of the dsh-comfyui P0 bundle.
  *
- * The right-sidebar tab hosts the real ComfyUI frontend in a same-origin
- * iframe. Because the Host proxies ComfyUI under `/comfyui/`, the parent page
+ * The left-sidebar entry opens this page in the main column. The real ComfyUI
+ * frontend sits in a same-origin iframe. The column on the right sends into
+ * the session that owns this canvas. Because the Host proxies ComfyUI under `/comfyui/`, the parent page
  * can reach `iframe.contentWindow.comfyAPI.app.app`, serialize the UI
  * workflow, ask the editor for its API prompt, and POST both to the Host.
  */
@@ -22,9 +23,10 @@ window.__ModuleLoader__.load({
     const { useCallback, useEffect, useRef, useState } = React
 
     const NS = 'dshComfyUI'
-    const TAB_ID = 'dsh-comfyui-panel/workflow'
-    const TAB_KIND = 'comfyui'
+    const PANEL_KEY = 'comfyui'
     const PANEL_URL = '/comfyui/'
+    const DESK_URL = '/api/comfyui/desk'
+    const DESK_CHAT_URL = '/api/comfyui/desk/chat'
     const INTERRUPT_URL = `${PANEL_URL}interrupt`
     /** How long a successful Cancel waits for its event before re-enabling. */
     const CANCEL_FALLBACK_MS = 10_000
@@ -95,6 +97,14 @@ window.__ModuleLoader__.load({
       barFailed: 'Start failed',
       barUnknown: 'Checking…',
       barConnecting: 'connecting…',
+      assistant: 'Assistant',
+      assistantPlaceholder: 'Say what to change',
+      assistantSend: 'Send',
+      assistantSending: 'Sending…',
+      assistantFailed: 'The assistant did not answer',
+      assistantEmpty: 'Say what to change. The model uses the tools on this canvas.',
+      assistantSent: 'Sent. The model is working in this session.',
+      assistantClosed: 'The editor is still opening.',
     }
     const zh = {
       title: 'ComfyUI',
@@ -155,27 +165,36 @@ window.__ModuleLoader__.load({
       barFailed: '启动失败',
       barUnknown: '检查中…',
       barConnecting: '连接中…',
+      assistant: '助手',
+      assistantPlaceholder: '说要改什么',
+      assistantSend: '发送',
+      assistantSending: '发送中…',
+      assistantFailed: '助手没有回复',
+      assistantEmpty: '直接说要改哪里。模型会用这张画布上的工具。',
+      assistantSent: '已发送。模型正在这个会话里处理。',
+      assistantClosed: '编辑器还在打开。',
     }
 
     const CSS = `
       .dsh-comfyui-panel {
         display: flex; flex-direction: column; height: 100%; min-height: 0;
-        color: var(--dsw-alias-label-primary);
-        background: var(--dsw-alias-bg-base);
-        font: 12px/1.4 var(--dsw-font-family, system-ui, sans-serif);
+        color: inherit;
+        background: transparent;
+        font: inherit;
       }
       .dsh-comfyui-bar {
-        /* The ComfyUI editor brings its own 40 px toolbar right below this
-           one; keeping ours to one 26 px line leaves the graph the space. */
-        display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
-        min-height: 26px; padding: 1px 8px;
-        font-size: 11px; line-height: 18px;
-        border-bottom: 1px solid var(--dsw-alias-border-l1);
-        background: var(--dsw-alias-bg-layer-1);
+        /* The editor has its own toolbar under this one. This row is the
+           glass strip used by the media desk, not a second boxed toolbar. */
+        display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+        min-height: 48px; padding: 8px 12px;
+        font-size: 13px; line-height: 20px;
+        border-bottom: .5px solid var(--line, var(--dsw-alias-border-l1));
+        background: var(--glass, var(--dsw-alias-bg-layer-1));
+        backdrop-filter: blur(24px) saturate(160%);
         flex: 0 0 auto;
       }
-      .dsh-comfyui-bar .dsh-comfyui-button { height: 20px; padding: 0 6px; }
-      .dsh-comfyui-bar .dsh-comfyui-icon { width: 22px; }
+      .dsh-comfyui-bar .dsh-comfyui-button { height: 32px; padding: 0 12px; }
+      .dsh-comfyui-bar .dsh-comfyui-icon { width: 32px; }
       .dsh-comfyui-dot {
         width: 7px; height: 7px; border-radius: 50%;
         background: var(--dsw-alias-state-idle-primary);
@@ -216,27 +235,27 @@ window.__ModuleLoader__.load({
       .dsh-comfyui-actions { margin-left: 2px; }
       .dsh-comfyui-tools {
         margin-left: auto; padding-left: 8px;
-        border-left: 1px solid var(--dsw-alias-border-l1);
+        border-left: .5px solid var(--line, var(--dsw-alias-border-l1));
       }
       .dsh-comfyui-button {
-        height: 22px; padding: 0 7px; border-radius: 5px; cursor: pointer;
+        height: 32px; padding: 0 12px; border-radius: var(--r-md, 12px); cursor: pointer;
         flex: 0 0 auto;
-        border: 1px solid var(--dsw-alias-border-l1);
-        background: transparent; color: var(--dsw-alias-label-secondary);
+        border: 0;
+        background: transparent; color: var(--ink2, var(--dsw-alias-label-secondary));
         font: inherit;
       }
       .dsh-comfyui-button:hover:not(:disabled) {
-        background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary);
+        background: var(--hover, var(--dsw-alias-bg-layer-2));
+        color: var(--ink, var(--dsw-alias-label-primary));
       }
       .dsh-comfyui-button:disabled { opacity: .45; cursor: default; }
       .dsh-comfyui-button[data-variant="primary"] {
-        border-color: transparent;
-        background: var(--dsw-alias-button-primary-fill);
-        color: var(--dsw-alias-label-primary-foreground);
+        background: var(--primary, var(--dsw-alias-button-primary-fill));
+        color: var(--on-primary, var(--dsw-alias-label-primary-foreground));
       }
       .dsh-comfyui-button[data-variant="primary"]:hover:not(:disabled) {
-        background: var(--dsw-alias-button-primary-hover);
-        color: var(--dsw-alias-label-primary-foreground);
+        background: var(--primary-hover, var(--dsw-alias-button-primary-hover));
+        color: var(--on-primary, var(--dsw-alias-label-primary-foreground));
       }
       .dsh-comfyui-icon {
         width: 24px; padding: 0;
@@ -250,7 +269,7 @@ window.__ModuleLoader__.load({
         outline-offset: 2px;
       }
       .dsh-comfyui-stage { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
-      .dsh-comfyui-frame { flex: 1 1 auto; width: 100%; height: 100%; min-height: 0; border: 0; background: #111; }
+      .dsh-comfyui-frame { flex: 1 1 auto; width: 100%; height: 100%; min-height: 0; border: 0; background: var(--dsw-alias-bg-base); }
       .dsh-comfyui-overlay {
         position: absolute; inset: 0; z-index: 1;
         display: flex; align-items: center; justify-content: center; gap: 10px;
@@ -259,12 +278,13 @@ window.__ModuleLoader__.load({
         font-size: 13px;
       }
       .dsh-comfyui-toast {
-        position: absolute; left: 50%; top: 10px; transform: translateX(-50%);
-        z-index: 2; max-width: calc(100% - 24px);
-        padding: 6px 12px; border-radius: 999px;
-        background: rgba(37, 99, 235, .94); color: #fff;
-        font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        box-shadow: 0 2px 10px rgba(0, 0, 0, .28);
+        position: absolute; left: 50%; top: 12px; transform: translateX(-50%);
+        z-index: 2; max-width: calc(100% - 32px);
+        padding: 8px 14px; border-radius: 999px;
+        border: 1px solid var(--dsw-alias-border-l1);
+        background: var(--dsw-alias-bg-overlay);
+        color: var(--dsw-alias-label-primary);
+        font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         pointer-events: none;
       }
       .dsh-comfyui-empty { flex-direction: column; gap: 10px; }
@@ -324,6 +344,107 @@ window.__ModuleLoader__.load({
       .dsh-comfyui-service-action { width: fit-content; }
       .dsh-comfyui-service-message { color: var(--dsw-alias-state-error-primary); }
       .dsh-comfyui-service-hint { color: var(--dsw-alias-label-secondary); }
+      .dsh-comfyui-desk {
+        --ink: var(--dsw-alias-label-primary);
+        --ink2: var(--dsw-alias-label-secondary);
+        --ink3: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary));
+        --on-primary: var(--dsw-alias-label-primary-inverted, var(--dsw-alias-label-primary-foreground));
+        --primary: var(--dsw-alias-button-primary-fill);
+        --primary-hover: var(--dsw-alias-button-primary-hover);
+        --line: var(--dsw-alias-border-l2, var(--dsw-alias-border-l1));
+        --hover: var(--dsw-alias-interactive-bg-hover, var(--dsw-alias-bg-layer-2));
+        --active: var(--dsw-alias-interactive-bg-active, var(--dsw-alias-bg-layer-2));
+        --card: var(--dsw-alias-bg-layer-2);
+        --glass: color-mix(in srgb, var(--card) 72%, transparent);
+        --r-md: var(--dsw-radius-md, 12px);
+        --r-lg: var(--dsw-radius-lg, 16px);
+        --r-panel: var(--dsw-radius-panel, 28px);
+        position: relative;
+        display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0;
+        overflow: clip;
+        background: var(--dsw-alias-bg-base);
+        color: var(--ink);
+        font-family: var(--dsw-font-family, system-ui, sans-serif);
+        font-size: 14px; line-height: 22px;
+      }
+      .dsh-comfyui-desk > .dsh-comfyui-panel { flex: 1 1 auto; min-width: 0; }
+      .dsh-comfyui-dock {
+        flex: 0 0 336px; width: 336px; min-width: 0; min-height: 0;
+        display: flex; flex-direction: column;
+        border-left: .5px solid var(--line);
+        background: color-mix(in srgb, var(--card) 62%, transparent);
+        backdrop-filter: blur(28px) saturate(160%);
+      }
+      .dsh-comfyui-dock-head {
+        flex: 0 0 auto; display: flex; align-items: center;
+        padding: 14px 16px 8px 18px;
+      }
+      .dsh-comfyui-dock-head strong { font-size: 15px; line-height: 22px; font-weight: 600; }
+      .dsh-comfyui-dock-head { justify-content: space-between; }
+      .dsh-comfyui-dock.is-closed {
+        flex-basis: 0; width: 0; border-left: 0; overflow: visible;
+      }
+      .dsh-comfyui-dock.is-closed .dsh-comfyui-dock-head {
+        position: absolute; right: 12px; top: 12px; padding: 0; z-index: 2;
+      }
+      .dsh-comfyui-dock.is-closed .dsh-comfyui-dock-head strong { display: none; }
+      .dsh-comfyui-dock-toggle {
+        width: 28px; height: 28px; border: 0; border-radius: 8px;
+        background: transparent; color: var(--ink2, var(--dsw-alias-label-secondary));
+        cursor: pointer; font: inherit; font-size: 18px;
+      }
+      .dsh-comfyui-dock-log {
+        flex: 1 1 auto; min-height: 0; overflow: auto;
+        display: flex; flex-direction: column; gap: 14px;
+        padding: 6px 18px 12px;
+      }
+      .dsh-comfyui-dock-log:has(.dsh-comfyui-dock-empty) { justify-content: center; }
+      .dsh-comfyui-dock-empty {
+        margin: 0; padding: 0 4px 28px;
+        color: var(--ink3);
+        font-size: 25px; line-height: 36px; font-weight: 300;
+      }
+      .dsh-comfyui-dock-row { display: flex; }
+      .dsh-comfyui-dock-row[data-role="user"] { justify-content: flex-end; }
+      .dsh-comfyui-dock-msg {
+        max-width: 92%; margin: 0;
+        white-space: pre-wrap; overflow-wrap: anywhere;
+      }
+      .dsh-comfyui-dock-row[data-role="user"] .dsh-comfyui-dock-msg {
+        padding: 10px 14px; border-radius: var(--r-lg);
+        background: var(--active);
+        color: var(--ink);
+      }
+      .dsh-comfyui-dock-error {
+        flex: 0 0 auto; margin: 0; padding: 0 18px 8px;
+        color: var(--dsw-alias-state-error-primary);
+        font-size: 13px; line-height: 18px;
+      }
+      .dsh-comfyui-dock-form {
+        flex: 0 0 auto; display: flex; align-items: flex-end; gap: 8px;
+        margin: 4px 12px 12px; padding: 8px 8px 8px 16px;
+        border-radius: var(--r-panel);
+        background: var(--card);
+        box-shadow: var(--dsw-elevation-prominent);
+      }
+      .dsh-comfyui-dock-input {
+        flex: 1 1 auto; min-width: 0; min-height: 36px; max-height: 120px;
+        resize: none; padding: 8px 0; border: 0; border-radius: 0;
+        background: transparent;
+        color: var(--ink);
+        font: inherit;
+      }
+      .dsh-comfyui-dock-input:focus-visible { outline: none; }
+      .dsh-comfyui-send {
+        width: 36px; height: 36px; flex: 0 0 auto;
+        display: grid; place-items: center;
+        border: 0; border-radius: 50%; padding: 0; cursor: pointer;
+        background: var(--primary); color: var(--on-primary);
+      }
+      .dsh-comfyui-send:disabled { opacity: .28; cursor: default; }
+      .dsh-comfyui-send:focus-visible {
+        outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px;
+      }
     `
 
     /**
@@ -2253,6 +2374,7 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         if (sessionId === undefined || sessionId === null) return undefined
         let disposed = false
+        const abort = new AbortController()
         const loop = async () => {
           while (!disposed) {
             try {
@@ -2260,11 +2382,25 @@ window.__ModuleLoader__.load({
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({ sessionId, timeoutMs: 20000 }),
+                signal: abort.signal,
               })
               if (!response.ok) throw new Error(`command poll HTTP ${response.status}`)
               const data = await response.json()
               const command = data?.command
               if (command === undefined || command === null) continue
+              if (disposed) {
+                await fetch(COMMAND_RESULT_URL, {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json' },
+                  body: JSON.stringify({
+                    sessionId,
+                    id: command.id,
+                    ok: false,
+                    error: 'The ComfyUI editor is closed. Return to ComfyUI and retry.',
+                  }),
+                }).catch(() => {})
+                break
+              }
               let payload
               try {
                 const app = readApp()
@@ -2286,7 +2422,10 @@ window.__ModuleLoader__.load({
           }
         }
         void loop()
-        return () => { disposed = true }
+        return () => {
+          disposed = true
+          abort.abort()
+        }
       }, [readApp, sessionId])
 
       const postEvent = useCallback((event) => {
@@ -2688,32 +2827,186 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** Locale bound in `apply`. The main panel renders after that assignment. */
+    let deskT = key => key
+
+    /**
+     * Left-sidebar glyph. The shell supplies the square size.
+     * @param {{ size?: number }} props - the shell's icon size.
+     * @returns {any} the svg.
+     */
+    function PanelIcon({ size }) {
+      const s = size || 18
+      return h('svg', {
+        width: s,
+        height: s,
+        viewBox: '0 0 24 24',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.5,
+        strokeLinejoin: 'round',
+        'aria-hidden': 'true',
+      },
+      h('rect', { x: 3, y: 4, width: 7, height: 5, rx: 1 }),
+      h('rect', { x: 14, y: 4, width: 7, height: 5, rx: 1 }),
+      h('rect', { x: 8, y: 15, width: 8, height: 5, rx: 1 }),
+      h('path', { d: 'M6.5 9v2.5h11V9M12 11.5V15' }))
+    }
+
+    /**
+     * The session's composer. A line is admitted to the desk session, not answered here.
+     * @param {{ t: (key: string) => string, sessionId: string | null }} props - locale and the desk session.
+     * @returns {any} the column.
+     */
+    function AssistantDock({ t, sessionId }) {
+      const [messages, setMessages] = useState([])
+      const [draft, setDraft] = useState('')
+      const [busy, setBusy] = useState(false)
+      const [error, setError] = useState(null)
+      const [open, setOpen] = useState(true)
+      const logRef = useRef(null)
+      useEffect(() => {
+        const log = logRef.current
+        if (log !== null) log.scrollTop = log.scrollHeight
+      }, [messages, open])
+      /**
+       * Admit the draft to the desk session.
+       * @param {SubmitEvent} event - the form submit.
+       * @returns {Promise<void>}
+       */
+      async function send(event) {
+        event.preventDefault()
+        const message = draft.trim()
+        if (message === '' || busy) return
+        if (sessionId === null) {
+          setError(t('assistantClosed'))
+          return
+        }
+        const pendingId = `local-${Date.now()}`
+        setBusy(true)
+        setError(null)
+        setDraft('')
+        setMessages(current => [...current, { id: pendingId, role: 'user', text: message }])
+        try {
+          const response = await fetch(DESK_CHAT_URL, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ message }),
+          })
+          const body = await response.json()
+          if (body?.ok !== true) {
+            setMessages(current => current.filter(row => row.id !== pendingId))
+            setDraft(message)
+            setError(typeof body?.error === 'string' && body.error.length > 0 ? body.error : t('assistantFailed'))
+          } else {
+            setMessages(current => [...current, { id: `${pendingId}-sent`, role: 'assistant', text: t('assistantSent') }])
+          }
+        } catch {
+          setMessages(current => current.filter(row => row.id !== pendingId))
+          setDraft(message)
+          setError(t('assistantFailed'))
+        } finally {
+          setBusy(false)
+        }
+      }
+      return h('aside', {
+        className: open ? 'dsh-comfyui-dock' : 'dsh-comfyui-dock is-closed',
+        'aria-label': t('assistant'),
+      },
+        h('header', { className: 'dsh-comfyui-dock-head' },
+          h('strong', null, t('assistant')),
+          h('button', {
+            type: 'button',
+            className: 'dsh-comfyui-dock-toggle',
+            'aria-label': t('assistant'),
+            onClick: () => setOpen(value => !value),
+          }, open ? '\u203a' : '\u2039'),
+        ),
+        open ? h('div', { className: 'dsh-comfyui-dock-log', ref: logRef },
+          messages.length === 0
+            ? h('p', { className: 'dsh-comfyui-dock-empty' }, t('assistantEmpty'))
+            : messages.map(row => h('div', {
+              key: row.id,
+              className: 'dsh-comfyui-dock-row',
+              'data-role': row.role,
+            }, h('p', { className: 'dsh-comfyui-dock-msg' }, row.text))),
+        ) : null,
+        open && error !== null ? h('p', { className: 'dsh-comfyui-dock-error' }, error) : null,
+        open ? h('form', { className: 'dsh-comfyui-dock-form', onSubmit: send },
+          h('textarea', {
+            className: 'dsh-comfyui-dock-input',
+            rows: 2,
+            value: draft,
+            placeholder: t('assistantPlaceholder'),
+            'aria-label': t('assistantPlaceholder'),
+            onChange: event => setDraft(event.target.value),
+            onKeyDown: event => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault()
+                event.currentTarget.form?.requestSubmit()
+              }
+            },
+          }),
+          h('button', {
+            className: 'dsh-comfyui-send',
+            type: 'submit',
+            disabled: busy || draft.trim() === '',
+            'aria-label': busy ? t('assistantSending') : t('assistantSend'),
+          }, h('svg', {
+            width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none',
+            stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
+            'aria-hidden': 'true',
+          }, h('path', { d: 'M12 19V5M6 11l6-6 6 6' }))),
+        ) : null,
+      )
+    }
+
+    /** Main column: the editor for the desk session, and that session's composer. */
+    function Desk() {
+      const [sessionId, setSessionId] = useState(null)
+      const [failed, setFailed] = useState(null)
+      useEffect(() => {
+        let gone = false
+        fetch(DESK_URL)
+          .then(response => response.json())
+          .then(body => {
+            if (gone) return
+            if (body?.ok === true && typeof body.sessionId === 'string') setSessionId(body.sessionId)
+            else setFailed(typeof body?.error === 'string' ? body.error : deskT('assistantFailed'))
+          })
+          .catch(() => { if (!gone) setFailed(deskT('assistantFailed')) })
+        return () => { gone = true }
+      }, [])
+      return h('div', { className: 'dsh-comfyui-desk' },
+        sessionId === null
+          ? h('div', { className: 'dsh-comfyui-panel' },
+            h('style', null, CSS),
+            h('div', { className: 'dsh-comfyui-notice' }, failed ?? deskT('loading')),
+          )
+          : h(ComfyPanel, { sessionId, t: deskT }),
+        h(AssistantDock, { t: deskT, sessionId }),
+      )
+    }
+
     return {
-      inject: ['slots', 'locale', 'sidebarRightTabs'],
+      inject: ['slots', 'locale'],
       // Editor operations, dictionaries, and the bar/stage rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
       __ops: { applyOperation, captureGraph, applyWorkflowGraph, loadWorkflow, switchTab, closeTab, readTabs, tabLabel, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, mapApiEvent, relayEditorEvents, readPreview, progressSummary, applyRunEvent, runLabel, cancelLabel, TopBar, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, viewShowsAll, describeOperation, en, zh, createSync },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
+        deskT = t
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')
-        ctx.effect(() => ctx.sidebarRightTabs.register({
-          id: TAB_ID,
-          kind: TAB_KIND,
-          title: () => t('title'),
-          keepMounted: true,
-          guide: [{
-            id: 'workflow',
-            order: 20,
-            title: () => t('title'),
-            description: () => t('description'),
-          }],
-        }), 'dsh-comfyui: tab type')
-        ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
-          name: 'sidebar.right.pane.tab',
-          key: TAB_ID,
-          locale: NS,
-          inject: sessionId => ({ sessionId }),
-        }, ComfyPanel)), 'dsh-comfyui: tab body')
+        ctx.effect(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+          name: 'sidebar.panellist',
+          id: PANEL_KEY,
+          order: 7,
+          label: () => t('title'),
+        }, PanelIcon)), 'dsh-comfyui: sidebar entry')
+        ctx.effect(() => ctx.slots.inject('main', () => ctx.slots.register({
+          name: 'main',
+          key: PANEL_KEY,
+        }, Desk)), 'dsh-comfyui: main panel')
       },
     }
   },

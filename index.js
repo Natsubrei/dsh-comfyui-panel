@@ -30,6 +30,7 @@ import { createServiceController, frontendReport } from './service.js'
 import { createCommandChannel } from './commands.js'
 import { createSessionStore, validWorkflowName } from './session-store.js'
 import { createRunTracker, queueHas, TERMINAL_RUN_STATUSES } from './run-tracker.js'
+import { DeskSessionMissing, ensureDeskSession, sendDeskMessage } from './desk.js'
 
 export { takeCommand } from './commands.js'
 
@@ -205,6 +206,29 @@ export function apply(ctx, rawConfig = {}) {
     })
     return () => { void dispose() }
   }, 'dsh-comfyui: service route')
+
+  /** @type {string | null} */
+  let rememberedDeskId = null
+
+  ctx.effect(() => {
+    const dispose = ctx.connection.fetch.register({
+      path: '/api/comfyui/desk',
+      methods: ['GET'],
+      requestBody: 'buffered',
+      fetch: request => bridgeDesk(request),
+    })
+    return () => { void dispose() }
+  }, 'dsh-comfyui: desk session route')
+
+  ctx.effect(() => {
+    const dispose = ctx.connection.fetch.register({
+      path: '/api/comfyui/desk/chat',
+      methods: ['POST'],
+      requestBody: 'buffered',
+      fetch: request => bridgeDeskChat(request),
+    })
+    return () => { void dispose() }
+  }, 'dsh-comfyui: desk chat route')
 
   // ── HTTP proxy ──────────────────────────────────────────────────────────
 
@@ -450,6 +474,107 @@ export function apply(ctx, rawConfig = {}) {
     return json({ ok: true, accepted })
   }
 
+  /**
+   * The session service, or null when this profile has none.
+   * @returns {any} `sessionController` when it is mounted.
+   */
+  function sessionController() {
+    try {
+      return ctx.get('sessionController') ?? null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * The one session that owns the canvas. Created once, then reused.
+   * @returns {Promise<string>} the session id the page syncs under.
+   */
+  function deskSessionId() {
+    return ensureDeskSession({
+      read: async () => {
+        if (rememberedDeskId !== null) return rememberedDeskId
+        const stored = await store.deskSession()
+        rememberedDeskId = stored
+        return stored
+      },
+      save: async sessionId => {
+        rememberedDeskId = sessionId
+        await store.saveDeskSession(sessionId)
+      },
+      create: async () => {
+        const sessions = sessionController()
+        if (sessions === null || typeof sessions.create !== 'function') {
+          throw new Error('No session service is available')
+        }
+        const created = await sessions.create({})
+        const sessionId = typeof created?.sessionId === 'string' ? created.sessionId : ''
+        if (sessionId.length === 0) throw new Error('The desk session was not created')
+        return sessionId
+      },
+      resume: async sessionId => {
+        const sessions = sessionController()
+        if (sessions === null || typeof sessions.resolveAgent !== 'function') {
+          throw new Error('No session service is available')
+        }
+        const resolved = await sessions.resolveAgent(sessionId)
+        if (resolved?.agent) return
+        // This method reports failure in the result. Swallowing it reused a
+        // deleted session, and the tools never registered.
+        if (resolved?.error?.code === 'session/not-found') throw new DeskSessionMissing()
+        const detail = resolved?.error?.message
+        throw new Error(typeof detail === 'string' && detail.length > 0 ? detail : 'The desk session is unavailable')
+      },
+    })
+  }
+
+  /**
+   * @param {Request} request - GET returns the desk session id.
+   * @returns {Promise<Response>} the id, or why it could not be created.
+   */
+  async function bridgeDesk(request) {
+    if (request.method !== 'GET') return json({ ok: false, error: 'method not allowed' }, 405)
+    try {
+      const sessionId = await deskSessionId()
+      return json({ ok: true, sessionId })
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      return json({ ok: false, error: detail || 'The desk session is unavailable' }, 502)
+    }
+  }
+
+  /**
+   * @param {Request} request - POST sends one line into the desk session.
+   * @returns {Promise<Response>} acceptance, or why the line was refused.
+   */
+  async function bridgeDeskChat(request) {
+    if (request.method !== 'POST') return json({ ok: false, error: 'method not allowed' }, 405)
+    let body
+    try {
+      const text = await request.text()
+      if (text.length > 20_000) return json({ ok: false, error: 'message is too large' }, 413)
+      body = JSON.parse(text)
+    } catch {
+      return json({ ok: false, error: 'invalid JSON body' }, 400)
+    }
+    const result = await sendDeskMessage(body?.message, {
+      sessionId: deskSessionId,
+      prompt: async (sessionId, text) => {
+        const sessions = sessionController()
+        if (sessions === null || typeof sessions.prompt !== 'function') {
+          throw new Error('No session service is available')
+        }
+        await sessions.prompt({
+          requestId: randomUUID(),
+          sessionId,
+          mode: 'queue',
+          content: [{ type: 'text', text }],
+        }, request.signal)
+      },
+    })
+    return json(result, result.ok === true ? 200 : result.status)
+  }
+
   // ── Service bridge ──────────────────────────────────────────────────────
   // The panel manages the ComfyUI process here; no profile configuration is
   // involved. Settings are limited to the checkout directory and auto-start,
@@ -686,7 +811,7 @@ export function apply(ctx, rawConfig = {}) {
         detail: panelConnected
           ? 'The ComfyUI panel is connected in this session.'
           : 'The ComfyUI panel is not connected in this session.',
-        ...(panelConnected ? {} : { action: 'Open the ComfyUI tab in this session and wait for Connected.' }),
+        ...(panelConnected ? {} : { action: 'Return to ComfyUI and wait for Connected.' }),
       },
       {
         layer: 'commandChannel',
@@ -703,7 +828,7 @@ export function apply(ctx, rawConfig = {}) {
             : 'No panel is waiting for commands.',
         ...(panelConnected
           ? {}
-          : { action: 'Open the ComfyUI tab in this session so it can take commands.' }),
+          : { action: 'Return to ComfyUI so it can take commands.' }),
       },
       {
         layer: 'storage',
@@ -729,7 +854,7 @@ export function apply(ctx, rawConfig = {}) {
           ? hasPrompt
             ? {}
             : { action: 'Wait for the panel to finish syncing, or re-open the workflow in the editor so app.graphToPrompt() returns a prompt.' }
-          : { action: 'Open the ComfyUI tab in this session and wait for the workflow to sync.' }),
+          : { action: 'Return to ComfyUI and wait for the workflow to sync.' }),
       },
     ]
   }
@@ -782,7 +907,7 @@ export function apply(ctx, rawConfig = {}) {
       async execute(args) {
         const state = sessionStore.get(sessionId)
         if (state === undefined) {
-          throw new Error('No ComfyUI workflow has synced in this session. Open the ComfyUI tab in this session and wait for Connected.')
+          throw new Error('No ComfyUI workflow has synced in this session. Return to ComfyUI and wait for Connected.')
         }
         if (args?.layout === true) {
           const nodes = Array.isArray(state.workflow?.nodes) ? state.workflow.nodes : []
@@ -858,7 +983,7 @@ export function apply(ctx, rawConfig = {}) {
       output: runOutput(),
       async execute(args, exec) {
         const state = sessionStore.get(sessionId)
-        if (state === undefined) throw new Error('No ComfyUI workflow has synced in this session. Open the ComfyUI tab in this session first.')
+        if (state === undefined) throw new Error('No ComfyUI workflow has synced in this session. Return to ComfyUI first.')
         if (state.prompt === null) throw new Error('The synced workflow has no API prompt yet. Wait for the ComfyUI panel to finish syncing.')
         // The panel keeps showing the seed it had, so an `increment` would walk
         // from the same number on every run and reproduce the image. The cursor
@@ -1087,7 +1212,7 @@ export function apply(ctx, rawConfig = {}) {
         const operations = Array.isArray(args?.operations) ? args.operations : []
         if (operations.length === 0) throw new Error('operations must contain at least one edit')
         if (!commands.connected(sessionId)) {
-          throw new Error('The ComfyUI panel is not connected in this session. Open the ComfyUI tab in this session and wait for Connected, then retry.')
+          throw new Error('The ComfyUI editor is closed. Return to ComfyUI and retry.')
         }
         const id = randomUUID()
         const answer = await commands.ask(sessionId, { id, operations, at: Date.now() }, { timeoutMs: 20000, what: 'edit' })
@@ -1130,7 +1255,7 @@ export function apply(ctx, rawConfig = {}) {
       output: textOutput(),
       async execute() {
         if (!commands.connected(sessionId)) {
-          throw new Error('The ComfyUI panel is not connected in this session. Open the ComfyUI tab in this session and wait for Connected, then retry.')
+          throw new Error('The ComfyUI editor is closed. Return to ComfyUI and retry.')
         }
         const id = randomUUID()
         const answer = await commands.ask(sessionId, { id, kind: 'screenshot', at: Date.now() }, { timeoutMs: 15000, what: 'screenshot' })
@@ -1398,7 +1523,7 @@ export function apply(ctx, rawConfig = {}) {
         const name = workflowName(args?.name)
         const state = sessionStore.get(sessionId)
         if (state === undefined) {
-          throw new Error('No ComfyUI workflow has synced in this session. Open the ComfyUI tab in this session and wait for Connected.')
+          throw new Error('No ComfyUI workflow has synced in this session. Return to ComfyUI and wait for Connected.')
         }
         const { replaced } = await saveNamedWorkflow(name, {
           workflow: state.workflow,
@@ -1530,7 +1655,7 @@ export function apply(ctx, rawConfig = {}) {
           origin = 'comfyui'
         }
         if (!commands.connected(sessionId)) {
-          throw new Error('The ComfyUI panel is not connected in this session. Open the ComfyUI tab in this session and wait for Connected, then retry.')
+          throw new Error('The ComfyUI editor is closed. Return to ComfyUI and retry.')
         }
         const id = randomUUID()
         // `name` rides along so the panel can load the graph into the tab that
@@ -1723,7 +1848,7 @@ export function apply(ctx, rawConfig = {}) {
    */
   async function askPanel(sessionId, body, what) {
     if (!commands.connected(sessionId)) {
-      throw new Error('The ComfyUI panel is not connected in this session. Open the ComfyUI tab in this session and wait for Connected, then retry.')
+      throw new Error('The ComfyUI editor is closed. Return to ComfyUI and retry.')
     }
     const id = randomUUID()
     const answer = await commands.ask(sessionId, { id, ...body, at: Date.now() }, { timeoutMs: 20000, what })
@@ -1763,7 +1888,7 @@ export function apply(ctx, rawConfig = {}) {
         if (name === null) {
           const state = sessionStore.get(sessionId)
           if (state === undefined) {
-            throw new Error('No ComfyUI workflow has synced in this session. Open the ComfyUI tab in this session and wait for Connected.')
+            throw new Error('No ComfyUI workflow has synced in this session. Return to ComfyUI and wait for Connected.')
           }
           workflow = state.workflow
           label = `session-${sessionId.slice(0, 8)}`
