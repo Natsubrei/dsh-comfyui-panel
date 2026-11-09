@@ -11,8 +11,22 @@ the version bump.
 
 ## [Unreleased]
 
+### Added
+
+- A portable Windows build starts from the panel: choose the folder the
+  archive was unzipped into and it is saved as the `ComfyUI` checkout inside,
+  the `python_embeded` beside it is used as the interpreter, and the launch
+  passes the same `--windows-standalone-build` its own launcher does.
+- A card with no folder says where a ComfyUI comes from and links to
+  `docs.comfy.org/installation`. Without it, someone who had never installed
+  ComfyUI was told to pick a folder that did not exist yet.
+
 ### Changed
 
+- A stopped server with no folder chosen now says to open ComfyUI first (desktop
+  app or portable build) and offers the folder as the alternative. Opening
+  ComfyUI is what most people do; choosing a folder is only for letting the
+  panel start it.
 - The server controls are a flat bar over the bottom centre of the canvas,
   where ComfyUI keeps nothing, instead of a chip over its bottom-left settings
   and frame-rate readout. Nothing hides behind a menu: Start, Stop, Settings,
@@ -59,6 +73,10 @@ the version bump.
 
 ### Fixed
 
+- A start that fails says why on the card (`ComfyUI did not start` plus the
+  error), instead of the same "not running" line as a server that was never
+  started. The log path is shown beside the folder when the error does not
+  already name it.
 - Starting, restarting, or reloading the editor no longer asks "leave this
   page?": the panel replaces the iframe element instead of navigating it, so
   ComfyUI's unsaved-changes guard never fires on a reload the user did not

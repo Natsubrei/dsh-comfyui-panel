@@ -59,7 +59,9 @@ What the headless check cannot see, in order:
    the graph on load — no manual Sync (it syncs every second), and no Reload or
    Open at all: Stop then Start is the recovery, and it replaces the editor.
 4. **Settings** opens as a sheet over the canvas, attached above the bar, and
-   holds configuration only: the directory, **Start with DSH**, Save. The state
+   holds configuration only: the directory, **Start with DSH**, Save. The folder
+   a portable build was unzipped into is accepted and saved as the `ComfyUI`
+   inside it, so there is no need to drill in. The state
    is on the bar, not repeated here. Opening or closing it must not move or
    resize the editor, and Escape or a click outside closes it. Stop then Start
    must swap the iframe element rather than navigate it: no browser "leave this
@@ -72,9 +74,11 @@ What the headless check cannot see, in order:
    This one needs the model: the check does not queue runs.
 7. Stop the server and look at the stage: a card with the mark, `ComfyUI is
    not running`, the reason, and the folder — no buttons, because the bar owns
-   Start and Settings. Starting shows `Starting ComfyUI Ns`; a frontend that
-   never hands over `comfyAPI.app` within 45 s shows `The editor did not load`
-   with Reload.
+   Start and Settings. With no folder chosen, the card also links
+   `docs.comfy.org/installation`. A start that failed replaces the reason with
+   the error, and names the log when the error does not. Starting shows
+   `Starting ComfyUI Ns`; a frontend that never hands over `comfyAPI.app` within
+   45 s shows `The editor did not load` with Reload.
 8. If the bar reads `Running · Bridge error`, the state POST is failing: check
    the Host log and `fetch('/api/comfyui/state?sessionId=…')` from the page
    before touching panel code.

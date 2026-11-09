@@ -17,6 +17,10 @@ supervise:
   logPath: /var/log/comfyui/comfyui.log
 ```
 
-`cwd` is required when `enabled` is true. A missing value fails the plugin load instead of never starting ComfyUI. `command` defaults to `python3`. `args` defaults to `main.py --listen 127.0.0.1`.
+`cwd` is required when `enabled` is true. A missing value fails the plugin load
+instead of never starting ComfyUI. It is the process working directory as
+written, so name the checkout itself — a portable bundle's outer folder is not
+resolved here. The panel's own Settings field does accept that folder and stores
+the `ComfyUI` inside it. `command` defaults to `python3`. `args` defaults to `main.py --listen 127.0.0.1`.
 
 An upstream that already answers `/system_stats` is adopted (`state: external`) rather than started again. Unloading the plugin stops only a process it started in this lifetime. An adopted server keeps running; the README section Limits says how to stop one.

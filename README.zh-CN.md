@@ -33,12 +33,24 @@ https://raw.githubusercontent.com/Natsubrei/dsh-comfyui-panel/main/market/index.
 
 如果 DSH 已经在运行，重启它。bundle 变化后，浏览器需要强制刷新。
 
+面板用的是这台机器上已有的 ComfyUI。还没有的话先装一个，官方几种装法见
+[docs.comfy.org/installation](https://docs.comfy.org/installation)。
+
+自己先把 ComfyUI 开起来就够了：只要它在 `upstream` 上应答，面板就会用上它。用自带
+`.bat` 启动的便携版本来就监听在那里；桌面版监听自己的端口，要先把 `upstream` 指过去。
+面板拿不到这个进程的归属时（Windows 上总是如此），它就是 `external`，没有 Stop，
+因为进程不是面板启动的。
+
+想让面板代管，就在 **设置** 里给它一个检出目录：手动安装是含 `main.py`、旁边有 `.venv`
+的那层（Unix 上是 `.venv/bin/python`，Windows 上是 `.venv/Scripts/python.exe`）；
+Windows 便携版选解压出来的那一层，面板会用里面的 `ComfyUI` 和 `python_embeded`。
+
 ## 使用
 
 1. 点左侧栏的 **ComfyUI**。编辑器占满中间主区，右侧是助手。
 2. 右侧一列把话发进这一页的会话。模型随后用下表里的工具改当前画布。
 3. 服务地址保持 `http://127.0.0.1:8188`，或在[配置](#配置)中改成别的地址。
-4. 服务没起来时，画布上是一张说明原因的卡片，并标出目录。画布底部的工具栏永远显示 **启动**、**停止**、**设置** 三个按钮，前两个在不适用时变灰。含 `main.py` 的目录在 **设置** 里选。如果 comfy-cli 记录过工作目录，会填上那个；否则留空，等你选。**随 DSH 启动** 会被记住。已经在运行的服务会被接管，不会再启动一个。
+4. 服务没起来时，画布上是一张说明原因的卡片，并标出目录。画布底部的工具栏永远显示 **启动**、**停止**、**设置** 三个按钮，前两个在不适用时变灰。想让面板代管，就在 **设置** 里选目录（含 `main.py` 的那层，或便携版解压出来的那一层）。如果 comfy-cli 记录过工作目录，会填上那个；否则留空，等你选。**随 DSH 启动** 会被记住。已经在运行的服务会被直接用上，不会再启动一个。
 5. 等底部工具栏显示 **运行中**。在右侧说话。模型使用这一页的工具，包括发起运行。离开这一页后，需要编辑器在场的工具会失败。**新建** 会让这一页换一个会话，原来的会话和记录都还在。收起右栏后，画布右缘有一条标签，点它展开。
 
 还没有 ComfyUI：运行 `node test/mock-comfyui.mjs`，在左侧栏打开 **ComfyUI**，等底部工具栏显示 **运行中**。mock 是单节点图，`comfyui_run` 返回 `p1`。在真正的 ComfyUI 使用 8188 端口前，先停掉 mock。
@@ -60,7 +72,7 @@ Panel 列的 **需打开** 表示该会话必须打开面板，**可关闭** 表
 | 摘要行 | 一行，例如 `ComfyUI: rev 14 · "deepseek-chan-emoji" · 9 nodes · 9 links · selected 7 · panel open.`。只有图有名字时才出现名称。打开多个标签时附加数量和当前标签。缩放、平移和改变面板大小不会增加 `rev`。 |
 | 名称 | 保存或加载具名工作流会给会话命名，摘要行里也会出现这个名字。当 ComfyUI 用户数据中存在 `<name>.json` 时，编辑器标签也改成同名。 |
 | 存储 | 域 `dsh_comfyui`。Host 重启不丢图。记录为 `sessionId -> { workflow, prompt, semantic, revision, name, nameSource }`，保留最近更新的 20 个会话。`nameSource` 是 `file` 或 `tool`。模型看到的是投影和它自己的编辑结果。存储失败时退回内存，不阻塞桥接。具名工作流放在 `workflows` 表。 |
-| 进程 | **启动** 和 **停止** 控制 ComfyUI。命令由检出目录推导（Unix 上是 `.venv/bin/python`，Windows 上是 `.venv/Scripts/python.exe`，否则用 `python3` 或 `python`），参数来自上游端口，不接受任意命令。目录和 **随 DSH 启动** 存在 `dsh_comfyui` 中，不写入 DSH profile。 |
+| 进程 | **启动** 和 **停止** 控制 ComfyUI。命令由检出目录推导（Unix 上是 `.venv/bin/python`，Windows 上是 `.venv/Scripts/python.exe`，便携版是旁边的 `python_embeded/python.exe`，否则用 `python3` 或 `python`），参数来自上游端口，不接受任意命令。目录和 **随 DSH 启动** 存在 `dsh_comfyui` 中，不写入 DSH profile。 |
 
 ### 模型工具
 
@@ -106,7 +118,7 @@ Panel 列的 **需打开** 表示该会话必须打开面板，**可关闭** 表
 - ComfyUI 的前端是标准 `comfyui-frontend-package` 构建（相对路径 `./assets/...`，`api_base` 由路径推导）。面板最后在 1.57.1 上验证。上报其他版本时显示提示，仍然加载。不上报版本的服务不做处理。
 - 面板使用 `window.comfyAPI.app.app`，这是兼容层，不是稳定 API。实际用到的成员和升级后如何复查见 [docs/comfyui-bridge.md](docs/comfyui-bridge.md)。
 - DSH Web profile 挂载了 `storage`、`storage-json` 和 `storage-domain`。默认 profile 有。缺少时工作流只存在内存中。
-- 接管已在运行的 ComfyUI（这样刷新后 **停止** 仍可用）需要 Linux 的 `/proc` 或 `lsof`。两者都没有时，该服务保持 external。从面板启动一个不需要这两者。面板或 `comfyui_status` 看到健康的上游时会重试接管。工作目录不是所配置检出目录的监听者保持 external，会报告 pid，且不能停止。Windows 可以从面板启动检出，那里已在运行的服务保持 external。
+- 接管已在运行的 ComfyUI（这样刷新后 **停止** 仍可用）需要 Linux 的 `/proc` 或 `lsof`。两者都没有时，该服务保持 external。从面板启动一个不需要这两者。面板或 `comfyui_status` 看到健康的上游时会重试接管。工作目录不是所配置检出目录的监听者保持 external，会报告 pid，且不能停止。Windows 可以从面板启动检出或便携版，那里已在运行的服务保持 external。
 
 ## 限制
 
