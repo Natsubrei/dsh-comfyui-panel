@@ -52,7 +52,9 @@ window.__ModuleLoader__.load({
       syncPending: 'syncing…',
       notRunning: 'ComfyUI is not running',
       notRunningHint: 'Start the server from the bottom toolbar; the editor appears here once it is ready.',
-      notRunningPick: 'Choose the ComfyUI folder in Settings first; the bottom toolbar starts the server from there.',
+      notRunningPick: 'Open ComfyUI first — the desktop app or a portable build — or pick its folder in Settings and start it from the bottom toolbar.',
+      installHint: 'No ComfyUI yet?',
+      installLink: 'Install it',
       editorStalled: 'The editor did not load',
       editorStalledHint: 'ComfyUI answers, but the frontend never exposed its editor. Reload it, or start the server again from Settings.',
       noSession: 'No session',
@@ -122,7 +124,9 @@ window.__ModuleLoader__.load({
       syncPending: '同步中…',
       notRunning: 'ComfyUI 未运行',
       notRunningHint: '在底部工具栏点击「启动」，服务就绪后编辑器会显示在这里。',
-      notRunningPick: '请先在「设置」中选择 ComfyUI 目录，之后即可在底部工具栏启动服务。',
+      notRunningPick: '先打开 ComfyUI（桌面版或便携版）；也可以在「设置」里选目录，再从底部工具栏启动。',
+      installHint: '还没装 ComfyUI？',
+      installLink: '安装方式',
       editorStalled: '编辑器没有加载出来',
       editorStalledHint: 'ComfyUI 有响应，但前端一直没有交出编辑器。可以重新加载；如果仍不行，到「设置」里重启服务。',
       noSession: '无会话',
@@ -356,8 +360,14 @@ window.__ModuleLoader__.load({
       }
       .dsh-comfyui-empty-hint {
         max-width: 292px; line-height: 1.6;
+        overflow-wrap: anywhere;
         color: var(--dsw-alias-label-secondary);
       }
+      .dsh-comfyui-empty-link {
+        color: var(--dsw-alias-brand-primary, var(--ink));
+        text-decoration: underline; text-underline-offset: 3px;
+      }
+      .dsh-comfyui-empty-link:hover { text-decoration-thickness: 2px; }
       .dsh-comfyui-empty-actions { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
       .dsh-comfyui-empty-actions .dsh-comfyui-button { height: 36px; padding: 0 18px; border-radius: 10px; }
       .dsh-comfyui-empty-actions .dsh-comfyui-button[data-variant="quiet"] {
@@ -707,14 +717,21 @@ window.__ModuleLoader__.load({
       // `=== false`, not `!healthy`: a snapshot without a health field (an older
       // Host) must fall through to the spinner, not claim the server is down.
       if (known && service.health === false && !starting) {
+        // A start that already failed has a sentence; "not running, click
+        // Start" sent people back to the same button. The log path is only
+        // added when that sentence does not already name it.
+        const failed = state === 'failed'
+        const error = failed && typeof service.lastError === 'string' ? service.lastError.trim() : ''
+        const logPath = failed && typeof service.logPath === 'string' ? service.logPath.trim() : ''
         return {
           stage: 'stopped',
-          title: t('notRunning'),
-          hint: needDir ? t('notRunningPick') : t('notRunningHint'),
+          title: failed ? t('serverStartFailed') : t('notRunning'),
+          hint: error !== '' ? error : (needDir ? t('notRunningPick') : t('notRunningHint')),
           seconds: 0,
           canStart: !needDir,
           needDir,
           dir: String(dir ?? '').trim(),
+          log: logPath !== '' && !error.includes(logPath) ? logPath : '',
         }
       }
       if (starting) {
@@ -787,7 +804,22 @@ window.__ModuleLoader__.load({
           h('span', { className: 'dsh-comfyui-empty-mark' }, h(PanelIcon, { size: 34 })),
           h('span', { className: 'dsh-comfyui-empty-title' }, stage.title),
           stage.hint === '' ? null : h('span', { className: 'dsh-comfyui-empty-hint' }, stage.hint),
+          // Someone with no checkout has no folder to type: the card is the
+          // only place that can name where one comes from.
+          stage.needDir === true
+            ? h('span', { className: 'dsh-comfyui-empty-hint' },
+              t('installHint'), ' ',
+              h('a', {
+                className: 'dsh-comfyui-empty-link',
+                href: 'https://docs.comfy.org/installation',
+                target: '_blank',
+                rel: 'noreferrer',
+              }, t('installLink')))
+            : null,
           note === '' ? null : h('span', { className: 'dsh-comfyui-empty-note', title: note }, note),
+          typeof stage.log === 'string' && stage.log !== ''
+            ? h('span', { className: 'dsh-comfyui-empty-note', title: stage.log }, stage.log)
+            : null,
           stopped ? null : h('div', { className: 'dsh-comfyui-empty-actions' },
             h('button', {
               className: 'dsh-comfyui-button',

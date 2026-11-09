@@ -289,6 +289,30 @@ const stage = (service, extra = {}) => overlayPlan({
   assert.equal(result.hint, en.notRunningPick)
 }
 
+// A failed start names the error on the card. The log path is a second line
+// only when the error does not already include it.
+{
+  const result = stage({
+    ...stopped,
+    state: 'failed',
+    lastError: 'spawn python ENOENT',
+    logPath: '/var/log/comfyui.log',
+  })
+  assert.equal(result.title, en.serverStartFailed)
+  assert.equal(result.hint, 'spawn python ENOENT')
+  assert.equal(result.log, '/var/log/comfyui.log')
+  assert.equal(result.canStart, true)
+}
+{
+  const result = stage({
+    ...stopped,
+    state: 'failed',
+    lastError: 'ComfyUI exited 5 times; see /var/log/comfyui.log',
+    logPath: '/var/log/comfyui.log',
+  })
+  assert.equal(result.log, '')
+}
+
 // Starting is a progress report, not a clickable Start.
 {
   const result = stage({ ...stopped, state: 'starting' }, { bootSeconds: 7 })
@@ -364,12 +388,40 @@ const stage = (service, extra = {}) => overlayPlan({
     assert.equal(tree.some(node => node.props.className === 'dsh-comfyui-spinner'), false)
   }
 
-  // Stopped with no directory: the hint names the folder, and there is still
-  // nothing to click here.
+  // Stopped with no directory: the hint names the folder, offers the official
+  // installation page (the one thing that person cannot get from this page),
+  // and there is still no button here.
   {
     const tree = render(stage(stopped, { dir: '' }))
     assert.equal(tree.find(node => node.props.className === 'dsh-comfyui-empty-hint').children[0], en.notRunningPick)
+    const link = tree.find(node => node.type === 'a')
+    assert.equal(link.props.href, 'https://docs.comfy.org/installation')
+    assert.equal(link.props.target, '_blank')
+    assert.equal(link.props.rel, 'noreferrer')
+    assert.equal(textOf(link), en.installLink)
     assert.equal(tree.some(node => node.props.className === 'dsh-comfyui-empty-note'), false)
+    assert.equal(buttons(tree).length, 0)
+  }
+
+  // With a folder already chosen there is nothing to install.
+  {
+    const tree = render(stage(stopped))
+    assert.equal(tree.some(node => node.type === 'a'), false)
+  }
+
+  // Failed: the title is the failure, the hint is the error, and the log path
+  // sits beside the folder.
+  {
+    const tree = render(stage({
+      ...stopped,
+      state: 'failed',
+      lastError: 'spawn python ENOENT',
+      logPath: '/var/log/comfyui.log',
+    }))
+    assert.equal(tree.find(node => node.props.className === 'dsh-comfyui-empty-title').children[0], en.serverStartFailed)
+    assert.equal(tree.find(node => node.props.className === 'dsh-comfyui-empty-hint').children[0], 'spawn python ENOENT')
+    const notes = tree.filter(node => node.props.className === 'dsh-comfyui-empty-note').map(node => node.children[0])
+    assert.deepEqual(notes, ['/opt/ComfyUI', '/var/log/comfyui.log'])
     assert.equal(buttons(tree).length, 0)
   }
 
