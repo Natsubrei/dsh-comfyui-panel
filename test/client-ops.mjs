@@ -153,8 +153,8 @@ assert.throws(() => run(makeGraph().graph, { op: 'add_node', type: 'NoSuchNode' 
 // Both dictionaries carry the same keys, so a missing translation cannot ship.
 assert.deepEqual(Object.keys(en).sort(), Object.keys(zh).sort())
 
-// The top bar decides which lifecycle button is offered; these are the rules
-// that used to live inline in JSX and could only be checked by eye.
+// The bar offers a fixed pair of commands; only their availability changes.
+// That rule used to live inline in JSX and could only be checked by eye.
 const { barPlan } = mod.__ops
 const text = key => en[key] ?? key
 const plan = (service, extra = {}) => barPlan({
@@ -162,83 +162,96 @@ const plan = (service, extra = {}) => barPlan({
   service,
   busy: false,
   dir: '/opt/ComfyUI',
-  bootSeconds: 0,
   t: text,
   ...extra,
 })
 const running = { health: true, owned: true, state: 'running', pid: 2808 }
 const stopped = { health: false, owned: false, state: 'stopped', pid: null }
+const starting = { health: false, owned: true, state: 'starting', pid: 2808 }
+const external = { health: true, owned: false, state: 'running', pid: null }
+const failed = { health: false, owned: false, state: 'failed', pid: null }
+const matrix = result => result.actions.map(action => [action.action, action.disabled])
+const off = [['start', true], ['stop', true]]
 
-// Unknown service: no button can be trusted yet.
+// Unknown service: both commands are there, inert, and say why.
 {
   const result = plan(null, { status: 'loading' })
   assert.equal(result.label, en.barUnknown)
-  assert.deepEqual(result.actions.map(action => [action.action, action.disabled]), [['start', true]])
+  assert.deepEqual(matrix(result), off)
+  assert.equal(result.actions[0].title, en.barUnknown)
 }
 
-// Stopped with a directory: one primary Start, nothing else competing for it.
+// Stopped with a directory: Start is live, Stop has nothing to do.
 {
   const result = plan(stopped)
   assert.equal(result.label, en.barStopped)
   assert.equal(result.tone, 'idle')
-  assert.deepEqual(result.actions.map(action => action.action), ['start'])
-  assert.equal(result.actions[0].variant, 'primary')
-  assert.equal(result.actions[0].disabled, false)
+  assert.deepEqual(matrix(result), [['start', false], ['stop', true]])
+  assert.equal(result.actions[1].title, en.serverStopped)
 }
 
-// Stopped without a directory: Start stays visible but explains itself.
+// Stopped without a directory: Start explains itself instead of firing.
 {
   const result = plan(stopped, { dir: '  ' })
-  assert.equal(result.actions[0].disabled, true)
+  assert.deepEqual(matrix(result), off)
   assert.equal(result.actions[0].title, en.serverPick)
 }
 
-// While starting, the same slot reports progress instead of inviting a click.
+// Starting: Stop is live (it cancels the boot), Start waits for the outcome.
 {
-  const result = plan({ ...stopped, state: 'starting' }, { status: 'loading' })
+  const result = plan(starting, { status: 'loading' })
   assert.equal(result.label, en.barStarting)
-  assert.equal(result.tone, 'warn')
-  assert.equal(result.actions[0].disabled, true)
+  assert.deepEqual(matrix(result), [['start', true], ['stop', false]])
+  assert.equal(result.actions[0].title, en.serverStarting)
 }
 
-// A failed start is an error tone and Start becomes Retry.
+// A failed start leaves Start available for another try and nothing to stop.
 {
-  const result = plan({ ...stopped, state: 'failed' })
+  const result = plan(failed)
   assert.equal(result.label, en.barFailed)
   assert.equal(result.tone, 'error')
-  assert.equal(result.actions[0].disabled, false)
-  assert.equal(result.actions[0].title, en.serverStartFailed)
+  assert.deepEqual(matrix(result), [['start', false], ['stop', true]])
+  assert.equal(result.actions[1].title, en.serverStopped)
 }
 
-// Running and owned: Stop plus Restart, both quiet next to the primary style.
+// Running and owned: Stop is live, Start says it is already up.
 {
   const result = plan(running)
   assert.equal(result.label, en.barRunning)
   assert.equal(result.tone, 'ok')
-  assert.deepEqual(result.actions.map(action => action.action), ['stop', 'restart'])
-  assert.ok(result.actions.every(action => action.variant === 'quiet' && action.disabled === false))
+  assert.deepEqual(matrix(result), [['start', true], ['stop', false]])
+  assert.equal(result.actions[0].title, en.serverAlreadyRunning)
   assert.equal(result.chipTitle, en.serverRunning.replace('{{pid}}', '2808'))
 }
 
-// A request in flight disables both, so a double click cannot race the host.
+// A request in flight greys both, so a double click cannot race the host.
 {
   const result = plan(running, { busy: true })
-  assert.deepEqual(result.actions.map(action => action.disabled), [true, true])
+  assert.deepEqual(matrix(result), off)
+  assert.equal(result.actions[0].title, en.serverBusy)
 }
 
-// A healthy server the plugin does not own: Restart stays visible but inert.
+// A healthy server the plugin does not own: both stay visible, both inert.
 {
-  const result = plan({ health: true, owned: false, state: 'external', pid: null })
+  const result = plan(external)
   assert.equal(result.label, en.barExternal)
-  assert.deepEqual(result.actions.map(action => [action.action, action.disabled]), [['restart', true]])
-  assert.equal(result.actions[0].title, en.serverExternalHint)
+  assert.deepEqual(matrix(result), off)
+  assert.equal(result.actions[0].title, en.serverNotOwned)
+  assert.equal(result.actions[1].title, en.serverNotOwned)
 }
 
-// The bridge lags the backend, so the label says both instead of "Connected".
+// A healthy server says so while the editor is still booting: that phase is
+// the stage overlay's job, and "running · connecting" read as if the server
+// were the thing still connecting.
 {
-  const loading = plan(running, { status: 'loading', bootSeconds: 12 })
-  assert.equal(loading.tone, 'warn')
-  assert.equal(loading.label, `${en.barRunning} · ${en.barConnecting} 12s`)
+  const loading = plan(running, { status: 'loading' })
+  assert.equal(loading.tone, 'ok')
+  assert.equal(loading.label, en.barRunning)
+}
+
+// A bridge that is actually broken is worth a red label, because every tool
+// that needs the editor will fail.
+{
   const failedBridge = plan(running, { status: 'error' })
   assert.equal(failedBridge.tone, 'error')
   assert.equal(failedBridge.label, `${en.barRunning} · ${en.error}`)
@@ -263,17 +276,17 @@ const stage = (service, extra = {}) => overlayPlan({
   assert.equal(result.stage, 'stopped')
   assert.equal(result.title, en.notRunning)
   assert.equal(result.canStart, true)
-  assert.equal(result.hint, '')
+  assert.equal(result.hint, en.notRunningHint)
 }
 
-// No directory configured: Start is inert and the reason is on screen, not
-// only in a hover title a touch user never sees.
+// No directory configured: the hint says where to choose one, because the
+// card itself carries no buttons any more.
 {
   const result = stage(stopped, { dir: '   ' })
   assert.equal(result.stage, 'stopped')
   assert.equal(result.canStart, false)
   assert.equal(result.needDir, true)
-  assert.equal(result.hint, en.serverPick)
+  assert.equal(result.hint, en.notRunningPick)
 }
 
 // Starting is a progress report, not a clickable Start.
@@ -332,49 +345,40 @@ const stage = (service, extra = {}) => overlayPlan({
   }
   const render = (result, extra = {}) => nodes(StageOverlay({
     stage: result,
-    busy: false,
     t: text,
-    onStart() {},
     onReload() {},
-    onService() {},
     ...extra,
   }))
   const textOf = node => (Array.isArray(node) ? node.map(textOf).join('') : (node.children ?? []).map(child => (typeof child === 'string' ? child : textOf(child))).join(''))
   const buttons = tree => tree.filter(node => node.type === 'button')
 
-  // Stopped: the title, the reason, Start, and a way into the settings.
+  // Stopped: the title, the reason, and the folder. No buttons — the bar
+  // underneath owns Start and Settings, and a second Start here only asked
+  // which one was the real one.
   {
     const tree = render(stage(stopped))
     assert.equal(tree.find(node => node.props.className === 'dsh-comfyui-empty-title').children[0], en.notRunning)
-    const [start, settings] = buttons(tree)
-    assert.equal(textOf(start), en.serverStart)
-    assert.equal(start.props['data-variant'], 'primary')
-    assert.equal(start.props.disabled, false)
-    assert.equal(textOf(settings), en.serverPanel)
+    assert.equal(tree.find(node => node.props.className === 'dsh-comfyui-empty-hint').children[0], en.notRunningHint)
+    assert.equal(tree.find(node => node.props.className === 'dsh-comfyui-empty-note').children[0], '/opt/ComfyUI')
+    assert.equal(buttons(tree).length, 0)
     assert.equal(tree.some(node => node.props.className === 'dsh-comfyui-spinner'), false)
   }
 
-  // Stopped with no directory: Start is inert, and the hint is visible text.
+  // Stopped with no directory: the hint names the folder, and there is still
+  // nothing to click here.
   {
     const tree = render(stage(stopped, { dir: '' }))
-    const start = buttons(tree)[0]
-    assert.equal(start.props.disabled, true)
-    assert.equal(start.props.title, en.serverPick)
-    assert.ok(tree.some(node => node.props.className === 'dsh-comfyui-empty-hint' && node.children[0] === en.serverPick))
+    assert.equal(tree.find(node => node.props.className === 'dsh-comfyui-empty-hint').children[0], en.notRunningPick)
+    assert.equal(tree.some(node => node.props.className === 'dsh-comfyui-empty-note'), false)
+    assert.equal(buttons(tree).length, 0)
   }
 
-  // A start in flight must not be clickable twice.
-  {
-    const tree = render(stage(stopped), { busy: true })
-    assert.equal(buttons(tree)[0].props.disabled, true)
-  }
-
-  // Stalled: the recovery action is Reload, not Start.
+  // Stalled: the one recovery action, because the editor cannot fix itself.
   {
     const tree = render(stage(running, { bootSeconds: 90 }))
     assert.equal(tree.find(node => node.props.className === 'dsh-comfyui-empty-title').children[0], en.editorStalled)
     assert.equal(textOf(buttons(tree)[0]), en.reload)
-    assert.equal(buttons(tree).length, 2)
+    assert.equal(buttons(tree).length, 1)
   }
 
   // Loading and starting keep the spinner, with the elapsed time in the text.
@@ -1360,7 +1364,7 @@ const stage = (service, extra = {}) => overlayPlan({
   }
   const render = (run, extra = {}) => walk(TopBar({
     stats: { nodes: 2, links: 1, revision: 3, name: null },
-    synced: '',
+    syncLabel: '',
     syncAt: 0,
     runText: runLabel(run, text, 1_700_000_010_000),
     previewUrl: '',
@@ -1398,6 +1402,16 @@ const stage = (service, extra = {}) => overlayPlan({
     cancel: 'none',
   }
 
+  // The popover is the same three buttons in every state, and Settings is a
+  // word rather than a glyph.
+  {
+    const body = buttons(render(running))
+      .filter(button => typeof button.props.className === 'string'
+        && button.props.className.includes('dsh-comfyui-button')
+        && button.props['data-action'] !== 'cancel')
+    assert.deepEqual(body.map(button => button.children[0]), [en.serverStart, en.serverStop, en.settings])
+    assert.equal(body.some(button => button.props['aria-label'] === 'settings'), false, 'no icon-only Settings')
+  }
   {
     const tree = render(running)
     assert.equal(cancel(tree)?.children[0], en.runCancel)

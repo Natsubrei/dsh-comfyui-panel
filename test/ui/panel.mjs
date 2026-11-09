@@ -2,8 +2,8 @@
  * Headless check for the ComfyUI panel: open the GUI in a real browser, put the
  * panel in a throwaway session, and assert the behaviour that is easy to break
  * without noticing — the editor boots, counters match the graph, zooming does
- * not look like an edit, a real edit bumps the revision once, and Fit frames
- * the graph.
+ * not look like an edit, a real edit bumps the revision once, and the graph is
+ * framed when the editor loads.
  *
  * It runs against a live `dsh web` and needs no test-only routes: everything is
  * read from the panel's own DOM (`data-nodes`, `data-revision`, …) and from the
@@ -413,17 +413,51 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
   })()`)
   record('the right column is open', dockOpen === true, dockOpen === true ? '' : 'the composer is not in the page')
 
+  // The empty field and the send button share one line. A content-box height
+  // plus padding makes the field taller than the button and parks the text
+  // above it, while both elements still look centred in a screenshot.
+  const composer = await browser.evaluate(`(() => {
+    const field = document.querySelector('.dsh-comfyui-dock-input')
+    const send = document.querySelector('.dsh-comfyui-send')
+    if (field === null || send === null) return null
+    const line = field.getBoundingClientRect()
+    const button = send.getBoundingClientRect()
+    return {
+      empty: field.value === '',
+      top: Math.abs(line.top - button.top),
+      height: Math.abs(line.height - button.height),
+    }
+  })()`)
+  record('the empty composer centres the field on the button',
+    composer !== null && composer.empty === true && composer.top <= 1 && composer.height <= 1,
+    composer === null ? 'no composer'
+      : !composer.empty ? 'the field was not empty'
+        : `${composer.top.toFixed(1)} px apart, ${composer.height.toFixed(1)} px taller`)
+
   await browser.click('.dsh-comfyui-dock-toggle')
   await sleep(300)
   const tab = await browser.evaluate(`(() => {
     const button = document.querySelector('.dsh-comfyui-dock.is-closed .dsh-comfyui-dock-toggle')
     if (button === null) return null
     const rect = button.getBoundingClientRect()
-    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, w: rect.width, h: rect.height, text: (button.textContent ?? '').trim() }
+    const stage = document.querySelector('.dsh-comfyui-stage')
+    return {
+      x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, w: rect.width, h: rect.height,
+      text: (button.textContent ?? '').trim(),
+      // The glass has to sample the canvas. A backdrop-filter left on the
+      // zero-width dock makes the tab paint the dock's own dark layer while
+      // its background-color still reads as the glass.
+      filter: getComputedStyle(button.closest('.dsh-comfyui-dock')).backdropFilter,
+      bg: getComputedStyle(button).backgroundColor,
+      canvas: stage === null ? '' : getComputedStyle(stage).backgroundColor,
+    }
   })()`)
   record('collapsing leaves a reopen tab',
     tab !== null && tab.w >= 16 && tab.h >= 48 && tab.text.length > 0,
     tab === null ? 'no tab' : `${tab.text} ${String(Math.round(tab.w))}×${String(Math.round(tab.h))}`)
+  record('the reopen tab is glass, not the canvas',
+    tab !== null && tab.filter === 'none' && tab.bg !== '' && tab.bg !== tab.canvas,
+    tab === null ? 'no tab' : `filter ${tab.filter}; tab ${tab.bg}; canvas ${tab.canvas}`)
   if (tab !== null) {
     await browser.move(tab.x, tab.y)
     await sleep(200)
@@ -445,12 +479,87 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
   const reopened = await browser.evaluate(`document.querySelector('.dsh-comfyui-dock:not(.is-closed) .dsh-comfyui-dock-input') !== null`)
   record('the tab opens the column', reopened === true, '')
 
+  // The toolbar must not sit in a ComfyUI corner, and Settings must open as a
+  // sheet attached to it rather than take a row from the canvas.
+  const geometry = await browser.evaluate(`(() => {
+    const bar = document.querySelector('.dsh-comfyui-bar')
+    const stage = document.querySelector('.dsh-comfyui-stage')
+    if (bar === null || stage === null) return null
+    const pill = bar.getBoundingClientRect()
+    const canvas = stage.getBoundingClientRect()
+    return { dx: Math.abs((pill.x + pill.width / 2) - (canvas.x + canvas.width / 2)), stage: canvas.height }
+  })()`)
+  record('the toolbar sits in the bottom centre', geometry !== null && geometry.dx <= 8,
+    geometry === null ? 'no bar' : `${(geometry.dx).toFixed(0)} px off centre`)
+
+  // Three buttons, no more, and no click needed to reach them.
+  const buttons = await browser.evaluate(`(() => {
+    const bar = document.querySelector('.dsh-comfyui-bar')
+    if (bar === null) return null
+    return [...bar.querySelectorAll('button')].map(button => ({ text: button.textContent, disabled: button.disabled }))
+  })()`)
+  record('the toolbar offers the same three buttons',
+    Array.isArray(buttons) && buttons.length === 3
+      && buttons[0].text === 'Start' && buttons[0].disabled === true
+      && buttons[1].text === 'Stop' && buttons[1].disabled === false
+      && buttons[2].text === 'Settings' && buttons[2].disabled === false,
+    Array.isArray(buttons) ? buttons.map(button => `${button.text}${button.disabled ? ' (off)' : ''}`).join(' · ') : 'no bar')
+  await shoot('01c-toolbar.png')
+
+  await browser.click('[data-tool="server"]')
+  await sleep(250)
+  const sheet = await browser.evaluate(`(() => {
+    const card = document.querySelector('.dsh-comfyui-sheet')
+    const stage = document.querySelector('.dsh-comfyui-stage')
+    if (card === null || stage === null) return null
+    const box = card.getBoundingClientRect()
+    return { w: box.width, h: box.height, stage: stage.getBoundingClientRect().height }
+  })()`)
+  await shoot('01b-settings.png')
+  record('settings opens as a sheet over the canvas',
+    sheet !== null && sheet.w > 200 && Math.abs(sheet.stage - (geometry?.stage ?? 0)) < 1,
+    sheet === null ? 'no sheet' : `${(sheet.w).toFixed(0)}×${(sheet.h).toFixed(0)}, canvas ${(sheet.stage).toFixed(0)}`)
+  await browser.click('.dsh-comfyui-sheet-head .dsh-comfyui-icon')
+  await sleep(200)
+  const sheetGone = await browser.evaluate(`document.querySelector('.dsh-comfyui-sheet') === null`)
+  record('the sheet closes', sheetGone === true, '')
+
   layer = 'editor'
   const editor = await browser.waitFor(`(() => { const app = ${APP}; return app ? true : null })()`, {
     label: 'the editor', timeout: 5_000,
   }).catch(() => false)
   record('editor boots', editor === true, bootMs > 0 ? `${(bootMs / 1000).toFixed(1)} s to the editor API` : '')
   if (editor !== true) return { results, shots }
+
+  // The panel frames the graph itself on load; the Fit button is gone, so
+  // this is the only place the framing can be observed.
+  const framing = `(() => {
+    const graph = ${GRAPH}
+    const app = ${APP}
+    const view = app?.canvasInternal ?? app?.canvas
+    if (!graph || !view || !view.ds) return null
+    const ds = view.ds
+    const element = view.canvas ?? view.canvasEl
+    if (!element || typeof element.getBoundingClientRect !== 'function') return null
+    const box = element.getBoundingClientRect()
+    if (box.width < 40 || box.height < 40) return null
+    const project = (x, y) => typeof ds.convertOffsetToCanvas === 'function'
+      ? ds.convertOffsetToCanvas([x, y])
+      : [(x + ds.offset[0]) * ds.scale, (y + ds.offset[1]) * ds.scale]
+    const nodes = graph._nodes ?? []
+    if (nodes.length === 0) return { scale: ds.scale, inside: false, nodes: 0 }
+    const inside = nodes.every(node => {
+      const [left, top] = project(node.pos[0], node.pos[1])
+      const [right, bottom] = project(node.pos[0] + node.size[0], node.pos[1] + node.size[1])
+      return left >= -1 && top >= -1 && right <= box.width + 1 && bottom <= box.height + 1
+    })
+    return { scale: ds.scale, inside, nodes: nodes.length }
+  })()`
+  await browser.waitFor(framing, { label: 'the camera', timeout: 5_000 }).catch(() => null)
+  const framed = await browser.evaluate(framing).catch(() => null)
+  record('the panel frames the graph on load',
+    framed !== null && framed.inside === true && framed.nodes > 0,
+    framed === null ? 'no camera' : `${framed.nodes} nodes, scale ${Number(framed.scale).toFixed(3)}, ${framed.inside ? 'inside' : 'outside'} the canvas`)
 
   const panel = await browser.waitFor(`(() => {
     const stats = document.querySelector('${DOM.stats}')
@@ -657,28 +766,6 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
     cancelReady === true && cancelLabelBefore !== null && cancelLabelBusy.includes('…') && cancelLabelAfter?.text === 'Cancel' && cancelLabelAfter?.disabled === false,
     cancelLabelAfter === null ? 'the Cancel button disappeared' : `${String(cancelLabelBefore)} → ${String(cancelLabelBusy)} → ${String(cancelLabelAfter.text)}`)
 
-  // Fit goes through ComfyUI's own command, which frames the selection when
-  // one exists and the whole graph otherwise; either way the camera changes.
-  if (graph.nodes === 0) {
-    record('Fit frames the graph', true, 'skipped: empty graph')
-  } else {
-    // Zoom in, not out: the fitted scale is also the minimum, so zooming out
-    // can leave Fit with nothing to change and the check with nothing to see.
-    await browser.wheel(center.x, center.y, -480)
-    await sleep(500)
-    const zoomedOut = await readGraph(browser)
-    // The bar is a chip until it is clicked; its tools are not hit-testable
-    // while collapsed, and this is the same gesture a person makes.
-    await browser.evaluate(`document.querySelector('.dsh-comfyui-chip')?.click()`)
-    await sleep(300)
-    await browser.click('[data-tool="fit"]')
-    await sleep(1200)
-    const fitted = await readGraph(browser)
-    record('Fit frames the graph', fitted.scale !== zoomedOut.scale,
-      `scale ${zoomedOut.scale.toFixed(3)} → ${fitted.scale.toFixed(3)}`)
-    await shoot('05-fitted.png')
-  }
-
   layer = 'desk'
   record('the page owns one desk session', typeof deskSessionId === 'string' && deskSessionId.length > 0,
     typeof deskSessionId === 'string' ? deskSessionId : 'no session id')
@@ -843,7 +930,7 @@ export async function main(argv) {
     const detail = 'error' in service
       ? ` (${service.error})`
       : (service.lastError === null ? '' : `, last error: ${service.lastError}`)
-    console.error(`ComfyUI is not reachable: ${SERVICE_ROUTE} reports state ${state}${detail}; start ComfyUI from the panel's Server controls, then run this check again`)
+    console.error(`ComfyUI is not reachable: ${SERVICE_ROUTE} reports state ${state}${detail}; start ComfyUI from the panel's Settings, then run this check again`)
     return 2
   }
   let browser

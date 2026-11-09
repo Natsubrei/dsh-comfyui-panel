@@ -26,9 +26,9 @@ check says so when it sees a URL without `?token=…`.
 
 One browser, three layers, printed in that order. A later layer still runs when an earlier check fails, except when the editor never boots or the counters never appear: the rest of the editor has nothing to read.
 
-**page.** The shell of this plugin's page. The sidebar entry opens it, the right column is there, collapsing it leaves a tab, hovering that tab does not hide it, and the tab opens the column again.
+**page.** The shell of this plugin's page. The sidebar entry opens it, the right column is there, the empty composer's field and send button share a line, collapsing it leaves a tab whose glass samples the canvas, hovering that tab does not hide it, and the tab opens the column again.
 
-**editor.** The canvas, once the page is up. The editor boots, the chip knows the server, a sync is accepted, the socket id reached the Host, the counters match the graph, open tabs are reported, zooming is not an edit, a widget edit bumps the revision once, bus events reach the bar (progress, preview, per-node progress, Cancel), and Fit frames the graph.
+**editor.** The canvas, once the page is up. The editor boots, the bar knows the server, a sync is accepted, the socket id reached the Host, the counters match the graph, open tabs are reported, zooming is not an edit, a widget edit bumps the revision once, bus events reach the bar (progress, preview, per-node progress, Cancel), and the panel frames the graph when the editor loads.
 
 **desk.** The column's session. The page owns one session id, the transcript route answers, and New points the page at a different session. New runs last because it remounts the editor.
 

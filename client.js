@@ -47,15 +47,14 @@ window.__ModuleLoader__.load({
       sync: 'Sync',
       syncHint: 'Push the current graph to the model now',
       reload: 'Reload',
-      reloadHint: 'Reload the embedded editor',
-      fitView: 'Zoom to fit',
       modelEdited: 'Model edit',
       syncedAt: 'synced {{time}}',
       syncPending: 'syncing…',
       notRunning: 'ComfyUI is not running',
+      notRunningHint: 'Start the server from the bottom toolbar; the editor appears here once it is ready.',
+      notRunningPick: 'Choose the ComfyUI folder in Settings first; the bottom toolbar starts the server from there.',
       editorStalled: 'The editor did not load',
-      editorStalledHint: 'ComfyUI answers, but the frontend never exposed its editor. Reload it, or start the server again from Server settings.',
-      open: 'Open in new tab',
+      editorStalledHint: 'ComfyUI answers, but the frontend never exposed its editor. Reload it, or start the server again from Settings.',
       noSession: 'No session',
       stats: '{{nodes}} nodes · {{links}} links',
       statsTitle: '{{nodes}} nodes · {{links}} links · rev {{revision}}',
@@ -76,29 +75,30 @@ window.__ModuleLoader__.load({
       serverRunning: 'ComfyUI running (pid {{pid}})',
       serverExternal: 'ComfyUI running (started outside the plugin)',
       serverStopped: 'ComfyUI is not running',
-      serverStarting: 'Starting ComfyUI…',
+      serverAlreadyRunning: 'Already running',
+      serverStarting: 'Starting ComfyUI',
       serverDir: 'ComfyUI directory',
       serverDirHint: 'The folder that contains main.py',
       serverAutoStart: 'Start with DSH',
       serverStart: 'Start',
       serverStop: 'Stop',
-      serverRestart: 'Restart',
-      serverSave: 'Save settings',
+      serverBusy: 'Waiting for the previous request',
+      serverSave: 'Save',
       serverFailed: 'Could not control ComfyUI',
       serverStartFailed: 'ComfyUI did not start',
       serverExternalHint: 'This ComfyUI was not started by the plugin, so Stop and Restart are unavailable. Restart it where it was launched.',
       serverNotOwned: 'Not managed by this plugin',
       serverPick: 'Pick the ComfyUI folder, then start it here.',
-      serverPanel: 'Server settings',
+      settings: 'Settings',
       close: 'Close',
       barRunning: 'Running',
       barExternal: 'External',
       barStopped: 'Stopped',
-      barStarting: 'Starting…',
+      barStarting: 'Starting',
       barFailed: 'Start failed',
-      barUnknown: 'Checking…',
-      barConnecting: 'connecting…',
+      barUnknown: 'Checking',
       assistant: 'Assistant',
+      assistantClose: 'Collapse',
       assistantNew: 'New',
       assistantPlaceholder: 'Say what to change',
       assistantSend: 'Send',
@@ -117,15 +117,14 @@ window.__ModuleLoader__.load({
       sync: '同步',
       syncHint: '立即把当前工作流推给模型',
       reload: '重载',
-      reloadHint: '重新加载内嵌编辑器',
-      fitView: '缩放以适应',
       modelEdited: '模型修改',
       syncedAt: '已同步 {{time}}',
       syncPending: '同步中…',
       notRunning: 'ComfyUI 未运行',
+      notRunningHint: '在底部工具栏点击「启动」，服务就绪后编辑器会显示在这里。',
+      notRunningPick: '请先在「设置」中选择 ComfyUI 目录，之后即可在底部工具栏启动服务。',
       editorStalled: '编辑器没有加载出来',
-      editorStalledHint: 'ComfyUI 有响应，但前端一直没有交出编辑器。可以重新加载；如果仍不行，到「服务设置」里重启服务。',
-      open: '新标签打开',
+      editorStalledHint: 'ComfyUI 有响应，但前端一直没有交出编辑器。可以重新加载；如果仍不行，到「设置」里重启服务。',
       noSession: '无会话',
       stats: '{{nodes}} 个节点 · {{links}} 条连线',
       statsTitle: '{{nodes}} 个节点 · {{links}} 条连线 · rev {{revision}}',
@@ -144,29 +143,30 @@ window.__ModuleLoader__.load({
       serverRunning: 'ComfyUI 运行中（pid {{pid}}）',
       serverExternal: 'ComfyUI 在运行（外部启动）',
       serverStopped: 'ComfyUI 未运行',
-      serverStarting: '正在启动 ComfyUI…',
+      serverAlreadyRunning: '已经在运行',
+      serverStarting: '正在启动 ComfyUI',
       serverDir: 'ComfyUI 目录',
       serverDirHint: '包含 main.py 的那个目录',
       serverAutoStart: '随 DSH 启动',
       serverStart: '启动',
       serverStop: '停止',
-      serverRestart: '重启',
-      serverSave: '保存设置',
+      serverBusy: '上一次请求还没结束',
+      serverSave: '保存',
       serverFailed: '无法控制 ComfyUI',
       serverStartFailed: '启动失败',
       serverExternalHint: '这个 ComfyUI 不是插件启动的，停止和重启不可用；请到启动它的地方重启。',
       serverNotOwned: '不归本插件管理',
       serverPick: '选好 ComfyUI 目录后，在这里启动它。',
-      serverPanel: '服务设置',
+      settings: '设置',
       close: '关闭',
       barRunning: '运行中',
       barExternal: '外部运行',
       barStopped: '未启动',
-      barStarting: '启动中…',
+      barStarting: '启动中',
       barFailed: '启动失败',
-      barUnknown: '检查中…',
-      barConnecting: '连接中…',
+      barUnknown: '检查中',
       assistant: '助手',
+      assistantClose: '收起',
       assistantNew: '新建',
       assistantPlaceholder: '说要改什么',
       assistantSend: '发送',
@@ -185,37 +185,52 @@ window.__ModuleLoader__.load({
         font: inherit;
       }
       .dsh-comfyui-bar {
-        /* ComfyUI owns every corner of the canvas, so this is not a point in
-           one. It is a chip over the bottom-left, where only the frame-rate
-           readout sits, and it expands to the full row on click. */
-        position: absolute; left: 12px; bottom: 12px; z-index: 4;
-        display: flex; align-items: center; gap: 6px;
+        /* ComfyUI owns every corner: tabs top-left, Run top-right, its settings
+           and frame-rate readout bottom-left, zoom bottom-right. The bottom
+           centre belongs to none of them, so the toolbar sits there, over the
+           canvas, without pushing it anywhere. */
+        position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
+        z-index: 4;
+        display: flex; align-items: center; gap: 4px;
         max-width: calc(100% - 24px);
         padding: 4px;
-        font-size: 13px; line-height: 20px;
         border: .5px solid var(--line, var(--dsw-alias-border-l1));
         border-radius: 999px;
         background: var(--glass, var(--dsw-alias-bg-layer-1));
         backdrop-filter: blur(24px) saturate(160%);
+        box-shadow: var(--dsw-elevation-soft);
+        font-size: 13px; line-height: 20px;
+        color: var(--ink2);
       }
-      .dsh-comfyui-bar[data-expanded="true"] {
-        flex-wrap: wrap; align-items: flex-start;
-        padding: 8px 10px; border-radius: var(--r-md, 12px);
-      }
-      .dsh-comfyui-chip {
+      .dsh-comfyui-status {
         display: flex; align-items: center; gap: 6px;
-        height: 26px; padding: 0 10px 0 8px;
-        border: 0; border-radius: 999px;
-        background: transparent; color: var(--ink2, var(--dsw-alias-label-secondary));
-        font: inherit; cursor: pointer;
+        min-width: 0; padding: 0 8px 0 6px;
       }
-      .dsh-comfyui-chip:hover { background: var(--hover, var(--dsw-alias-bg-layer-2)); }
-      .dsh-comfyui-bar:not([data-expanded="true"]) .dsh-comfyui-bar-body { display: none; }
-      .dsh-comfyui-bar[data-expanded="true"] .dsh-comfyui-bar-body {
-        display: flex; flex: 1 1 100%; align-items: center; gap: 6px; flex-wrap: wrap;
+      .dsh-comfyui-actions { display: flex; align-items: center; gap: 2px; }
+      .dsh-comfyui-bar .dsh-comfyui-button {
+        height: 28px; padding: 0 12px; border-radius: 999px;
+        color: var(--ink, var(--dsw-alias-label-primary));
       }
-      .dsh-comfyui-bar .dsh-comfyui-button { height: 32px; padding: 0 12px; }
-      .dsh-comfyui-bar .dsh-comfyui-icon { width: 32px; }
+      .dsh-comfyui-bar .dsh-comfyui-button:hover:not(:disabled) {
+        background: color-mix(in srgb, var(--ink) 10%, transparent);
+      }
+      .dsh-comfyui-bar .dsh-comfyui-button:disabled {
+        color: var(--ink2, var(--dsw-alias-label-secondary));
+        opacity: .6;
+      }
+      .dsh-comfyui-bar .dsh-comfyui-button[data-active="true"] {
+        background: color-mix(in srgb, var(--ink) 10%, transparent);
+      }
+      .dsh-comfyui-bar-sep {
+        width: 1px; height: 14px; flex: 0 0 auto;
+        margin: 0 3px;
+        background: color-mix(in srgb, var(--ink) 22%, transparent);
+      }
+      .dsh-comfyui-visually-hidden {
+        position: absolute; width: 1px; height: 1px; overflow: hidden;
+        clip-path: inset(50%); white-space: nowrap;
+      }
+      .dsh-comfyui-bar .dsh-comfyui-icon { width: 28px; padding: 0; }
       .dsh-comfyui-dot {
         width: 7px; height: 7px; border-radius: 50%;
         background: var(--dsw-alias-state-idle-primary);
@@ -229,6 +244,7 @@ window.__ModuleLoader__.load({
       .dsh-comfyui-state[data-tone="warn"] { color: var(--dsw-alias-state-warn-primary); }
       .dsh-comfyui-state[data-tone="error"] { color: var(--dsw-alias-state-error-primary); }
       .dsh-comfyui-run {
+        min-width: 0; overflow: hidden; text-overflow: ellipsis;
         color: var(--dsw-alias-state-warn-primary);
         white-space: nowrap;
       }
@@ -250,13 +266,13 @@ window.__ModuleLoader__.load({
          on the first line even when the bar wraps, and the panel utilities
          keep the corner because they are the least-used and the least
          dangerous to hit by accident. */
-      .dsh-comfyui-actions, .dsh-comfyui-tools {
+      .dsh-comfyui-actions {
         display: flex; align-items: center; gap: 4px; flex: 0 0 auto;
+        margin-left: 2px;
       }
-      .dsh-comfyui-actions { margin-left: 2px; }
-      .dsh-comfyui-tools {
-        margin-left: auto; padding-left: 8px;
-        border-left: .5px solid var(--line, var(--dsw-alias-border-l1));
+      .dsh-comfyui-bar-divider { margin-left: 2px; padding: 0 12px 0 10px; }
+      .dsh-comfyui-bar-divider[data-active="true"] {
+        background: var(--dsw-alias-bg-layer-2); color: var(--ink);
       }
       .dsh-comfyui-button {
         height: 32px; padding: 0 12px; border-radius: var(--r-md, 12px); cursor: pointer;
@@ -308,13 +324,65 @@ window.__ModuleLoader__.load({
         font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         pointer-events: none;
       }
-      .dsh-comfyui-empty { flex-direction: column; gap: 10px; }
-      .dsh-comfyui-empty-title { color: var(--dsw-alias-label-primary); font-size: 13px; }
+      .dsh-comfyui-empty {
+        flex-direction: column; gap: 0;
+        background:
+          radial-gradient(120% 80% at 50% 8%, color-mix(in srgb, var(--card) 70%, transparent) 0%, transparent 62%),
+          var(--dsw-alias-bg-base);
+      }
+      .dsh-comfyui-empty-card {
+        display: flex; flex-direction: column; align-items: center; gap: 14px;
+        width: min(420px, calc(100% - 48px));
+        padding: 40px 36px 34px;
+        text-align: center;
+        border: .5px solid var(--line, var(--dsw-alias-border-l1));
+        border-radius: 24px;
+        background: color-mix(in srgb, var(--card) 62%, transparent);
+        backdrop-filter: blur(30px) saturate(160%);
+        box-shadow: 0 20px 60px color-mix(in srgb, #000 10%, transparent);
+      }
+      .dsh-comfyui-empty-mark {
+        display: grid; place-items: center;
+        width: 68px; height: 68px; border-radius: 22px;
+        margin-bottom: 2px;
+        background: linear-gradient(180deg, color-mix(in srgb, var(--card) 92%, transparent), color-mix(in srgb, var(--card) 60%, transparent));
+        box-shadow:
+          inset 0 0 0 .5px var(--line, var(--dsw-alias-border-l1)),
+          0 10px 30px color-mix(in srgb, #000 12%, transparent);
+      }
+      .dsh-comfyui-empty-title {
+        color: var(--dsw-alias-label-primary);
+        font-size: 19px; line-height: 26px; font-weight: 600; letter-spacing: -.01em;
+      }
       .dsh-comfyui-empty-hint {
-        max-width: 360px; text-align: center; line-height: 1.5;
+        max-width: 292px; line-height: 1.6;
         color: var(--dsw-alias-label-secondary);
       }
-      .dsh-comfyui-empty-actions { display: flex; align-items: center; gap: 8px; }
+      .dsh-comfyui-empty-actions { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+      .dsh-comfyui-empty-actions .dsh-comfyui-button { height: 36px; padding: 0 18px; border-radius: 10px; }
+      .dsh-comfyui-empty-actions .dsh-comfyui-button[data-variant="quiet"] {
+        box-shadow: inset 0 0 0 .5px var(--line, var(--dsw-alias-border-l1));
+      }
+      .dsh-comfyui-empty-note {
+        max-width: 100%; margin-top: 2px;
+        padding: 5px 11px;
+        border-radius: 9px;
+        border: .5px solid var(--line, var(--dsw-alias-border-l1));
+        background: color-mix(in srgb, var(--dsw-alias-bg-base) 62%, transparent);
+        color: var(--ink2, var(--dsw-alias-label-secondary));
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px; line-height: 16px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .dsh-comfyui-loading {
+        display: flex; align-items: center; gap: 10px;
+        padding: 10px 20px;
+        border: .5px solid var(--line, var(--dsw-alias-border-l1));
+        border-radius: 999px;
+        background: var(--glass, var(--dsw-alias-bg-layer-1));
+        backdrop-filter: blur(24px) saturate(160%);
+        box-shadow: var(--dsw-elevation-soft);
+      }
       .dsh-comfyui-spinner {
         width: 14px; height: 14px; border-radius: 50%;
         border: 2px solid var(--dsw-alias-border-l1);
@@ -332,39 +400,45 @@ window.__ModuleLoader__.load({
         color: var(--dsw-alias-state-error-primary);
         border-color: var(--dsw-alias-state-error-primary);
       }
-      .dsh-comfyui-service {
-        display: flex; flex-direction: column; gap: 6px;
-        margin: 8px 10px 0; padding: 8px 10px; border-radius: 8px;
-        border: 1px solid var(--dsw-alias-border-l1);
-        background: var(--dsw-alias-bg-layer-1);
-        color: var(--dsw-alias-label-secondary);
+      .dsh-comfyui-dialog-layer { position: absolute; inset: 0; z-index: 5; }
+      .dsh-comfyui-sheet {
+        /* Same glass and radius as the pill it grows out of: a panel control,
+           not a modal dropped on top of the canvas. */
+        position: absolute; left: 50%; bottom: 58px; transform: translateX(-50%);
+        box-sizing: border-box;
+        display: flex; flex-direction: column; gap: 14px;
+        width: min(340px, calc(100% - 32px));
+        padding: 16px;
+        border: .5px solid var(--line, var(--dsw-alias-border-l1));
+        border-radius: 18px;
+        background: var(--glass, var(--dsw-alias-bg-layer-1));
+        backdrop-filter: blur(28px) saturate(160%);
+        box-shadow: 0 16px 44px color-mix(in srgb, #000 22%, transparent);
+        color: var(--ink);
+        font-size: 13px; line-height: 19px;
       }
-      .dsh-comfyui-service-head {
-        display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-      }
-      .dsh-comfyui-service-state { margin-right: auto; color: var(--dsw-alias-label-primary); }
-      .dsh-comfyui-service-field {
-        display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-      }
-      .dsh-comfyui-service-field > span { min-width: 90px; }
-      .dsh-comfyui-service-input {
-        flex: 1 1 220px; min-width: 0; height: 24px;
-        padding: 0 8px; border-radius: 6px;
-        border: 1px solid var(--dsw-alias-border-l1);
-        background: var(--dsw-alias-bg-base);
+      .dsh-comfyui-sheet-head { display: flex; align-items: center; gap: 8px; }
+      .dsh-comfyui-sheet-head strong { flex: 1 1 auto; font-size: 13px; font-weight: 600; }
+      .dsh-comfyui-sheet-body { display: flex; flex-direction: column; gap: 10px; }
+      .dsh-comfyui-field { display: flex; flex-direction: column; gap: 6px; }
+      .dsh-comfyui-field > span { color: var(--ink2, var(--dsw-alias-label-secondary)); font-size: 12px; line-height: 16px; }
+      .dsh-comfyui-input {
+        height: 32px; padding: 0 10px;
+        border-radius: 9px;
+        border: .5px solid var(--line, var(--dsw-alias-border-l1));
+        background: color-mix(in srgb, var(--dsw-alias-bg-base) 86%, transparent);
         color: var(--dsw-alias-label-primary);
-        font: inherit;
+        font: inherit; font-size: 12px;
       }
-      .dsh-comfyui-service-input:focus-visible {
-        outline: 1px solid var(--dsw-alias-brand-primary);
-        outline-offset: 1px;
+      .dsh-comfyui-input:focus-visible { outline: 1px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+      .dsh-comfyui-check {
+        display: flex; align-items: center; gap: 8px; cursor: pointer;
+        color: var(--ink2, var(--dsw-alias-label-secondary));
       }
-      .dsh-comfyui-service-check {
-        display: flex; align-items: center; gap: 6px; cursor: pointer;
-      }
-      .dsh-comfyui-service-action { width: fit-content; }
-      .dsh-comfyui-service-message { color: var(--dsw-alias-state-error-primary); }
-      .dsh-comfyui-service-hint { color: var(--dsw-alias-label-secondary); }
+      .dsh-comfyui-sheet-foot { display: flex; justify-content: flex-end; gap: 6px; }
+      .dsh-comfyui-sheet-foot .dsh-comfyui-button { height: 30px; padding: 0 14px; border-radius: 9px; }
+      .dsh-comfyui-sheet-message { color: var(--dsw-alias-state-error-primary); font-size: 12px; line-height: 16px; }
+      .dsh-comfyui-sheet-hint { color: var(--ink2, var(--dsw-alias-label-secondary)); font-size: 12px; line-height: 16px; }
       .dsh-comfyui-desk {
         --ink: var(--dsw-alias-label-primary);
         --ink2: var(--dsw-alias-label-secondary);
@@ -404,6 +478,11 @@ window.__ModuleLoader__.load({
       .dsh-comfyui-dock-head { justify-content: space-between; }
       .dsh-comfyui-dock.is-closed {
         flex-basis: 0; width: 0; border-left: 0; overflow: visible;
+        /* A zero-width dock still had its own backdrop root, and the tab's
+           glass inside it sampled that instead of the canvas: the tab painted
+           dark while the toolbar painted light. */
+        backdrop-filter: none;
+        background: transparent;
       }
       .dsh-comfyui-dock.is-closed .dsh-comfyui-dock-head {
         position: absolute; right: 0; top: 50%; transform: translateY(-50%);
@@ -420,24 +499,35 @@ window.__ModuleLoader__.load({
       .dsh-comfyui-dock-new:hover { color: var(--ink, var(--dsw-alias-label-primary)); }
       .dsh-comfyui-dock-new:disabled { opacity: .45; cursor: default; }
       .dsh-comfyui-dock-toggle {
-        width: 28px; height: 28px; border: 0; border-radius: 8px;
+        width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--r-md, 12px);
+        display: grid; place-items: center;
         background: transparent; color: var(--ink2, var(--dsw-alias-label-secondary));
-        cursor: pointer; font: inherit; font-size: 18px;
+        cursor: pointer;
+        font: inherit;
+      }
+      .dsh-comfyui-dock-toggle:hover {
+        background: color-mix(in srgb, var(--ink, var(--dsw-alias-label-primary)) 10%, transparent);
+        color: var(--ink, var(--dsw-alias-label-primary));
       }
       .dsh-comfyui-dock.is-closed .dsh-comfyui-dock-toggle {
-        width: auto; height: auto; min-height: 72px; padding: 14px 8px;
+        width: auto; height: auto; min-height: 72px; padding: 14px 9px;
         writing-mode: vertical-rl;
         border: .5px solid var(--line, var(--dsw-alias-border-l1));
-        border-right: 0; border-radius: 12px 0 0 12px;
-        background: var(--card, var(--dsw-alias-bg-layer-2));
+        border-right: 0; border-radius: 999px 0 0 999px;
+        /* The same glass as the toolbar over the canvas: the tab sits on the
+           same surface and read as a solid white slab beside it. */
+        background: var(--glass, var(--dsw-alias-bg-layer-1));
+        backdrop-filter: blur(24px) saturate(160%);
         color: var(--ink, var(--dsw-alias-label-primary));
-        font-size: 13px; line-height: 18px; letter-spacing: .04em;
+        font-size: 13px; line-height: 20px; letter-spacing: .04em;
         box-shadow: var(--dsw-elevation-soft);
       }
       .dsh-comfyui-dock.is-closed .dsh-comfyui-dock-toggle:hover {
-        /* --hover is a translucent wash. Using it as the only fill makes the
-           tab vanish against the canvas, so mix it into the opaque card. */
-        background: color-mix(in srgb, var(--ink, var(--dsw-alias-label-primary)) 10%, var(--card, var(--dsw-alias-bg-layer-2)));
+        /* The same wash the toolbar's buttons use, laid over the glass instead
+           of replacing it: a translucent-only fill let the canvas through. */
+        background:
+          linear-gradient(color-mix(in srgb, var(--ink, var(--dsw-alias-label-primary)) 10%, transparent), color-mix(in srgb, var(--ink, var(--dsw-alias-label-primary)) 10%, transparent)),
+          var(--glass, var(--dsw-alias-bg-layer-1));
       }
       .dsh-comfyui-dock-log {
         flex: 1 1 auto; min-height: 0; overflow: auto;
@@ -472,26 +562,35 @@ window.__ModuleLoader__.load({
         font-size: 13px; line-height: 18px;
       }
       .dsh-comfyui-dock-form {
-        flex: 0 0 auto; display: flex; align-items: flex-end; gap: 8px;
-        margin: 4px 12px 12px; padding: 8px 8px 8px 16px;
+        /* Centred, not bottom-aligned: an empty field is one line tall, and
+           flex-end left the round send button sitting below that line. */
+        flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+        margin: 0 12px 12px; padding: 6px 8px 6px 14px;
         border-radius: var(--r-panel);
         background: var(--card);
-        box-shadow: var(--dsw-elevation-prominent);
+        box-shadow: var(--dsw-elevation-soft);
+        transition: box-shadow .2s ease;
+      }
+      .dsh-comfyui-dock-form:focus-within {
+        box-shadow: 0 0 0 1px var(--ink, var(--dsw-alias-label-primary)), var(--dsw-elevation-soft);
       }
       .dsh-comfyui-dock-input {
-        flex: 1 1 auto; min-width: 0; min-height: 36px; max-height: 120px;
-        resize: none; padding: 8px 0; border: 0; border-radius: 0;
-        background: transparent;
+        flex: 1 1 auto; min-width: 0; box-sizing: border-box;
+        height: 32px; max-height: 120px;
+        resize: none; padding: 5px 0; border: 0; border-radius: 0;
+        background: transparent; overflow: hidden;
         color: var(--ink);
-        font: inherit;
+        font: inherit; font-size: 14px; line-height: 22px;
       }
       .dsh-comfyui-dock-input:focus-visible { outline: none; }
       .dsh-comfyui-send {
-        width: 36px; height: 36px; flex: 0 0 auto;
+        width: 32px; height: 32px; flex: 0 0 auto;
         display: grid; place-items: center;
         border: 0; border-radius: 50%; padding: 0; cursor: pointer;
         background: var(--primary); color: var(--on-primary);
+        transition: opacity .15s, transform .2s ease;
       }
+      .dsh-comfyui-send:not(:disabled):hover { transform: translateY(-1px); }
       .dsh-comfyui-send:disabled { opacity: .28; cursor: default; }
       .dsh-comfyui-send:focus-visible {
         outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px;
@@ -507,7 +606,7 @@ window.__ModuleLoader__.load({
      * pure function means the interesting part (which button, enabled or not,
      * and why) is covered by test/client-ops.mjs instead of only by eye.
      */
-    function barPlan({ status, service, busy = false, dir = '', bootSeconds = 0, t }) {
+    function barPlan({ status, service, busy = false, dir = '', t }) {
       const known = service !== null && service !== undefined
       const healthy = known && service.health === true
       const owned = known && service.owned === true
@@ -532,41 +631,53 @@ window.__ModuleLoader__.load({
         label = t('barFailed')
         chipTitle = t('serverStartFailed')
       } else if (healthy) {
-        tone = status === 'ready' ? 'ok' : status === 'error' ? 'error' : 'warn'
+        // The server is up, so the bar says so. Whether the embedded editor has
+        // exposed its API yet is the stage's business — it is already on screen
+        // with its own clock — and "running · connecting" read as if the server
+        // were the thing still connecting.
+        tone = status === 'error' ? 'error' : 'ok'
         label = owned ? t('barRunning') : t('barExternal')
         chipTitle = owned
           ? t('serverRunning').replace('{{pid}}', pid === '' ? '?' : pid)
           : t('serverExternal')
-        if (status !== 'ready') {
-          const bridge = status === 'error'
-            ? t('error')
-            : bootSeconds > 0 ? `${t('barConnecting')} ${bootSeconds}s` : t('barConnecting')
-          label = `${label} · ${bridge}`
-        }
+        if (status === 'error') label = `${label} · ${t('error')}`
       } else if (known) {
         label = t('barStopped')
         chipTitle = needDir ? t('serverPick') : t('serverStopped')
       }
 
-      const actions = []
-      const add = (action, text, variant, disabled, title) => {
-        actions.push({ action, label: text, variant, disabled, title })
+      // One fixed set of controls, always in the same order and always present:
+      // what changes is whether a button can be pressed, never whether it is
+      // there, so the bar never changes width under the pointer.
+      const canStart = known && !busy && !healthy && !starting && !needDir
+      const canStop = known && owned && !busy && (state === 'running' || starting)
+      const whyNotStart = () => {
+        if (!known) return t('barUnknown')
+        if (busy) return t('serverBusy')
+        if (starting) return t('serverStarting')
+        if (healthy) return owned ? t('serverAlreadyRunning') : t('serverNotOwned')
+        return t('serverPick')
       }
-      if (!known) {
-        add('start', t('serverStart'), 'primary', true, '')
-      } else if (starting) {
-        add('start', t('barStarting'), 'primary', true, t('serverStarting'))
-      } else if (!healthy) {
-        add('start', t('serverStart'), 'primary', !canWrite || needDir,
-          needDir ? t('serverPick') : failed ? t('serverStartFailed') : t('serverStart'))
-      } else if (owned) {
-        add('stop', t('serverStop'), 'quiet', !canWrite, t('serverStop'))
-        add('restart', t('serverRestart'), 'quiet', !canWrite, t('serverRestart'))
-      } else {
-        // An external server is healthy but untouchable; say so on hover
-        // instead of hiding the control and leaving the state unexplained.
-        add('restart', t('serverRestart'), 'quiet', true, t('serverExternalHint') || t('serverNotOwned'))
+      const whyNotStop = () => {
+        if (!known) return t('barUnknown')
+        if (busy) return t('serverBusy')
+        if (state === 'running') return t('serverNotOwned')
+        return t('serverStopped')
       }
+      const actions = [
+        {
+          action: 'start',
+          label: t('serverStart'),
+          disabled: !canStart,
+          title: canStart ? t('serverStart') : whyNotStart(),
+        },
+        {
+          action: 'stop',
+          label: t('serverStop'),
+          disabled: !canStop,
+          title: canStop ? t('serverStop') : whyNotStop(),
+        },
+      ]
 
       return { tone, label, chipTitle, actions, healthy, owned }
     }
@@ -589,7 +700,7 @@ window.__ModuleLoader__.load({
       const state = known ? service.state : null
       const starting = state === 'starting' || state === 'restarting'
       const needDir = String(dir ?? '').trim() === ''
-      const idle = { stage: 'none', title: '', hint: '', seconds: 0, canStart: false, needDir }
+      const idle = { stage: 'none', title: '', hint: '', seconds: 0, canStart: false, needDir, dir: '' }
       // The iframe stays mounted underneath, so a probe that flips false for one
       // poll covers the canvas for five seconds and then uncovers it; nothing
       // the user typed is lost and no reload is triggered by the overlay.
@@ -599,14 +710,15 @@ window.__ModuleLoader__.load({
         return {
           stage: 'stopped',
           title: t('notRunning'),
-          hint: needDir ? t('serverPick') : '',
+          hint: needDir ? t('notRunningPick') : t('notRunningHint'),
           seconds: 0,
           canStart: !needDir,
           needDir,
+          dir: String(dir ?? '').trim(),
         }
       }
       if (starting) {
-        return { stage: 'starting', title: t('serverStarting'), hint: '', seconds: bootSeconds, canStart: false, needDir }
+        return { stage: 'starting', title: t('serverStarting'), hint: '', seconds: bootSeconds, canStart: false, needDir, dir: '' }
       }
       if (status !== 'loading') return idle
       if (bootSeconds >= EDITOR_STALL_SECONDS) {
@@ -617,9 +729,10 @@ window.__ModuleLoader__.load({
           seconds: bootSeconds,
           canStart: false,
           needDir,
+          dir: '',
         }
       }
-      return { stage: 'loading', title: t('editorLoading'), hint: '', seconds: bootSeconds, canStart: false, needDir }
+      return { stage: 'loading', title: t('editorLoading'), hint: '', seconds: bootSeconds, canStart: false, needDir, dir: '' }
     }
 
     /**
@@ -648,52 +761,62 @@ window.__ModuleLoader__.load({
      * `overlayPlan` result so the stopped / starting / stalled faces can be
      * rendered and asserted in `test/client-ops.mjs` without a browser.
      */
-    function StageOverlay({ stage, busy, t, onStart, onReload, onService }) {
+    /**
+     * What covers the canvas until the editor can paint. A stopped server gets
+     * the why and the folder; the commands live in the bar underneath, so this
+     * card holds no buttons — duplicating Start here only asked which one was
+     * the real one.
+     *
+     * @param {{ stage: any, t: (key: string) => string, onReload: () => void }} props - the plan, the locale, and the recovery action a stalled editor needs.
+     * @returns {any} the overlay, or `null` when the editor is up.
+     */
+    function StageOverlay({ stage, t, onReload }) {
       if (stage.stage === 'none') return null
       if (stage.stage === 'loading' || stage.stage === 'starting') {
         return h('div', { className: 'dsh-comfyui-overlay' },
-          h('span', { className: 'dsh-comfyui-spinner' }),
-          h('span', null, stage.seconds > 0 ? `${stage.title} ${stage.seconds}s` : stage.title),
+          h('div', { className: 'dsh-comfyui-loading' },
+            h('span', { className: 'dsh-comfyui-spinner' }),
+            h('span', null, stage.seconds > 0 ? `${stage.title} ${stage.seconds}s` : stage.title),
+          ),
         )
       }
+      const stopped = stage.stage === 'stopped'
+      const note = stopped && typeof stage.dir === 'string' && stage.dir !== '' ? stage.dir : ''
       return h('div', { className: 'dsh-comfyui-overlay dsh-comfyui-empty' },
-        h('span', { className: 'dsh-comfyui-empty-title' }, stage.title),
-        stage.hint === '' ? null : h('span', { className: 'dsh-comfyui-empty-hint' }, stage.hint),
-        h('div', { className: 'dsh-comfyui-empty-actions' },
-          stage.stage === 'stopped'
-            ? h('button', {
-              className: 'dsh-comfyui-button',
-              'data-variant': 'primary',
-              type: 'button',
-              disabled: busy || !stage.canStart,
-              title: stage.needDir ? t('serverPick') : t('serverStart'),
-              onClick: onStart,
-            }, t('serverStart'))
-            : h('button', {
+        h('div', { className: 'dsh-comfyui-empty-card' },
+          h('span', { className: 'dsh-comfyui-empty-mark' }, h(PanelIcon, { size: 34 })),
+          h('span', { className: 'dsh-comfyui-empty-title' }, stage.title),
+          stage.hint === '' ? null : h('span', { className: 'dsh-comfyui-empty-hint' }, stage.hint),
+          note === '' ? null : h('span', { className: 'dsh-comfyui-empty-note', title: note }, note),
+          stopped ? null : h('div', { className: 'dsh-comfyui-empty-actions' },
+            h('button', {
               className: 'dsh-comfyui-button',
               'data-variant': 'primary',
               type: 'button',
               onClick: onReload,
             }, t('reload')),
-          h('button', {
-            className: 'dsh-comfyui-button',
-            'data-variant': 'quiet',
-            type: 'button',
-            onClick: onService,
-          }, t('serverPanel')),
+          ),
         ),
       )
     }
 
-    function TopBar({ stats, synced, syncAt, runText, previewUrl, previewTitle, filesTitle, run, plan, serviceOpen, onSync, onReload, onFit, onOpen, onService, onAction, onCancel, t }) {
-      const [expanded, setExpanded] = useState(false)
+    /**
+     * The panel's own toolbar: state, the two lifecycle commands, Settings,
+     * and Cancel while a prompt runs. Flat, because every control here is one
+     * click away from what it does — a second click to open a menu costs more
+     * than the pixels it saves.
+     *
+     * @param {object} props - the stats, the run, the plan, and the handlers.
+     * @returns {any} the bar.
+     */
+    function TopBar({ stats, syncLabel, syncAt, runText, previewUrl, previewTitle, filesTitle, run, plan, serviceOpen, onService, onAction, onCancel, t }) {
       const counts = t('stats')
         .replace('{{nodes}}', String(stats.nodes))
         .replace('{{links}}', String(stats.links))
       // The name leads: it is the one fact the panel and the model have to agree
       // on, and a bar that shows only counts reads the same for every workflow.
       const name = typeof stats.name === 'string' && stats.name.length > 0 ? stats.name : ''
-      const statText = [name === '' ? '' : `「${name}」`, counts, synced].filter(part => part.length > 0).join(' · ')
+      const statText = [name === '' ? '' : `「${name}」`, counts, syncLabel].filter(part => part.length > 0).join(' · ')
       // The revision is bookkeeping for the Host and the model, not a number
       // a ComfyUI user can act on; keep it in the tooltip instead of the bar.
       const statTitle = t('statsTitle')
@@ -703,54 +826,64 @@ window.__ModuleLoader__.load({
       const canCancel = run !== null && run !== undefined
         && run.status === 'running'
         && typeof run.promptId === 'string' && run.promptId.length > 0
-      return h('div', { className: 'dsh-comfyui-bar', 'data-expanded': expanded ? 'true' : 'false' },
-        h('button', {
-          className: 'dsh-comfyui-chip',
-          type: 'button',
-          title: plan.chipTitle,
-          'aria-expanded': expanded,
-          onClick: () => setExpanded(value => !value),
+      return h('div', { className: 'dsh-comfyui-bar' },
+        // State first, then the commands: the label is what the eye lands on,
+        // and the buttons sit where the thumb reaches next.
+        h('div', {
+          className: 'dsh-comfyui-status',
+          title: [plan.chipTitle, statText].filter(part => part.length > 0).join(' · '),
         },
         h('span', { className: 'dsh-comfyui-dot', 'data-status': plan.tone }),
         h('span', { className: 'dsh-comfyui-state', 'data-tone': plan.tone }, plan.label),
-        ),
-        // Cancel stays outside the collapsed body: it is the one control a
-        // running session must reach without expanding anything.
-        canCancel ? h('button', {
-          key: 'cancel',
-          className: 'dsh-comfyui-button',
-          'data-action': 'cancel',
-          type: 'button',
-          disabled: run.cancel === 'busy',
-          onClick: onCancel,
-        }, cancelLabel(run, t)) : null,
-        h('div', { className: 'dsh-comfyui-bar-body' },
-        // State first, its controls second, counters after: the server switch
-        // is the click this bar exists for, and putting it here keeps it on
-        // the first line when a narrow panel makes the bar wrap.
-        h('div', { className: 'dsh-comfyui-actions' },
-          plan.actions.map(action => h('button', {
-            key: action.action,
-            className: 'dsh-comfyui-button',
-            'data-variant': action.variant,
-            type: 'button',
-            disabled: action.disabled,
-            title: action.title,
-            onClick: () => onAction(action.action),
-          }, action.label)),
-        ),
+        runText === '' ? null : h('span', {
+          className: 'dsh-comfyui-run',
+          title: filesTitle === '' ? runText : filesTitle,
+        }, runText),
         previewUrl ? h('img', {
           className: 'dsh-comfyui-preview',
           src: previewUrl,
           alt: '',
           title: previewTitle,
         }) : null,
-        runText === '' ? null : h('span', { className: 'dsh-comfyui-run', title: filesTitle }, runText),
+        ),
+        h('span', { className: 'dsh-comfyui-bar-sep', 'aria-hidden': 'true' }),
+        h('div', { className: 'dsh-comfyui-actions' },
+          plan.actions.map(action => h('button', {
+            key: action.action,
+            className: 'dsh-comfyui-button',
+            type: 'button',
+            disabled: action.disabled,
+            title: action.title,
+            onClick: () => onAction(action.action),
+          }, action.label)),
+          h('span', { className: 'dsh-comfyui-bar-sep', 'aria-hidden': 'true' }),
+          // Words, not a gear: it sits in the same row as the two commands, so
+          // it reads as one of them.
+          h('button', {
+            className: 'dsh-comfyui-button',
+            'data-active': serviceOpen ? 'true' : 'false',
+            'data-tool': 'server',
+            type: 'button',
+            title: t('settings'),
+            'aria-expanded': serviceOpen,
+            onClick: onService,
+          }, t('settings')),
+          canCancel ? h('span', { key: 'sep', className: 'dsh-comfyui-bar-sep', 'aria-hidden': 'true' }) : null,
+          canCancel ? h('button', {
+            key: 'cancel',
+            className: 'dsh-comfyui-button',
+            'data-action': 'cancel',
+            type: 'button',
+            disabled: run.cancel === 'busy',
+            onClick: onCancel,
+          }, cancelLabel(run, t)) : null,
+        ),
         // The counters are also the only machine-readable state the panel
         // publishes, so the headless UI check reads them instead of parsing
-        // localized bar text.
+        // localized bar text. They stay out of the visual: the tooltip says
+        // the same thing, and the canvas needs the pixels.
         h('span', {
-          className: 'dsh-comfyui-stats',
+          className: 'dsh-comfyui-stats dsh-comfyui-visually-hidden',
           title: statTitle,
           'data-workflow-name': name,
           'data-nodes': String(stats.nodes),
@@ -759,37 +892,6 @@ window.__ModuleLoader__.load({
           'data-tabs': String(stats.tabs ?? 0),
           'data-synced': String(syncAt),
         }, statText),
-        h('div', { className: 'dsh-comfyui-tools' },
-          h('button', {
-            className: 'dsh-comfyui-button dsh-comfyui-icon',
-            type: 'button',
-            title: t('fitView'),
-            'aria-label': t('fitView'),
-            'data-tool': 'fit',
-            onClick: onFit,
-          }, '\u2922'),
-          h('button', { className: 'dsh-comfyui-button', type: 'button', title: t('syncHint'), 'data-tool': 'sync', onClick: onSync }, t('sync')),
-          h('button', { className: 'dsh-comfyui-button', type: 'button', title: t('reloadHint'), 'data-tool': 'reload', onClick: onReload }, t('reload')),
-          h('button', {
-            className: 'dsh-comfyui-button dsh-comfyui-icon',
-            type: 'button',
-            title: t('open'),
-            'aria-label': t('open'),
-            'data-tool': 'open',
-            onClick: onOpen,
-          }, '\u2197'),
-          h('button', {
-            className: 'dsh-comfyui-button dsh-comfyui-icon',
-            'data-active': serviceOpen ? 'true' : 'false',
-            'data-tool': 'server',
-            type: 'button',
-            title: t('serverPanel'),
-            'aria-label': t('serverPanel'),
-            'aria-expanded': serviceOpen,
-            onClick: onService,
-          }, '\u2699\uFE0E'),
-        ),
-        ),
       )
     }
 
@@ -2179,8 +2281,9 @@ window.__ModuleLoader__.load({
       const [lastSyncAt, setLastSyncAt] = useState(0)
       const [notice, setNotice] = useState(null)
       const eventRef = useRef({ pending: null, timer: null, sentAt: 0 })
-      const syncRef = useRef(null)
       const reloadRef = useRef(null)
+      /** Bumped by `reload()`: a new key is a new iframe element. */
+      const [frameKey, setFrameKey] = useState(0)
       const serviceDraftRef = useRef({ loaded: false })
       const lastServiceHealthRef = useRef(null)
       const [service, setService] = useState(null)
@@ -2379,7 +2482,6 @@ window.__ModuleLoader__.load({
           return false
         }
       }, [applySync, loop, readApp, t])
-      syncRef.current = syncNow
 
       const applyOperations = useCallback(async (app, operations) => {
         const win = iframeRef.current?.contentWindow
@@ -2688,9 +2790,13 @@ window.__ModuleLoader__.load({
         }
       }, [loadService, servicePeriod])
 
+      // Remounting, not navigating: ComfyUI arms a beforeunload guard while the
+      // workflow has unsaved changes, and assigning `src` makes the browser ask
+      // "leave this page?" about a reload the user never asked for. Replacing
+      // the element drops the old document without a navigation (pagehide, no
+      // beforeunload), and the new one starts from the same URL.
       const reload = useCallback(() => {
-        const frame = iframeRef.current
-        if (frame === null) return
+        if (iframeRef.current === null) return
         // The new page fetches its own autosaved graph, so the signature and
         // the name the old one carried say nothing about it.
         loopRef.current?.sync.reset()
@@ -2700,7 +2806,7 @@ window.__ModuleLoader__.load({
         setRun(null)
         setStatus('loading')
         setMessage('')
-        frame.src = PANEL_URL
+        setFrameKey(key => key + 1)
       }, [])
       reloadRef.current = reload
 
@@ -2712,10 +2818,6 @@ window.__ModuleLoader__.load({
         lastServiceHealthRef.current = service.health === true
         if (previous === false && service.health === true) reloadRef.current?.()
       }, [service])
-
-      const open = useCallback(() => {
-        window.open(PANEL_URL, '_blank', 'noopener')
-      }, [])
 
       useEffect(() => {
         // The boot clock also runs while the Host is starting the child process:
@@ -2769,67 +2871,81 @@ window.__ModuleLoader__.load({
         )
       }
 
-      // Lifecycle controls live in the bar; this form is configuration only, so
-      // there is exactly one place that decides whether Start is clickable.
-      const plan = barPlan({ status, service, busy: serviceBusy, dir: serviceCwd, bootSeconds, t })
+      // The lifecycle switch lives on the pill; this dialog is configuration and
+      // diagnostics, so there is exactly one place that decides whether Start is
+      // clickable. It floats over the canvas instead of taking a row from it.
+      const plan = barPlan({ status, service, busy: serviceBusy, dir: serviceCwd, t })
       const stage = overlayPlan({ status, service, bootSeconds, dir: serviceCwd, t })
       const dir = serviceCwd.trim()
       const notOwnedHint = plan.healthy && !plan.owned ? t('serverExternalHint') : ''
       const dirHint = !plan.healthy && dir === '' ? t('serverPick') : ''
       const severity = service !== null && service.controllerError !== null && service.controllerError !== undefined
-      const servicePanel = h('div', { className: 'dsh-comfyui-service' },
-        h('div', { className: 'dsh-comfyui-service-head' },
-          h('span', { className: 'dsh-comfyui-service-state' }, t('serverPanel')),
-          h('button', {
-            className: 'dsh-comfyui-button dsh-comfyui-icon',
-            type: 'button',
-            title: t('close'),
-            'aria-label': t('close'),
-            onClick: () => setServiceOpen(false),
-          }, '\u00d7'),
+      const closeService = () => setServiceOpen(false)
+      const serviceDialog = h('div', {
+        className: 'dsh-comfyui-dialog-layer',
+        onMouseDown: event => { if (event.target === event.currentTarget) closeService() },
+      },
+        h('div', {
+          className: 'dsh-comfyui-sheet',
+          role: 'dialog',
+          'aria-label': t('settings'),
+        },
+          h('div', { className: 'dsh-comfyui-sheet-head' },
+            h('strong', null, t('settings')),
+            h('button', {
+              className: 'dsh-comfyui-button dsh-comfyui-icon',
+              type: 'button',
+              title: t('close'),
+              'aria-label': t('close'),
+              onClick: closeService,
+            }, '\u00d7'),
+          ),
+          h('div', { className: 'dsh-comfyui-sheet-body' },
+            notOwnedHint === '' ? null : h('div', { className: 'dsh-comfyui-sheet-hint' }, notOwnedHint),
+            h('label', { className: 'dsh-comfyui-field' },
+              h('span', null, t('serverDir')),
+              h('input', {
+                className: 'dsh-comfyui-input',
+                value: serviceCwd,
+                placeholder: t('serverDirHint'),
+                spellCheck: false,
+                disabled: serviceBusy,
+                onChange: event => setServiceCwd(/** @type {HTMLInputElement} */ (event.target).value),
+              }),
+            ),
+            h('label', { className: 'dsh-comfyui-check' },
+              h('input', {
+                type: 'checkbox',
+                checked: serviceAutoStart,
+                disabled: serviceBusy,
+                onChange: event => setServiceAutoStart(event.target.checked),
+              }),
+              h('span', null, t('serverAutoStart')),
+            ),
+            dirHint === '' ? null : h('div', { className: 'dsh-comfyui-sheet-hint' }, dirHint),
+            serviceMessage === '' ? null : h('div', { className: 'dsh-comfyui-sheet-message' }, serviceMessage),
+            severity ? h('div', { className: 'dsh-comfyui-sheet-message' }, String(service.controllerError)) : null,
+            service !== null && typeof service.lastError === 'string' && service.lastError !== ''
+              ? h('div', { className: 'dsh-comfyui-sheet-message' }, service.lastError)
+              : null,
+          ),
+          h('div', { className: 'dsh-comfyui-sheet-foot' },
+            h('button', {
+              className: 'dsh-comfyui-button',
+              'data-variant': 'primary',
+              type: 'button',
+              disabled: serviceBusy || dir === '',
+              onClick: () => { void serviceAction('save') },
+            }, t('serverSave')),
+          ),
         ),
-        notOwnedHint === '' ? null : h('div', { className: 'dsh-comfyui-service-hint' }, notOwnedHint),
-        h('label', { className: 'dsh-comfyui-service-field' },
-          h('span', null, t('serverDir')),
-          h('input', {
-            className: 'dsh-comfyui-service-input',
-            value: serviceCwd,
-            placeholder: t('serverDirHint'),
-            spellCheck: false,
-            disabled: serviceBusy,
-            onChange: event => setServiceCwd(/** @type {HTMLInputElement} */ (event.target).value),
-          }),
-        ),
-        h('label', { className: 'dsh-comfyui-service-check' },
-          h('input', {
-            type: 'checkbox',
-            checked: serviceAutoStart,
-            disabled: serviceBusy,
-            onChange: event => setServiceAutoStart(event.target.checked),
-          }),
-          h('span', null, t('serverAutoStart')),
-        ),
-        h('div', { className: 'dsh-comfyui-service-head' },
-          h('button', {
-            className: 'dsh-comfyui-button',
-            type: 'button',
-            disabled: serviceBusy || dir === '',
-            onClick: () => { void serviceAction('save') },
-          }, t('serverSave')),
-          dirHint === '' ? null : h('span', { className: 'dsh-comfyui-service-hint' }, dirHint),
-        ),
-        serviceMessage === '' ? null : h('div', { className: 'dsh-comfyui-service-message' }, serviceMessage),
-        severity ? h('div', { className: 'dsh-comfyui-service-message' }, String(service.controllerError)) : null,
-        service !== null && typeof service.lastError === 'string' && service.lastError !== ''
-          ? h('div', { className: 'dsh-comfyui-service-message' }, service.lastError)
-          : null,
       )
 
       return h('div', { className: 'dsh-comfyui-panel' },
         h('style', null, CSS),
         h(TopBar, {
           stats,
-          synced: syncLabel,
+          syncLabel,
           syncAt: lastSyncAt,
           runText,
           previewUrl,
@@ -2839,13 +2955,6 @@ window.__ModuleLoader__.load({
           plan,
           serviceOpen,
           t,
-          onSync: () => { void syncRef.current?.(true) },
-          onReload: reload,
-          onFit: () => {
-            const app = readApp()
-            if (app !== null) void fitCanvas(app).catch(() => {})
-          },
-          onOpen: open,
           onService: () => setServiceOpen(current => !current),
           onAction: action => { void serviceAction(action) },
           onCancel: () => { void cancelRun() },
@@ -2854,12 +2963,12 @@ window.__ModuleLoader__.load({
         service?.frontend?.status === 'mismatch'
           ? h('div', { className: 'dsh-comfyui-notice', 'data-tone': 'info' }, t('frontendUnverified').replace('{{installed}}', String(service.frontend.installed)).replace('{{expected}}', String(service.frontend.expected)))
           : null,
-        // Explicit-only: an unhealthy upstream must not force this form open
-        // and resize the panel; the gear button in the bar carries that
-        // affordance.
-        serviceOpen ? servicePanel : null,
+        // Explicit-only: an unhealthy upstream must not force this open, and it
+        // floats, so opening it never resizes the canvas.
+        serviceOpen ? serviceDialog : null,
         h('div', { className: 'dsh-comfyui-stage' },
           h('iframe', {
+            key: frameKey,
             ref: iframeRef,
             className: 'dsh-comfyui-frame',
             title: t('title'),
@@ -2878,11 +2987,8 @@ window.__ModuleLoader__.load({
           // their own face: only the last untouched state is a bare spinner.
           h(StageOverlay, {
             stage,
-            busy: serviceBusy,
             t,
-            onStart: () => { void serviceAction('start') },
             onReload: reload,
-            onService: () => setServiceOpen(true),
           }),
           notice === null ? null : h('div', { className: 'dsh-comfyui-toast' }, notice.text),
         ),
@@ -3047,9 +3153,17 @@ window.__ModuleLoader__.load({
           h('button', {
             type: 'button',
             className: 'dsh-comfyui-dock-toggle',
-            'aria-label': t('assistant'),
+            'aria-label': open ? t('assistantClose') : t('assistant'),
+            title: open ? t('assistantClose') : t('assistant'),
             onClick: () => setOpen(value => !value),
-          }, open ? '\u203a' : t('assistant')),
+          }, open ? h('svg', {
+            width: 17, height: 17, viewBox: '0 0 16 16', fill: 'none',
+            stroke: 'currentColor', strokeWidth: 1.2,
+            'aria-hidden': 'true',
+          },
+            h('path', { d: 'M13.5 1.5H2.5C1.94772 1.5 1.5 1.94772 1.5 2.5V13.5C1.5 14.0523 1.94772 14.5 2.5 14.5H13.5C14.0523 14.5 14.5 14.0523 14.5 13.5V2.5C14.5 1.94772 14.0523 1.5 13.5 1.5Z' }),
+            h('path', { d: 'M5.5 1.5V14.5' }),
+          ) : t('assistant')),
         ),
         open ? h('div', { className: 'dsh-comfyui-dock-log', ref: logRef },
           shown.length === 0
@@ -3064,11 +3178,16 @@ window.__ModuleLoader__.load({
         open ? h('form', { className: 'dsh-comfyui-dock-form', onSubmit: send },
           h('textarea', {
             className: 'dsh-comfyui-dock-input',
-            rows: 2,
+            rows: 1,
             value: draft,
             placeholder: t('assistantPlaceholder'),
             'aria-label': t('assistantPlaceholder'),
-            onChange: event => setDraft(event.target.value),
+            onChange: event => {
+              setDraft(event.target.value)
+              const field = event.target
+              field.style.height = 'auto'
+              field.style.height = `${Math.min(field.scrollHeight, 120)}px`
+            },
             onKeyDown: event => {
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault()

@@ -11,6 +11,59 @@ the version bump.
 
 ## [Unreleased]
 
+### Changed
+
+- The server controls are a flat bar over the bottom centre of the canvas,
+  where ComfyUI keeps nothing, instead of a chip over its bottom-left settings
+  and frame-rate readout. Nothing hides behind a menu: Start, Stop, Settings,
+  and Cancel are one click away.
+- The bar always holds the same three buttons — Start, Stop, Settings — with a
+  command that does not apply greyed out and explained on hover, instead of the
+  set changing with the state. Restart is gone: Stop then Start covers it.
+  Settings is a word, not a gear. Fit and manual Sync are gone (ComfyUI's zoom
+  menu frames the view and the panel frames it on load; the panel syncs every
+  second).
+- The ComfyUI folder is no longer guessed from a private list (`~/ComfyUI`,
+  `~/workspace/ComfyUI`). Detection now reads what the official tools record:
+  `COMFYUI_HOME`, then comfy-cli's `default_workspace` and `recent_workspace`
+  in `~/.config/comfy-cli/config.ini`, then the one directory comfy-cli itself
+  installs into (`~/comfy/ComfyUI`). Nothing recorded means an empty field.
+- Status labels lost their trailing ellipsis: `Starting`, `Checking`, and
+  `Starting ComfyUI` instead of `Starting…`, which read as a sentence that was
+  still going.
+- The bar says `Running` as soon as the server is up, instead of
+  `Running · connecting… Ns` while the embedded editor boots: that phase is the
+  stage overlay's to report, and the compound label read as if the server were
+  the thing still connecting. A broken bridge still reads `Running · Bridge
+  error`.
+- The panel control is called Settings, not Server settings. Settings holds
+  configuration only — the folder, **Start with DSH**, Save — because the bar
+  already says what state the server is in.
+- The assistant composer matches the media desk: a soft card, a hairline
+  ring while it is focused, a borderless field that grows with the text, and a
+  32px round send button centred on the line it sits beside.
+- The open Assistant dock collapses with the same panel icon the DSH shell
+  uses for its sidebar, at 17px, instead of a text chevron.
+- The collapsed Assistant tab uses the same glass as the bottom toolbar, the
+  same pill radius and hover wash. Its zero-width dock no longer keeps a
+  backdrop root of its own, which had made the tab paint dark while the
+  toolbar painted light.
+- Reload and Open in new tab are gone. Stop then Start is the recovery, and the
+  editor is replaced on the way; the second tab also fought the panel over
+  which editor the session mirrors.
+- Settings is a glass sheet attached above the bar — the directory, **Start
+  with DSH**, Save — instead of a form that pushed the canvas down.
+- A stopped server shows a card with the mark, the reason, and the folder,
+  instead of a bare line of text. The card carries no buttons: the bar below
+  owns Start and Settings, and a second copy only asked which one was real.
+
+### Fixed
+
+- Starting, restarting, or reloading the editor no longer asks "leave this
+  page?": the panel replaces the iframe element instead of navigating it, so
+  ComfyUI's unsaved-changes guard never fires on a reload the user did not
+  request.
+
 ## [0.10.0] - 2026-11-08
 
 ### Changed

@@ -43,28 +43,39 @@ covers both.
 
 What the headless check cannot see, in order:
 
-1. Hard-refresh the GUI, open **ComfyUI** in the left sidebar, and wait until the chip says **Running**.
+1. Hard-refresh the GUI, open **ComfyUI** in the left sidebar, and wait until the bar says **Running**.
 2. The header digest should read `ComfyUI: rev … · "name" · N nodes · … ·
    panel open.` (the quoted part appears only when the workflow has a name).
-3. The bar is a chip over the bottom-left of the canvas: a status dot and its
-   label (`Running` / `Stopped` / `External` / `Starting…`). Click it to
-   expand: the lifecycle buttons that fit the state (Start when stopped,
-   Stop + Restart when running and owned), the counters with the last sync
-   time, then the panel tools (fit, `Sync`, `Reload`, open, gear). Cancel
-   stays outside the chip while a run is active. The gear opens settings only;
-   settings hold configuration, not lifecycle buttons.
-4. On first open the graph is framed in the canvas and the counter shows
-   `synced HH:MM`. The stage has three faces and never spins forever: a stopped
-   server shows `ComfyUI is not running` with Start (plus Server settings), a
-   starting one shows `Starting ComfyUI… Ns`, and a frontend that never hands
-   over `comfyAPI.app` within 45 s shows `The editor did not load` with Reload.
-   (The stopped state needs a manual run: stop the server from the chip and look.)
+3. The bar sits over the bottom centre of the canvas — the one strip ComfyUI
+   leaves free — and it must not cover the frontend's own bottom-left settings
+   or its frame-rate readout. It is one flat row with no menu behind it: the
+   status dot and label (`Running` / `Stopped` / `External` / `Starting`), the
+   running prompt's node and steps, the preview thumbnail, then **Start**,
+   **Stop**, **Settings**, and **Cancel** while a run is active. Every command
+   is one click away; nothing appears or disappears with the state, and a
+   command that does not apply is grey and says why on hover (already running,
+   nothing running, started outside the plugin, waiting for the previous
+   request). There is no Fit — ComfyUI's zoom menu has one and the panel frames
+   the graph on load — no manual Sync (it syncs every second), and no Reload or
+   Open at all: Stop then Start is the recovery, and it replaces the editor.
+4. **Settings** opens as a sheet over the canvas, attached above the bar, and
+   holds configuration only: the directory, **Start with DSH**, Save. The state
+   is on the bar, not repeated here. Opening or closing it must not move or
+   resize the editor, and Escape or a click outside closes it. Stop then Start
+   must swap the iframe element rather than navigate it: no browser "leave this
+   page?" prompt, because a prompt means the panel navigated the frame and
+   ComfyUI's unsaved-changes guard fired.
 5. Zoom, pan, and resize the panel; `rev` must not change. Edit a widget in
    the editor or let the model do it; the revision goes up by exactly one and a
    short toast names what changed.
 6. Queue one run; `comfyui_progress` should go `queued` → `running` → success.
    This one needs the model: the check does not queue runs.
-7. If the chip reads `Running · Bridge error`, the state POST is failing: check
+7. Stop the server and look at the stage: a card with the mark, `ComfyUI is
+   not running`, the reason, and the folder — no buttons, because the bar owns
+   Start and Settings. Starting shows `Starting ComfyUI Ns`; a frontend that
+   never hands over `comfyAPI.app` within 45 s shows `The editor did not load`
+   with Reload.
+8. If the bar reads `Running · Bridge error`, the state POST is failing: check
    the Host log and `fetch('/api/comfyui/state?sessionId=…')` from the page
    before touching panel code.
 
