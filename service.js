@@ -12,7 +12,7 @@
  * start-up and is adopted rather than duplicated.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { createSupervisor, defaultLogPath } from './supervisor.js'
@@ -29,22 +29,90 @@ export function isComfyUiDir(directory) {
 }
 
 /**
- * Common ComfyUI locations, in preference order. Detection only pre-fills the
- * panel; the user's saved directory always wins.
- * @returns candidate directories and the first existing one.
+ * Where comfy-cli keeps `config.ini`. These are its own paths
+ * (`comfy_cli/constants.py`, `DEFAULT_CONFIG`), not ones this plugin invented.
+ * @param {string} home - the user's home directory.
+ * @param {string} platform - `process.platform`.
+ * @returns {string} the config file.
  */
-export function discoverComfyUi() {
+export function comfyCliConfigPath(home, platform) {
+  if (platform === 'win32') return join(home, 'AppData', 'Local', 'comfy-cli', 'config.ini')
+  if (platform === 'darwin') return join(home, 'Library', 'Application Support', 'comfy-cli', 'config.ini')
+  return join(home, '.config', 'comfy-cli', 'config.ini')
+}
+
+/**
+ * The single directory comfy-cli creates when nobody names one
+ * (`DEFAULT_COMFY_WORKSPACE`). Linux is `~/comfy/ComfyUI`; macOS and Windows
+ * are `~/Documents/comfy/ComfyUI`.
+ * @param {string} home - the user's home directory.
+ * @param {string} platform - `process.platform`.
+ * @returns {string} that directory.
+ */
+export function comfyCliDefaultInstall(home, platform) {
+  if (platform === 'win32' || platform === 'darwin') return join(home, 'Documents', 'comfy', 'ComfyUI')
+  return join(home, 'comfy', 'ComfyUI')
+}
+
+/**
+ * The workspaces a comfy-cli `config.ini` records, in its own preference:
+ * `default_workspace` (what `comfy set-default` saved), then `recent_workspace`
+ * (the last launch). A missing key, a blank value, and a malformed line are
+ * skipped; the file is configparser's `key = value` shape.
+ * @param {string} text - the file, or `''` when it cannot be read.
+ * @returns {string[]} absolute-looking values, default first.
+ */
+export function comfyCliWorkspaces(text) {
+  /** @type {Record<string, string>} */
+  const found = {}
+  if (typeof text !== 'string') return []
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (line === '' || line.startsWith('#') || line.startsWith(';') || line.startsWith('[')) continue
+    const eq = line.indexOf('=')
+    if (eq < 1) continue
+    const key = line.slice(0, eq).trim()
+    const value = line.slice(eq + 1).trim()
+    if ((key === 'default_workspace' || key === 'recent_workspace') && value !== '') found[key] = value
+  }
+  return [found.default_workspace, found.recent_workspace].filter(value => typeof value === 'string')
+}
+
+/**
+ * The checkout to pre-fill when the user has not saved one. Saved settings
+ * always win over this; this only runs while `settings` is null.
+ *
+ * The order is what the official tools already record, never a list of folders
+ * this plugin hopes for: `COMFYUI_HOME`, then comfy-cli's `default_workspace`,
+ * then its `recent_workspace`, then the one directory comfy-cli itself
+ * installs into. The first that contains `main.py` wins. ComfyUI Desktop does
+ * not publish a path file — it asks once — so there is nothing of its to read.
+ * @param {{ env?: NodeJS.ProcessEnv, home?: string, platform?: string, isCheckout?: (directory: string) => boolean, readText?: (path: string) => string }} [options] - overrides for tests. Omitted, it reads this machine.
+ * @returns {{ cwd: string | null, candidates: string[] }} the chosen directory and everything that was considered.
+ */
+export function discoverComfyUi({
+  env = process.env,
+  home = homedir(),
+  platform = process.platform,
+  isCheckout = isComfyUiDir,
+  readText = path => {
+    try {
+      return readFileSync(path, 'utf8')
+    } catch {
+      return ''
+    }
+  },
+} = {}) {
   const candidates = []
-  if (typeof process.env.COMFYUI_HOME === 'string' && process.env.COMFYUI_HOME.length > 0) {
-    candidates.push(resolve(process.env.COMFYUI_HOME))
+  if (typeof env.COMFYUI_HOME === 'string' && env.COMFYUI_HOME.length > 0) {
+    candidates.push(resolve(env.COMFYUI_HOME))
   }
-  candidates.push(join(homedir(), 'ComfyUI'))
-  candidates.push(join(homedir(), 'workspace', 'ComfyUI'))
-  if (typeof process.env.DSH_HOME === 'string' && process.env.DSH_HOME.length > 0) {
-    candidates.push(join(process.env.DSH_HOME, 'ComfyUI'))
+  for (const recorded of comfyCliWorkspaces(readText(comfyCliConfigPath(home, platform)))) {
+    if (isAbsolute(recorded)) candidates.push(resolve(recorded))
   }
+  candidates.push(comfyCliDefaultInstall(home, platform))
   for (const candidate of candidates) {
-    if (isComfyUiDir(candidate)) return { cwd: resolve(candidate), candidates }
+    if (isCheckout(candidate)) return { cwd: resolve(candidate), candidates }
   }
   return { cwd: null, candidates }
 }

@@ -11,7 +11,11 @@ import {
   VERIFIED_FRONTEND,
   adoptDirectory,
   checkoutMatches,
+  comfyCliConfigPath,
+  comfyCliDefaultInstall,
+  comfyCliWorkspaces,
   cwdFromLsof,
+  discoverComfyUi,
   frontendReport,
   installedFrontendVersion,
   pythonCommand,
@@ -79,6 +83,40 @@ try {
   assert.equal(adoptDirectory('/opt/ComfyUI', '/elsewhere'), '/opt/ComfyUI')
   assert.equal(adoptDirectory(null, '/opt/ComfyUI'), '/opt/ComfyUI')
   assert.equal(adoptDirectory(null, null), null)
+
+  // comfy-cli's own locations, not a list this plugin guessed.
+  assert.equal(comfyCliConfigPath('/srv/user', 'linux'), '/srv/user/.config/comfy-cli/config.ini')
+  assert.equal(comfyCliConfigPath('/srv/user', 'darwin'), '/srv/user/Library/Application Support/comfy-cli/config.ini')
+  assert.equal(comfyCliConfigPath('C:\\data', 'win32'), 'C:\\data/AppData/Local/comfy-cli/config.ini')
+  assert.equal(comfyCliDefaultInstall('/srv/user', 'linux'), '/srv/user/comfy/ComfyUI')
+  assert.equal(comfyCliDefaultInstall('/srv/user', 'darwin'), '/srv/user/Documents/comfy/ComfyUI')
+
+  // default_workspace leads, recent follows, blanks and junk are dropped.
+  assert.deepEqual(
+    comfyCliWorkspaces('[DEFAULT]\ndefault_workspace = /opt/ComfyUI\nrecent_workspace = /tmp/old\n# note\n'),
+    ['/opt/ComfyUI', '/tmp/old'],
+  )
+  assert.deepEqual(comfyCliWorkspaces('recent_workspace = /tmp/old\ndefault_workspace = \n'), ['/tmp/old'])
+  assert.deepEqual(comfyCliWorkspaces('not a config'), [])
+
+  // An explicit env wins over a recorded workspace, which wins over the
+  // default install. A relative ini value is ignored: it would resolve
+  // against whichever directory the Host happened to start in.
+  const discover = (extra = {}) => discoverComfyUi({
+    env: {},
+    home: '/srv/user',
+    platform: 'linux',
+    isCheckout: path => path === '/opt/ComfyUI' || path === '/env/ComfyUI',
+    readText: () => 'default_workspace = /opt/ComfyUI\nrecent_workspace = /tmp/old\n',
+    ...extra,
+  })
+  assert.equal(discover().cwd, '/opt/ComfyUI')
+  assert.equal(discover({ env: { COMFYUI_HOME: '/env/ComfyUI' } }).cwd, '/env/ComfyUI')
+  const fallback = discover({ readText: () => '', isCheckout: path => path === '/srv/user/comfy/ComfyUI' })
+  assert.equal(fallback.cwd, '/srv/user/comfy/ComfyUI')
+  const none = discover({ readText: () => 'default_workspace = relative/ComfyUI\n', isCheckout: () => false })
+  assert.equal(none.cwd, null)
+  assert.ok(!none.candidates.some(path => path.endsWith('/workspace/ComfyUI')), 'no private candidate list')
 } finally {
   rmSync(root, { recursive: true, force: true })
 }
