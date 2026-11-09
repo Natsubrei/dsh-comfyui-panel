@@ -28,8 +28,8 @@ Install the **ComfyUI Panel** card. The index pins one commit per version, so th
 
 | Other way | Command | Use it when |
 | --- | --- | --- |
-| CLI | `dsh plugin --profile <name> add 'git+https://github.com/Natsubrei/dsh-comfyui-panel.git#<commit>'` | You copy `<commit>` from the market card. An unpinned URL follows the default branch, which can be ahead of that release. |
-| npm | `dsh plugin --profile <name> add dsh-comfyui-panel` | The version does not matter. npm does not carry every indexed release. |
+| CLI | `dsh plugin --profile web add 'git+https://github.com/Natsubrei/dsh-comfyui-panel.git#<commit>'` | You copy `<commit>` from the market card. An unpinned URL follows the default branch, which can be ahead of that release. |
+| npm | `dsh plugin --profile web add dsh-comfyui-panel` | The version does not matter. npm does not carry every indexed release. |
 
 Restart DSH if it was already running. Hard-refresh the browser after a bundle change.
 

@@ -28,8 +28,8 @@ https://raw.githubusercontent.com/Natsubrei/dsh-comfyui-panel/main/market/index.
 
 | 其他方式 | 命令 | 适用情况 |
 | --- | --- | --- |
-| 命令行 | `dsh plugin --profile <name> add 'git+https://github.com/Natsubrei/dsh-comfyui-panel.git#<commit>'` | 从市场卡片复制 `<commit>`。不钉 commit 的 URL 会跟随默认分支，可能领先于该发布。 |
-| npm | `dsh plugin --profile <name> add dsh-comfyui-panel` | 不关心版本时。npm 并不包含每一个已索引的发布。 |
+| 命令行 | `dsh plugin --profile web add 'git+https://github.com/Natsubrei/dsh-comfyui-panel.git#<commit>'` | 从市场卡片复制 `<commit>`。不钉 commit 的 URL 会跟随默认分支，可能领先于该发布。 |
+| npm | `dsh plugin --profile web add dsh-comfyui-panel` | 不关心版本时。npm 并不包含每一个已索引的发布。 |
 
 如果 DSH 已经在运行，重启它。bundle 变化后，浏览器需要强制刷新。
 
