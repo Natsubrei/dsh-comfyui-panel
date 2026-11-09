@@ -11,6 +11,8 @@ the version bump.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-09
+
 ### Added
 
 - A portable Windows build starts from the panel: choose the folder the
@@ -595,7 +597,8 @@ the version bump.
 - First working panel: `/comfyui` HTTP + WebSocket proxy, same-origin iframe,
   workflow and event bridges, run tools, and hashed asset caching.
 
-[Unreleased]: https://github.com/Natsubrei/dsh-comfyui-panel/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/Natsubrei/dsh-comfyui-panel/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/Natsubrei/dsh-comfyui-panel/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/Natsubrei/dsh-comfyui-panel/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/Natsubrei/dsh-comfyui-panel/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/Natsubrei/dsh-comfyui-panel/compare/v0.8.1...v0.9.0
