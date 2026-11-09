@@ -70,6 +70,18 @@
       },
       "versions": [
         {
+          "version": "0.10.1",
+          "publishTimestamp": 1794236190,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/Natsubrei/dsh-comfyui-panel",
+            "commit": "d5a5186de711e6a2666e15d43262f5b25f87a206"
+          },
+          "engines": {
+            "dsh": ">=0.1.2-alpha.4 <0.3.0-0"
+          }
+        },
+        {
           "version": "0.10.0",
           "publishTimestamp": 1794152232,
           "source": {
