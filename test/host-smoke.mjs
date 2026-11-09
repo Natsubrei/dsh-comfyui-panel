@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply, applySeedControls, collectOutputImages, outputImageMediaType, redactCookieHeader, redactRawHeaderPairs } from '../index.js'
@@ -1877,6 +1877,20 @@ assert.equal(restoredAgain.nodes.find(node => node.id === 7).widgets.steps, 12)
 // The persisted API prompt is still runnable without the panel.
 const rerun = parse(await s1Again.tools.get('comfyui_run').execute({}, exec))
 assert.equal(rerun.prompt_id, 'p1')
+
+// A portable build is unzipped into a folder holding ComfyUI/: saving that
+// folder stores the checkout inside it, which is where main.py really is.
+const bundleRoot = mkdtempSync(join(tmpdir(), 'dsh-comfyui-bundle-'))
+mkdirSync(join(bundleRoot, 'ComfyUI'), { recursive: true })
+writeFileSync(join(bundleRoot, 'ComfyUI', 'main.py'), '')
+const savedBundle = await (await host.fetches.get('/api/comfyui/service').fetch(new Request('http://127.0.0.1/api/comfyui/service', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ action: 'save', settings: { cwd: bundleRoot, autoStart: false } }),
+}))).json()
+assert.equal(savedBundle.ok, true)
+assert.equal(savedBundle.settings.cwd, join(bundleRoot, 'ComfyUI'))
+rmSync(bundleRoot, { recursive: true, force: true })
 
 // ── Process supervision ───────────────────────────────────────────────────
 

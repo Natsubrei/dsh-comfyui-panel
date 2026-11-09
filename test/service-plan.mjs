@@ -4,7 +4,7 @@
  * is the one this panel was verified against.
  */
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -15,7 +15,10 @@ import {
   comfyCliDefaultInstall,
   comfyCliWorkspaces,
   cwdFromLsof,
+  checkoutDir,
   discoverComfyUi,
+  isPortable,
+  planFromSettings,
   frontendReport,
   installedFrontendVersion,
   pythonCommand,
@@ -30,12 +33,55 @@ try {
   assert.equal(unix, join(root, '.venv', 'bin', 'python'))
   assert.equal(pythonCommand(root, { exists: () => false, platform: 'linux' }), 'python3')
 
+  // A portable bundle is picked one level up; its checkout is what the plan
+  // and the saved setting use.
+  {
+    const bundle = join(root, 'unzipped')
+    mkdirSync(join(bundle, 'ComfyUI'), { recursive: true })
+    writeFileSync(join(bundle, 'ComfyUI', 'main.py'), '')
+    assert.equal(checkoutDir(bundle), join(bundle, 'ComfyUI'))
+    assert.equal(checkoutDir(join(bundle, 'ComfyUI')), join(bundle, 'ComfyUI'))
+    assert.equal(checkoutDir(join(root, 'nowhere')), null)
+    const plan = planFromSettings({ cwd: bundle, autoStart: false }, 'http://127.0.0.1:8188', { platform: 'win32' })
+    assert.equal(plan.cwd, join(bundle, 'ComfyUI'))
+  }
+
+  // The flag belongs to the portable layout, so it must appear exactly when the
+  // portable interpreter was chosen.
+  {
+    const bundle = join(root, 'portable')
+    const checkout = join(bundle, 'ComfyUI')
+    mkdirSync(join(bundle, 'python_embeded'), { recursive: true })
+    mkdirSync(checkout, { recursive: true })
+    writeFileSync(join(checkout, 'main.py'), '')
+    writeFileSync(join(bundle, 'python_embeded', 'python.exe'), '')
+    const plan = planFromSettings({ cwd: checkout, autoStart: false }, 'http://127.0.0.1:8188', { platform: 'win32' })
+    assert.equal(plan.command, join(bundle, 'python_embeded', 'python.exe'))
+    assert.ok(plan.args.includes('--windows-standalone-build'))
+    const venv = planFromSettings({ cwd: checkout, autoStart: false }, 'http://127.0.0.1:8188', { platform: 'linux' })
+    assert.equal(venv.command, 'python3')
+    assert.ok(!venv.args.includes('--windows-standalone-build'))
+  }
+
   const win = pythonCommand(root, {
     exists: path => path === join(root, '.venv', 'Scripts', 'python.exe'),
     platform: 'win32',
   })
   assert.equal(win, join(root, '.venv', 'Scripts', 'python.exe'))
   assert.equal(pythonCommand(root, { exists: () => false, platform: 'win32' }), 'python')
+
+  // A portable Windows build keeps its interpreter beside the checkout; the
+  // checkout's own venv still wins when both exist.
+  const bundle = join(root, 'ComfyUI_windows_portable')
+  const checkout = join(bundle, 'ComfyUI')
+  const portable = join(bundle, 'python_embeded', 'python.exe')
+  assert.equal(pythonCommand(checkout, { exists: path => path === portable, platform: 'win32' }), portable)
+  assert.equal(isPortable(portable), true)
+  assert.equal(isPortable(join(root, '.venv', 'Scripts', 'python.exe')), false)
+  assert.equal(pythonCommand(checkout, {
+    exists: path => path === portable || path === join(checkout, '.venv', 'Scripts', 'python.exe'),
+    platform: 'win32',
+  }), join(checkout, '.venv', 'Scripts', 'python.exe'))
 
   assert.equal(cwdFromLsof('p4242\nfcwd\nn/opt/ComfyUI\n'), '/opt/ComfyUI')
   assert.equal(cwdFromLsof(''), null)

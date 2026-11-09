@@ -14,7 +14,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { createSupervisor, defaultLogPath } from './supervisor.js'
 
 /** Whether a directory looks like a ComfyUI checkout (`main.py` at its root). */
@@ -26,6 +26,24 @@ export function isComfyUiDir(directory) {
   } catch {
     return false
   }
+}
+
+/**
+ * The checkout a folder stands for.
+ *
+ * A portable Windows build is unzipped as one folder holding `ComfyUI/` and
+ * `python_embeded/`, and that outer folder is what the user sees and picks. The
+ * checkout is the directory inside it; accepting only the inner one made the
+ * obvious choice fail with "does not contain main.py".
+ * @param {string} directory - what the settings field holds.
+ * @param {{ isCheckout?: (directory: string) => boolean }} [options] - override for tests.
+ * @returns {string | null} the checkout, or null when neither level has `main.py`.
+ */
+export function checkoutDir(directory, { isCheckout = isComfyUiDir } = {}) {
+  if (typeof directory !== 'string' || directory.length === 0) return null
+  if (isCheckout(directory)) return directory
+  const nested = join(directory, 'ComfyUI')
+  return isCheckout(nested) ? nested : null
 }
 
 /**
@@ -122,18 +140,32 @@ export const VERIFIED_FRONTEND = '1.57.1'
 
 /**
  * The interpreter the panel will spawn for a checkout.
+ *
+ * Portable Windows builds keep their interpreter beside the checkout rather
+ * than inside it: `ComfyUI_windows_portable/ComfyUI/main.py` next to
+ * `ComfyUI_windows_portable/python_embeded/python.exe`. A checkout's own venv
+ * still wins.
  * @param {string} cwd - the ComfyUI directory.
  * @param {{ exists: (path: string) => boolean, platform: string }} options - filesystem and platform, so a test does not depend on this machine.
- * @returns {string} an absolute venv interpreter, or `python` / `python3` on `PATH`.
+ * @returns {string} an absolute venv or portable interpreter, or `python` / `python3` on `PATH`.
  */
 export function pythonCommand(cwd, { exists, platform }) {
   const candidates = platform === 'win32'
-    ? [join(cwd, '.venv', 'Scripts', 'python.exe')]
+    ? [join(cwd, '.venv', 'Scripts', 'python.exe'), join(dirname(cwd), 'python_embeded', 'python.exe')]
     : [join(cwd, '.venv', 'bin', 'python')]
   for (const candidate of candidates) {
     if (exists(candidate)) return candidate
   }
   return platform === 'win32' ? 'python' : 'python3'
+}
+
+/**
+ * Whether a command is the interpreter a portable Windows build ships.
+ * @param {string} command - what `pythonCommand` returned.
+ * @returns {boolean} true for the `python_embeded` beside a checkout.
+ */
+export function isPortable(command) {
+  return command.includes('python_embeded')
 }
 
 /**
@@ -232,20 +264,25 @@ export function sanitizeServiceSettings(raw) {
  * Turn panel settings into a supervisor config.
  * @param settings - saved `{ cwd, autoStart }`.
  * @param upstream - the plugin's upstream URL, which supplies the port.
+ * @param {{ exists?: (path: string) => boolean, platform?: string }} [options] - overrides for tests.
  * @returns the normalized supervisor config.
  * @throws when the directory is missing or is not a ComfyUI checkout.
  */
-export function planFromSettings(settings, upstream) {
+export function planFromSettings(settings, upstream, { exists = existsSync, platform = process.platform } = {}) {
   if (settings === null || typeof settings.cwd !== 'string') {
     throw new Error('Choose the ComfyUI directory first (the folder that contains main.py).')
   }
-  const cwd = resolve(settings.cwd)
-  if (!isComfyUiDir(cwd)) throw new Error(`"${cwd}" does not contain main.py. Pick the ComfyUI checkout directory.`)
+  const given = resolve(settings.cwd)
+  const cwd = checkoutDir(given)
+  if (cwd === null) throw new Error(`"${given}" does not contain main.py. Pick the ComfyUI folder, or the folder a portable build was unzipped into.`)
   const port = new URL(upstream).port || '8188'
+  const command = pythonCommand(cwd, { exists, platform })
   return {
     enabled: true,
-    command: pythonCommand(cwd, { exists: existsSync, platform: process.platform }),
-    args: ['main.py', '--listen', '127.0.0.1', '--port', port],
+    command,
+    // The flag the portable launcher passes for its own layout; the panel does
+    // not infer it for any other install.
+    args: ['main.py', '--listen', '127.0.0.1', '--port', port, ...(isPortable(command) ? ['--windows-standalone-build'] : [])],
     cwd,
     env: {},
     restartDelayMs: 5000,
@@ -450,8 +487,10 @@ export function createServiceController({
     save(raw) {
       const clean = sanitizeServiceSettings(raw)
       if (clean === null) throw new Error('The ComfyUI directory must be an absolute path.')
-      if (!isComfyUiDir(clean.cwd)) throw new Error(`"${clean.cwd}" does not contain main.py.`)
-      settings = clean
+      const cwd = checkoutDir(clean.cwd)
+      if (cwd === null) throw new Error(`"${clean.cwd}" does not contain main.py.`)
+      // Saved as the checkout, so the field shows where the files really are.
+      settings = { ...clean, cwd }
       configuredPlan = null
       lastError = null
       externalPid = null

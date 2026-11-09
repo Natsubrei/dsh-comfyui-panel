@@ -4,7 +4,7 @@
  * The process probes are injected, so no ComfyUI is involved.
  */
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServiceController } from '../service.js'
@@ -94,6 +94,19 @@ function makeController(initial = {}) {
   assert.equal((await controller.adopt(true)).state, 'running')
   assert.equal(controller.snapshot().state, 'running')
   assert.equal(controller.snapshot().owned, true)
+}
+
+// A portable build is unzipped into one folder holding `ComfyUI/`: saving that
+// folder stores the checkout inside it, so the next start finds the files.
+{
+  const bundle = mkdtempSync(join(tmpdir(), 'dsh-comfyui-bundle-'))
+  mkdirSync(join(bundle, 'ComfyUI'), { recursive: true })
+  writeFileSync(join(bundle, 'ComfyUI', 'main.py'), '')
+  const { controller } = makeController()
+  controller.save({ cwd: bundle, autoStart: false })
+  assert.equal(controller.settings.cwd, join(bundle, 'ComfyUI'))
+  assert.throws(() => controller.save({ cwd: join(bundle, 'ComfyUI', 'models'), autoStart: false }), /does not contain main\.py/)
+  rmSync(bundle, { recursive: true, force: true })
 }
 
 rmSync(cwd, { recursive: true, force: true })
