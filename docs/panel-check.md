@@ -30,7 +30,7 @@ no full rescan, so a Host restart is the fallback.
 `npm run ui` automates what a headless browser can see: the panel mounts, the
 editor boots, counters match the graph on screen, zooming is not an edit, a
 widget edit bumps the revision once, editor events reach the bar, the Host
-learned the socket id, and Fit frames the graph. It needs a running `dsh web`
+learned the socket id, and the panel frames the graph when the editor loads. It needs a running `dsh web`
 and an installed Chromium (`test/ui/README.md` has the address, cookie and
 library it wants), and it uses a **blank draft session** — created, or the one
 already open — so it never touches a conversation that has content.

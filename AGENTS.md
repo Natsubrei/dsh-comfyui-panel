@@ -19,7 +19,7 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
 - `commands.js` — the tool ↔ panel command channel: per-session queue, parked
   long-polls, pending answers and the 60 s command expiry behind
   `createCommandChannel()`.
-- `client.js` — the panel module (iframe, projection, Server controls). Plain JS
+- `client.js` — the panel module (iframe, projection, the bottom toolbar). Plain JS
   served as-is; it is not built by tsdown and cannot `import` sibling files at
   runtime.
 - `projection.js` — semantic projection and digest line used by the Host.
@@ -33,7 +33,7 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
   (`comfyAPI`, string ids, `extra.ds`, the camera, command ids,
   `server.client_id`) and how to re-derive it after a ComfyUI upgrade.
 - `docs/supervise.md` — the profile `supervise` block, which overrides the
-  panel Server controls at startup. Read it when changing the boot command,
+  panel's Start and Stop at startup. Read it when changing the boot command,
   `cwd`, restart limits, or adoption from `cordis.patch.yml`.
 - `test/host-smoke.mjs` — self-contained executable contract for every route
   and tool.
@@ -108,7 +108,7 @@ checks cannot enforce.
 
 `docs/panel-check.md` is the whole loop: reload the live plugin, run `npm run
 ui`, then the manual pass for what the headless check cannot see (the digest
-line, the chip's labels, the stopped stage, a queued run).
+line, the bar's labels, the stopped stage, a queued run).
 
 ## Parallel work
 
