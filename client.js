@@ -108,6 +108,13 @@ window.__ModuleLoader__.load({
       assistantFailed: 'The assistant did not answer',
       assistantEmpty: 'Say what to change. The model uses the tools on this canvas.',
       assistantClosed: 'The editor is still opening.',
+      toolRunning: 'Running',
+      toolDone: 'Done',
+      toolFailed: 'Failed',
+      toolArgs: 'Arguments',
+      toolResult: 'Result',
+      tokens: '{{count}} tokens',
+      truncated: 'Showing the latest 40 turns; earlier ones live in the session.',
       assistantHint: 'Enter sends, Shift+Enter adds a line. Replies render as markdown.',
       assistantThinking: 'Thinking…',
       assistantWorking: 'Working',
@@ -186,6 +193,13 @@ window.__ModuleLoader__.load({
       assistantFailed: '助手没有回复',
       assistantEmpty: '直接说要改哪里。模型会用这张画布上的工具。',
       assistantClosed: '编辑器还在打开。',
+      toolRunning: '运行中',
+      toolDone: '完成',
+      toolFailed: '失败',
+      toolArgs: '参数',
+      toolResult: '结果',
+      tokens: '{{count}} 令牌',
+      truncated: '只显示最近 40 条，更早的记录在会话里。',
       assistantHint: 'Enter 发送，Shift+Enter 换行；回复按 Markdown 渲染。',
       assistantThinking: '正在思考…',
       assistantWorking: '处理中',
@@ -595,18 +609,61 @@ window.__ModuleLoader__.load({
       }
       .dsh-comfyui-dock-tool-mark { color: var(--ink3); opacity: .7; }
       .dsh-comfyui-dock-tool-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .dsh-comfyui-dock-action {
-        /* A quiet control that appears on hover, so a reply reads as text until
-           the reader wants its source. */
-        position: absolute; right: 0; bottom: -18px;
-        padding: 0 4px; border: 0; border-radius: 6px;
-        background: transparent; color: var(--ink3);
-        cursor: pointer; font: inherit; font-size: 11.5px; line-height: 18px;
-        opacity: 0; transition: opacity .15s ease, color .15s ease;
+      .dsh-comfyui-dock-meta {
+        /* A quiet line under the bubble: a reply reads as text until the reader
+           reaches for its source, its time, or its cost. */
+        display: flex; align-items: center; gap: 8px; margin-top: 2px;
+        color: var(--ink3); font-size: 11px; line-height: 16px;
+        opacity: 0; transition: opacity .15s ease;
       }
-      .dsh-comfyui-dock-row:hover .dsh-comfyui-dock-action,
-      .dsh-comfyui-dock-action:focus-visible { opacity: 1; }
+      .dsh-comfyui-dock-row:hover .dsh-comfyui-dock-meta,
+      .dsh-comfyui-dock-msg:focus-within .dsh-comfyui-dock-meta { opacity: 1; }
+      .dsh-comfyui-dock-action {
+        padding: 0; border: 0; border-radius: 6px;
+        background: transparent; color: inherit;
+        cursor: pointer; font: inherit; font-size: 11px; line-height: 16px;
+      }
       .dsh-comfyui-dock-action:hover { color: var(--ink); }
+      .dsh-comfyui-dock-card {
+        max-width: 100%; min-width: 0;
+        border: .5px solid var(--line); border-radius: 10px;
+        background: color-mix(in srgb, var(--card) 70%, transparent);
+        overflow: hidden;
+      }
+      .dsh-comfyui-dock-card-head {
+        display: flex; align-items: center; gap: 7px; width: 100%;
+        padding: 5px 10px 5px 8px;
+        border: 0; background: transparent; cursor: pointer;
+        color: var(--ink2); font: inherit; font-size: 12px; line-height: 18px;
+        text-align: left;
+      }
+      .dsh-comfyui-dock-card-head:disabled { cursor: default; }
+      .dsh-comfyui-dock-card-mark { flex: 0 0 auto; color: var(--ink3); font-size: 10px; }
+      .dsh-comfyui-dock-card-name {
+        flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        font-family: var(--dsw-font-family-mono, ui-monospace, monospace);
+        font-size: 11.5px;
+      }
+      .dsh-comfyui-dock-card-status { flex: 0 0 auto; color: var(--ink3); font-size: 11px; }
+      .dsh-comfyui-dock-card[data-status="error"] .dsh-comfyui-dock-card-status { color: var(--dsw-alias-state-error-primary); }
+      .dsh-comfyui-dock-card-body { border-top: .5px solid var(--line); padding: 6px 10px 8px; }
+      .dsh-comfyui-dock-card-block + .dsh-comfyui-dock-card-block { margin-top: 6px; }
+      .dsh-comfyui-dock-card-label {
+        display: block; margin-bottom: 2px;
+        color: var(--ink3); font-size: 10.5px; line-height: 15px;
+      }
+      .dsh-comfyui-dock-card-pre {
+        margin: 0; max-height: 180px; overflow: auto;
+        font-family: var(--dsw-font-family-mono, ui-monospace, monospace);
+        font-size: 11.5px; line-height: 17px;
+        white-space: pre-wrap; word-break: break-word;
+        color: var(--ink2);
+      }
+      .dsh-comfyui-dock-truncated {
+        margin: 0 0 6px; padding: 4px 8px; border-radius: 8px;
+        background: color-mix(in srgb, var(--ink) 5%, transparent);
+        color: var(--ink3); font-size: 11px; line-height: 16px;
+      }
       .dsh-comfyui-thinking {
         display: inline-flex; align-items: center; gap: 5px;
         color: var(--ink3); font-size: 12.5px; line-height: 20px;
@@ -3508,21 +3565,74 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * One row of the column: a bubble of markdown, or a tool call chip.
-     * @param {{ row: { id: string, role: string, text: string }, t: (key: string) => string }} props - the row and the locale.
+     * A clock label for one event time.
+     * @param {number} at - epoch milliseconds.
+     * @returns {string} HH:MM in the page zone.
+     */
+    function formatClock(at) {
+      const date = new Date(at)
+      return String(date.getHours()).padStart(2, "0") + ":" + String(date.getMinutes()).padStart(2, "0")
+    }
+
+    /**
+     * A short duration for a finished tool call.
+     * @param {number} ms - milliseconds.
+     * @returns {string} "800ms", "1.2s", or "3m".
+     */
+    function formatDuration(ms) {
+      if (ms < 1000) return Math.round(ms) + "ms"
+      if (ms < 60000) return (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + "s"
+      return Math.round(ms / 60000) + "m"
+    }
+
+    /**
+     * One row of the column: a bubble of markdown, or a tool card.
+     * @param {{ row: any, t: (key: string) => string }} props - the row and the locale.
      * @returns {any} the row.
      */
     function DockRow({ row, t }) {
-      if (row.role === 'tool') {
-        return h('div', { className: 'dsh-comfyui-dock-row', 'data-role': 'tool' },
-          h('div', { className: 'dsh-comfyui-dock-tool' },
-            h('span', { className: 'dsh-comfyui-dock-tool-mark', 'aria-hidden': 'true' }, '›'),
-            h('span', { className: 'dsh-comfyui-dock-tool-name' }, row.text)))
+      const [expanded, setExpanded] = useState(false)
+      if (row.role === "tool") {
+        const status = row.status === "error" ? t("toolFailed") : row.status === "done" ? t("toolDone") : t("toolRunning")
+        const timing = typeof row.durationMs === "number" ? " · " + formatDuration(row.durationMs) : ""
+        const hasDetail = typeof row.args === "string" || typeof row.result === "string"
+        return h("div", { className: "dsh-comfyui-dock-row", "data-role": "tool" },
+          h("div", { className: "dsh-comfyui-dock-card", "data-status": row.status ?? "running" },
+            h("button", {
+              type: "button",
+              className: "dsh-comfyui-dock-card-head",
+              disabled: !hasDetail,
+              "aria-expanded": expanded,
+              onClick: () => setExpanded(value => !value),
+            },
+              h("span", { className: "dsh-comfyui-dock-card-mark", "aria-hidden": "true" }, hasDetail ? (expanded ? "▾" : "▸") : "·"),
+              h("span", { className: "dsh-comfyui-dock-card-name" }, typeof row.name === "string" ? row.name : row.text),
+              h("span", { className: "dsh-comfyui-dock-card-status" }, status + timing),
+            ),
+            expanded
+              ? h("div", { className: "dsh-comfyui-dock-card-body" },
+                typeof row.args === "string"
+                  ? h("div", { className: "dsh-comfyui-dock-card-block" },
+                    h("span", { className: "dsh-comfyui-dock-card-label" }, t("toolArgs")),
+                    h("pre", { className: "dsh-comfyui-dock-card-pre" }, row.args))
+                  : null,
+                typeof row.result === "string"
+                  ? h("div", { className: "dsh-comfyui-dock-card-block" },
+                    h("span", { className: "dsh-comfyui-dock-card-label" }, t("toolResult")),
+                    h("pre", { className: "dsh-comfyui-dock-card-pre" }, row.result))
+                  : null)
+              : null,
+          ))
       }
-      return h('div', { className: 'dsh-comfyui-dock-row', 'data-role': row.role },
-        h('div', { className: 'dsh-comfyui-dock-msg' },
+      const stamp = typeof row.at === "number" ? formatClock(row.at) : ""
+      const tokens = typeof row.tokens === "number" ? t("tokens").replace("{{count}}", String(row.tokens)) : ""
+      return h("div", { className: "dsh-comfyui-dock-row", "data-role": row.role },
+        h("div", { className: "dsh-comfyui-dock-msg" },
           renderMarkdown(row.text, t),
-          row.role === 'assistant' ? h(CopyRow, { text: row.text, t }) : null))
+          h("div", { className: "dsh-comfyui-dock-meta" },
+            stamp.length > 0 ? h("span", null, stamp) : null,
+            tokens.length > 0 ? h("span", null, tokens) : null,
+            row.role === "assistant" ? h(CopyRow, { text: row.text, t }) : null)))
     }
 
     /**
@@ -3540,6 +3650,8 @@ window.__ModuleLoader__.load({
       const [open, setOpen] = useState(true)
       /** Whether the log follows new turns; a reader who scrolled up keeps their place. */
       const [stick, setStick] = useState(true)
+      /** Whether the session holds more turns than the column was given. */
+      const [truncated, setTruncated] = useState(false)
       const logRef = useRef(null)
       /** The newest read wins; an older poll must not overwrite it. */
       const readAt = useRef(0)
@@ -3556,6 +3668,7 @@ window.__ModuleLoader__.load({
         }
         if (body?.ok === true && Array.isArray(body.rows)) {
           setRows(body.rows)
+          setTruncated(body.truncated === true)
           setPending(current => {
             if (current === null) return null
             return body.rows.some(row => row.role === 'user' && row.text === current.text) ? null : current
@@ -3694,6 +3807,9 @@ window.__ModuleLoader__.load({
           ) : t('assistant')),
         ),
         open ? h('div', { className: 'dsh-comfyui-dock-log', ref: logRef, onScroll },
+          truncated && shown.length > 0
+            ? h('p', { className: 'dsh-comfyui-dock-truncated' }, t('truncated'))
+            : null,
           shown.length === 0 && !thinking
             ? h('div', { className: 'dsh-comfyui-dock-emptyblock' },
               h('p', { className: 'dsh-comfyui-dock-empty' }, t('assistantEmpty')),

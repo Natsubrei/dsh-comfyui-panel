@@ -22,10 +22,16 @@ the version bump.
 - The column reports what it is doing: a Working badge in the header, a
   thinking indicator while a reply is due, and a faster transcript poll
   while one is.
+- Each turn carries its time, and a reply its output tokens.
+- The transcript route reports when the session holds more turns than the
+  column was given, and the column says so at the top instead of starting
+  mid-thread.
 
 ### Changed
 
-- A tool call shows as a chip instead of a bare monospace line.
+- A tool call is a card: its name, whether it finished, how long it took, and
+  (expanded) the arguments it was called with and the result it returned. A
+  call and its result are one card, not two lines.
 - The column follows new turns only while the reader is at the bottom.
   Scrolled up, it leaves their place and offers Jump to latest.
 

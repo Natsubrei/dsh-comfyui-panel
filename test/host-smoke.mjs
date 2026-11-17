@@ -1795,6 +1795,7 @@ const transcript = await host.fetches.get('/api/comfyui/desk/transcript').fetch(
 const transcriptBody = await transcript.json()
 assert.equal(transcript.status, 200)
 assert.deepEqual(transcriptBody.rows, [{ id: '9', role: 'assistant', text: 'Steps are 20.' }])
+assert.equal(transcriptBody.truncated, false)
 const deskUnknown = await host.fetches.get('/api/comfyui/desk').fetch(new Request('http://127.0.0.1/api/comfyui/desk', {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
