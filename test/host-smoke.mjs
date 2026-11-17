@@ -1816,46 +1816,6 @@ const transcriptBody = await transcript.json()
 assert.equal(transcript.status, 200)
 assert.deepEqual(transcriptBody.rows, [{ id: '9', role: 'assistant', text: 'Steps are 20.' }])
 assert.equal(transcriptBody.truncated, false)
-
-// The plus menu: the model catalog, the permission presets, and a preset
-// change refused when this Host cannot hand the service a Session object.
-const optionsGet = await host.fetches.get('/api/comfyui/desk/options').fetch(new Request('http://127.0.0.1/api/comfyui/desk/options'))
-const optionsBody = await optionsGet.json()
-assert.equal(optionsGet.status, 200)
-assert.equal(optionsBody.model.model, 'chat')
-assert.equal(optionsBody.models[0].models[0].id, 'chat')
-// This Host holds no Session object for the preset service, so the menu is
-// offered no presets at all rather than ones that would fail on click.
-assert.deepEqual(optionsBody.presets, [])
-assert.equal(optionsBody.preset, null)
-const modelPost = await host.fetches.get('/api/comfyui/desk/options').fetch(new Request('http://127.0.0.1/api/comfyui/desk/options', {
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ action: 'model', provider: 'deepseek', model: 'chat' }),
-}))
-assert.equal(modelPost.status, 200)
-assert.deepEqual(deskModels, [{ sessionId: 'desk-session', provider: 'deepseek', model: 'chat' }])
-const presetPost = await host.fetches.get('/api/comfyui/desk/options').fetch(new Request('http://127.0.0.1/api/comfyui/desk/options', {
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ action: 'preset', value: 'auto' }),
-}))
-assert.equal(presetPost.status, 501)
-
-// The command route accepts only the commands a column can report, and a
-// Host without the commands remote refuses instead of pretending.
-const commandBad = await host.fetches.get('/api/comfyui/desk/command').fetch(new Request('http://127.0.0.1/api/comfyui/desk/command', {
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ command: '/model' }),
-}))
-assert.equal(commandBad.status, 400)
-const commandRefused = await host.fetches.get('/api/comfyui/desk/command').fetch(new Request('http://127.0.0.1/api/comfyui/desk/command', {
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ command: '/compact' }),
-}))
-assert.equal(commandRefused.status, 501)
 const deskUnknown = await host.fetches.get('/api/comfyui/desk').fetch(new Request('http://127.0.0.1/api/comfyui/desk', {
   method: 'POST',
   headers: { 'content-type': 'application/json' },

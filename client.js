@@ -27,8 +27,6 @@ window.__ModuleLoader__.load({
     const PANEL_URL = '/comfyui/'
     const DESK_URL = '/api/comfyui/desk'
     const DESK_CHAT_URL = '/api/comfyui/desk/chat'
-    const OPTIONS_URL = '/api/comfyui/desk/options'
-    const COMMAND_URL = '/api/comfyui/desk/command'
     const DESK_TRANSCRIPT_URL = '/api/comfyui/desk/transcript'
     const INTERRUPT_URL = `${PANEL_URL}interrupt`
     /** How long a successful Cancel waits for its event before re-enabling. */
@@ -3289,6 +3287,8 @@ window.__ModuleLoader__.load({
 
     /** Locale bound in `apply`. The main panel renders after that assignment. */
     let deskT = key => key
+    /** The client remote, bound in apply; null when the Host has none. */
+    let deskRemote = null
 
     /** Badge outline of the ComfyUI mark: a rounded square on a 520 grid. */
     const COMFY_BADGE = 'M0 184.335C0 119.812 0 87.5502 12.5571 62.9055C23.6026 41.2274 41.2274 23.6026 62.9055 12.5571C87.5502 0 119.812 0 184.335 0H335.665C400.188 0 432.45 0 457.094 12.5571C478.773 23.6026 496.397 41.2274 507.443 62.9055C520 87.5502 520 119.812 520 184.335V335.665C520 400.188 520 432.45 507.443 457.094C496.397 478.773 478.773 496.397 457.094 507.443C432.45 520 400.188 520 335.665 520H184.335C119.812 520 87.5502 520 62.9055 507.443C41.2274 496.397 23.6026 478.773 12.5571 457.094C0 432.45 0 400.188 0 335.665V184.335Z'
@@ -3819,18 +3819,26 @@ window.__ModuleLoader__.load({
           setBusy(false)
         }
       }, [busy, load, sessionId, t])
+      const remoteCall = async fn => {
+        try {
+          return await fn()
+        } catch {
+          return null
+        }
+      }
       const loadOptions = useCallback(async () => {
-        const response = await fetch(OPTIONS_URL).catch(() => null)
-        if (response === null) return
-        const body = await response.json().catch(() => null)
-        if (body?.ok !== true) return
+        if (deskRemote === null) return
+        const catalog = await remoteCall(() => deskRemote.session.modelCatalog())
+        const presets = await remoteCall(() => deskRemote.permissionPresets.catalog())
+        const commands = sessionId === null ? null : await remoteCall(() => deskRemote.commands.list(sessionId))
         setOptions({
-          models: Array.isArray(body.models) ? body.models : [],
-          model: body.model ?? null,
-          presets: Array.isArray(body.presets) ? body.presets : [],
-          preset: body.preset ?? null,
+          models: catalog?.ok === true && Array.isArray(catalog.value?.groups) ? catalog.value.groups : [],
+          model: catalog?.ok === true ? catalog.value?.default ?? null : null,
+          presets: presets?.ok === true && Array.isArray(presets.value?.options) ? presets.value.options : [],
+          preset: presets?.ok === true ? presets.value?.current ?? null : null,
+          commands: commands?.ok === true && Array.isArray(commands.value) ? commands.value : [],
         })
-      }, [])
+      }, [sessionId])
       const toggleMenu = () => {
         setMenuError("")
         setMenu(current => {
@@ -3840,39 +3848,42 @@ window.__ModuleLoader__.load({
           return "root"
         })
       }
-      const applyOption = (payload) => {
+      const finishOption = result => {
+        if (result === null || result.ok !== true) {
+          const message = result?.error?.message
+          setMenuError(typeof message === 'string' && message.length > 0 ? message : t('optionFailed'))
+          return
+        }
+        setMenu(null)
+        void loadOptions()
+      }
+      const chooseModel = (provider, model) => {
         setMenuBusy(true)
         setMenuError("")
-        fetch(OPTIONS_URL, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(payload),
-        })
-          .then(response => response.json())
-          .then(body => {
-            if (body?.ok !== true) {
-              setMenuError(typeof body?.error === "string" && body.error.length > 0 ? body.error : t("optionFailed"))
-              return
-            }
-            setOptions({
-              models: Array.isArray(body.models) ? body.models : [],
-              model: body.model ?? null,
-              presets: Array.isArray(body.presets) ? body.presets : [],
-              preset: body.preset ?? null,
-            })
-            setMenu(null)
-          })
-          .catch(() => setMenuError(t("optionFailed")))
+        void remoteCall(() => deskRemote.session.selectModel({ sessionId, provider, model }))
+          .then(result => finishOption(result))
           .finally(() => setMenuBusy(false))
       }
-      const chooseModel = (provider, model) => applyOption({ action: "model", provider, model })
-      const choosePreset = value => applyOption({ action: "preset", value })
-      const presetLabel = () => {
-        if (options === null || typeof options.preset !== "string") return ""
-        const found = options.presets.find(item => item?.value === options.preset)
-        return typeof found?.name === "string" ? found.name : options.preset
+      const choosePreset = value => {
+        setMenuBusy(true)
+        setMenuError("")
+        void remoteCall(() => deskRemote.permissionPresets.set({ sessionId, value }))
+          .then(result => finishOption(result))
+          .finally(() => setMenuBusy(false))
       }
-      const menuRow = (key, label, active, onClick) => h("button", {
+      const runCommand = command => {
+        setMenuBusy(true)
+        setMenuError("")
+        void remoteCall(() => deskRemote.commands.execute(sessionId, command, []))
+          .then(result => finishOption(result))
+          .finally(() => setMenuBusy(false))
+      }
+      const presetLabel = () => {
+        if (options === null || typeof options.preset !== 'string') return ''
+        const found = options.presets.find(item => item?.value === options.preset)
+        return typeof found?.name === 'string' ? found.name : options.preset
+      }
+      const menuRow = (key, label, active, onClick) => h('button', {
         key,
         type: "button",
         className: "dsh-comfyui-dock-menu-item",
@@ -3881,37 +3892,42 @@ window.__ModuleLoader__.load({
         onClick,
       }, label)
       const menuRows = () => {
-        if (menu === "root") {
-          // The native composer puts commands here, not a new-conversation
-          // action: a new session lives in the header, so the menu only
-          // carries things that act on this session.
-          return [
-            h("p", { key: "g-cmd", className: "dsh-comfyui-dock-menu-head" }, t("instructions")),
-            menuRow("compact", t("compact"), false, () => runCommand("/compact")),
-            menuRow("model", t("model") + (options?.model?.model ? " · " + options.model.model : ""), false, () => setMenu("model")),
-            menuRow("export", t("export"), false, () => runCommand("/export")),
-            menuRow("rewind", t("rewind"), false, () => runCommand("/rewind")),
-            menuRow("undo", t("undo"), false, () => runCommand("/undo")),
-          ]
+        if (menu === 'root') {
+          // Commands come from the session registry, so a plugin that adds
+          // /rewind gets an entry here without this file knowing it.
+          const commands = Array.isArray(options?.commands) ? options.commands : []
+          const rows = []
+          if (commands.length > 0) rows.push(h("p", { key: "g-cmd", className: "dsh-comfyui-dock-menu-head" }, t("instructions")))
+          for (const command of commands) {
+            const name = typeof command?.name === 'string' ? command.name : String(command ?? '')
+            if (name.length === 0) continue
+            const title = typeof command?.title === 'string' ? command.title : name
+            rows.push(menuRow('c-' + name, title, false, () => runCommand(name.startsWith('/') ? name : '/' + name)))
+          }
+          if (rows.length === 0) rows.push(h("p", { key: "none", className: "dsh-comfyui-dock-menu-empty" }, t("optionsEmpty")))
+          rows.push(h("div", { key: "sep", className: "dsh-comfyui-dock-menu-sep" }))
+          rows.push(menuRow('model', t('model') + (options?.model?.model ? ' · ' + options.model.model : ''), false, () => setMenu('model')))
+          rows.push(menuRow('preset', t('permissions') + (presetLabel().length > 0 ? ' · ' + presetLabel() : ''), false, () => setMenu('preset')))
+          return rows
         }
-        if (menu === "model") {
+        if (menu === 'model') {
           if (options === null) return [h("p", { key: "load", className: "dsh-comfyui-dock-menu-empty" }, t("loading"))]
           const rows = []
           for (const group of options.models) {
-            const name = typeof group?.name === "string" ? group.name : String(group?.id ?? "")
-            rows.push(h("p", { key: "g-" + String(group?.id), className: "dsh-comfyui-dock-menu-head" }, name))
+            const name = typeof group?.name === 'string' ? group.name : String(group?.id ?? '')
+            rows.push(h('p', { key: 'g-' + String(group?.id), className: 'dsh-comfyui-dock-menu-head' }, name))
             for (const item of Array.isArray(group?.models) ? group.models : []) {
-              const modelId = String(item?.id ?? "")
+              const modelId = String(item?.id ?? '')
               const active = options.model?.provider === group?.id && options.model?.model === item?.id
-              rows.push(menuRow("m-" + String(group?.id) + "-" + modelId, typeof item?.name === "string" ? item.name : modelId, active, () => chooseModel(String(group?.id), modelId)))
+              rows.push(menuRow('m-' + String(group?.id) + '-' + modelId, typeof item?.name === 'string' ? item.name : modelId, active, () => chooseModel(String(group?.id), modelId)))
             }
           }
           if (rows.length === 0) rows.push(h("p", { key: "none", className: "dsh-comfyui-dock-menu-empty" }, t("optionsEmpty")))
           return rows
         }
-        if (menu === "preset") {
+        if (menu === 'preset') {
           if (options === null) return [h("p", { key: "load", className: "dsh-comfyui-dock-menu-empty" }, t("loading"))]
-          const rows = options.presets.map(option => menuRow("p-" + String(option?.value), typeof option?.name === "string" ? option.name : String(option?.value ?? ""), options.preset === option?.value, () => choosePreset(String(option?.value))))
+          const rows = options.presets.map(option => menuRow('p-' + String(option?.value), typeof option?.name === 'string' ? option.name : String(option?.value ?? ''), options.preset === option?.value, () => choosePreset(String(option?.value))))
           if (rows.length === 0) rows.push(h("p", { key: "none", className: "dsh-comfyui-dock-menu-empty" }, t("optionsEmpty")))
           return rows
         }
@@ -3927,32 +3943,11 @@ window.__ModuleLoader__.load({
         document.addEventListener("pointerdown", close)
         return () => document.removeEventListener("pointerdown", close)
       }, [menu])
-
-      const runCommand = command => {
-        setMenuBusy(true)
-        setMenuError("")
-        fetch(COMMAND_URL, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ command }),
-        })
-          .then(response => response.json())
-          .then(body => {
-            if (body?.ok !== true) {
-              setMenuError(typeof body?.error === "string" && body.error.length > 0 ? body.error : t("commandFailed"))
-              return
-            }
-            setMenu(null)
-          })
-          .catch(() => setMenuError(t("commandFailed")))
-          .finally(() => setMenuBusy(false))
-      }
       useEffect(() => {
         // The chips under the log name the current model and preset, so the
         // options are read once on mount as well as when the menu opens.
         void loadOptions()
       }, [loadOptions, sessionId])
-
       const send = event => {
         event.preventDefault()
         void admit(draft.trim())
@@ -4137,6 +4132,23 @@ window.__ModuleLoader__.load({
       __ops: { applyOperation, captureGraph, applyWorkflowGraph, loadWorkflow, switchTab, closeTab, readTabs, tabLabel, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, mapApiEvent, relayEditorEvents, readPreview, progressSummary, applyRunEvent, runLabel, cancelLabel, TopBar, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, viewShowsAll, describeOperation, en, zh, createSync, parseMarkdown, parseInline, renderInline, renderMarkdown },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
+        // A cordis context throws on an uninjected service property, and that
+        // throw took the whole client plugin down with it. Both access paths
+        // are tried, and a deployment without either leaves the menu empty
+        // instead of removing the panel from the sidebar.
+        deskRemote = null
+        try {
+          if (typeof ctx.get === 'function') deskRemote = ctx.get('remote') ?? null
+        } catch {
+          deskRemote = null
+        }
+        if (deskRemote === null) {
+          try {
+            deskRemote = ctx.remote ?? null
+          } catch {
+            deskRemote = null
+          }
+        }
         deskT = t
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')
         ctx.effect(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
