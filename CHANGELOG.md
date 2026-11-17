@@ -22,6 +22,11 @@ the version bump.
 - The column reports what it is doing: a Working badge in the header, a
   thinking indicator while a reply is due, and a faster transcript poll
   while one is.
+- The composer's left plus button opens a menu: New conversation, Model (the
+  routable catalog with the current one marked), and Permissions (the
+  deployment's presets). Both write through the Host's own setters, and a
+  deployment that does not mount them hides the entry rather than offering a
+  control that cannot act.
 - Each turn carries its time, and a reply its output tokens.
 - The transcript route reports when the session holds more turns than the
   column was given, and the column says so at the top instead of starting

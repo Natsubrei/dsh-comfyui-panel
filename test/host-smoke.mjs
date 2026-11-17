@@ -1729,6 +1729,8 @@ assert.throws(
 
 const deskPrompts = []
 const deskRenames = []
+const deskModels = []
+const deskPresets = []
 let deskCreated = 0
 host.services.set('sessionController', {
   async create() {
@@ -1763,6 +1765,24 @@ host.services.set('sessionController', {
     deskPrompts.push(request)
     return { accepted: true }
   },
+  async modelCatalog() {
+    return {
+      default: { provider: 'deepseek', model: 'chat' },
+      routableProviders: ['deepseek'],
+      groups: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'chat', name: 'Chat' }] }],
+    }
+  },
+  async selectModel(request) {
+    deskModels.push(request)
+    return { selected: { provider: request.provider, model: request.model } }
+  },
+})
+host.services.set('permissionPresets', {
+  async catalog() {
+    return { options: [{ value: 'auto', name: 'Auto' }, { value: 'full', name: 'Full access' }] }
+  },
+  current() { return 'auto' },
+  set(session, value) { deskPresets.push([session, value]) },
 })
 const deskGet = await host.fetches.get('/api/comfyui/desk').fetch(new Request('http://127.0.0.1/api/comfyui/desk'))
 const deskBody = await deskGet.json()
@@ -1796,6 +1816,31 @@ const transcriptBody = await transcript.json()
 assert.equal(transcript.status, 200)
 assert.deepEqual(transcriptBody.rows, [{ id: '9', role: 'assistant', text: 'Steps are 20.' }])
 assert.equal(transcriptBody.truncated, false)
+
+// The plus menu: the model catalog, the permission presets, and a preset
+// change refused when this Host cannot hand the service a Session object.
+const optionsGet = await host.fetches.get('/api/comfyui/desk/options').fetch(new Request('http://127.0.0.1/api/comfyui/desk/options'))
+const optionsBody = await optionsGet.json()
+assert.equal(optionsGet.status, 200)
+assert.equal(optionsBody.model.model, 'chat')
+assert.equal(optionsBody.models[0].models[0].id, 'chat')
+// This Host holds no Session object for the preset service, so the menu is
+// offered no presets at all rather than ones that would fail on click.
+assert.deepEqual(optionsBody.presets, [])
+assert.equal(optionsBody.preset, null)
+const modelPost = await host.fetches.get('/api/comfyui/desk/options').fetch(new Request('http://127.0.0.1/api/comfyui/desk/options', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ action: 'model', provider: 'deepseek', model: 'chat' }),
+}))
+assert.equal(modelPost.status, 200)
+assert.deepEqual(deskModels, [{ sessionId: 'desk-session', provider: 'deepseek', model: 'chat' }])
+const presetPost = await host.fetches.get('/api/comfyui/desk/options').fetch(new Request('http://127.0.0.1/api/comfyui/desk/options', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ action: 'preset', value: 'auto' }),
+}))
+assert.equal(presetPost.status, 501)
 const deskUnknown = await host.fetches.get('/api/comfyui/desk').fetch(new Request('http://127.0.0.1/api/comfyui/desk', {
   method: 'POST',
   headers: { 'content-type': 'application/json' },

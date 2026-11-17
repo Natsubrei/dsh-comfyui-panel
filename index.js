@@ -240,6 +240,16 @@ export function apply(ctx, rawConfig = {}) {
     return () => { void dispose() }
   }, 'dsh-comfyui: desk chat route')
 
+  ctx.effect(() => {
+    const dispose = ctx.connection.fetch.register({
+      path: '/api/comfyui/desk/options',
+      methods: ['GET', 'POST'],
+      requestBody: 'buffered',
+      fetch: request => bridgeDeskOptions(request),
+    })
+    return () => { void dispose() }
+  }, 'dsh-comfyui: desk options route')
+
   // ── HTTP proxy ──────────────────────────────────────────────────────────
 
   function isAdmitted(request) {
@@ -678,6 +688,154 @@ export function apply(ctx, rawConfig = {}) {
       },
     })
     return json(result, result.ok === true ? 200 : result.status)
+  }
+
+  /**
+   * The permission-preset service, when this deployment mounts it.
+   * @returns {any} the service, or null.
+   */
+  function presetService() {
+    try {
+      return ctx.get('permissionPresets') ?? null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * The live Session object behind an id.
+   *
+   * The preset service is handed a Session, not an id, so the column's route
+   * has to find the same object the Agent holds.
+   * @param {string} sessionId - the desk session.
+   * @returns {any} the Session, or null.
+   */
+  function sessionObject(sessionId) {
+    try {
+      const agent = ctx.get('agents')?.get(sessionId)
+      if (agent?.session !== undefined && agent.session !== null) return agent.session
+    } catch {
+      // An Agent that is gone cannot own a Session; fall through to the list.
+    }
+    const sessions = sessionController()
+    try {
+      const list = typeof sessions?.list === 'function' ? sessions.list() : null
+      if (Array.isArray(list)) {
+        return list.find(session => session?.id === sessionId || session?.sessionId === sessionId) ?? null
+      }
+    } catch {
+      return null
+    }
+    return null
+  }
+
+  /**
+   * What the column may switch: the routable models and the permission presets.
+   *
+   * Both live behind Host remotes that a deployment may not mount; a missing
+   * one comes back empty, so the menu hides the section instead of offering a
+   * control that cannot act.
+   * @param {string} sessionId - the desk session.
+   * @returns {Promise<{ models: any[], model: any, presets: any[], preset: string | null }>} the options.
+   */
+  async function deskOptions(sessionId) {
+    const sessions = sessionController()
+    /** @type {any[]} */
+    let models = []
+    /** @type {any} */
+    let model = null
+    if (sessions !== null && typeof sessions.modelCatalog === 'function') {
+      try {
+        const catalog = await sessions.modelCatalog()
+        models = Array.isArray(catalog?.groups) ? catalog.groups : []
+        model = catalog?.default ?? null
+      } catch (error) {
+        ctx.logger?.warn('dsh-comfyui: model catalog unavailable: ' + String(error))
+      }
+    }
+    /** @type {any[]} */
+    let presets = []
+    /** @type {string | null} */
+    let preset = null
+    const service = presetService()
+    // The service is handed a Session object, not an id. Without the object
+    // there is nothing to read or set, so the menu offers no preset at all
+    // instead of listing one that fails the moment it is chosen.
+    const session = sessionObject(sessionId)
+    if (service !== null && session !== null) {
+      try {
+        const catalog = await service.catalog()
+        presets = Array.isArray(catalog?.options) ? catalog.options : []
+        if (typeof service.current === 'function') preset = service.current(session) ?? null
+      } catch (error) {
+        ctx.logger?.warn('dsh-comfyui: permission presets unavailable: ' + String(error))
+      }
+    }
+    return { models, model, presets, preset }
+  }
+
+  /**
+   * Read or change the desk session's model and permission preset.
+   *
+   * A change goes through the Host's own setters, so the Session records the
+   * same events a native turn would and the controls elsewhere agree.
+   * @param {Request} request - GET reads; POST changes one knob.
+   * @returns {Promise<Response>} the options, or why the change failed.
+   */
+  async function bridgeDeskOptions(request) {
+    let sessionId
+    try {
+      sessionId = await deskSessionId()
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      return json({ ok: false, error: detail || 'The desk session is unavailable' }, 502)
+    }
+    if (request.method === 'GET') {
+      return json({ ok: true, ...(await deskOptions(sessionId)) })
+    }
+    let body
+    try {
+      const raw = await request.text()
+      if (raw.length > 20_000) return json({ ok: false, error: 'payload is too large' }, 413)
+      body = JSON.parse(raw)
+    } catch {
+      return json({ ok: false, error: 'invalid JSON body' }, 400)
+    }
+    if (body?.action === 'model') {
+      const sessions = sessionController()
+      if (sessions === null || typeof sessions.selectModel !== 'function') {
+        return json({ ok: false, error: 'model selection is unavailable' }, 501)
+      }
+      const provider = typeof body.provider === 'string' ? body.provider : ''
+      const model = typeof body.model === 'string' ? body.model : ''
+      if (provider.length === 0 || model.length === 0) {
+        return json({ ok: false, error: 'provider and model are required' }, 400)
+      }
+      try {
+        await sessions.selectModel({ sessionId, provider, model })
+        return json({ ok: true, ...(await deskOptions(sessionId)) })
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        return json({ ok: false, error: detail || 'The model could not be selected' }, 502)
+      }
+    }
+    if (body?.action === 'preset') {
+      const service = presetService()
+      const session = sessionObject(sessionId)
+      if (service === null || session === null || typeof service.set !== 'function') {
+        return json({ ok: false, error: 'permission presets are unavailable' }, 501)
+      }
+      const value = typeof body.value === 'string' ? body.value : ''
+      if (value.length === 0) return json({ ok: false, error: 'value is required' }, 400)
+      try {
+        service.set(session, value)
+        return json({ ok: true, ...(await deskOptions(sessionId)) })
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        return json({ ok: false, error: detail || 'The permission preset could not be applied' }, 502)
+      }
+    }
+    return json({ ok: false, error: 'unknown action' }, 400)
   }
 
   // ── Service bridge ──────────────────────────────────────────────────────

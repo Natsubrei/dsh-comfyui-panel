@@ -27,6 +27,7 @@ window.__ModuleLoader__.load({
     const PANEL_URL = '/comfyui/'
     const DESK_URL = '/api/comfyui/desk'
     const DESK_CHAT_URL = '/api/comfyui/desk/chat'
+    const OPTIONS_URL = '/api/comfyui/desk/options'
     const DESK_TRANSCRIPT_URL = '/api/comfyui/desk/transcript'
     const INTERRUPT_URL = `${PANEL_URL}interrupt`
     /** How long a successful Cancel waits for its event before re-enabling. */
@@ -108,6 +109,11 @@ window.__ModuleLoader__.load({
       assistantFailed: 'The assistant did not answer',
       assistantEmpty: 'Say what to change. The model uses the tools on this canvas.',
       assistantClosed: 'The editor is still opening.',
+      menu: 'Menu',
+      model: 'Model',
+      permissions: 'Permissions',
+      optionFailed: 'Could not change it',
+      optionsEmpty: 'Nothing to choose here',
       toolRunning: 'Running',
       toolDone: 'Done',
       toolFailed: 'Failed',
@@ -193,6 +199,11 @@ window.__ModuleLoader__.load({
       assistantFailed: '助手没有回复',
       assistantEmpty: '直接说要改哪里。模型会用这张画布上的工具。',
       assistantClosed: '编辑器还在打开。',
+      menu: '菜单',
+      model: '模型',
+      permissions: '访问权限',
+      optionFailed: '切换失败',
+      optionsEmpty: '没有可选项',
       toolRunning: '运行中',
       toolDone: '完成',
       toolFailed: '失败',
@@ -761,7 +772,41 @@ window.__ModuleLoader__.load({
       .dsh-comfyui-md-table th { font-weight: 600; }
       .dsh-comfyui-md a { color: var(--dsw-alias-brand-primary); text-decoration: underline; text-underline-offset: 2px; }
       .dsh-comfyui-dock-row[data-role="user"] .dsh-comfyui-md-p { white-space: pre-wrap; }
+      .dsh-comfyui-dock-add {
+        width: 28px; height: 28px; flex: 0 0 auto; margin-left: -6px;
+        display: grid; place-items: center;
+        border: 0; border-radius: 50%; padding: 0;
+        background: transparent; color: var(--ink2);
+        cursor: pointer; font: inherit; font-size: 18px; line-height: 1;
+      }
+      .dsh-comfyui-dock-add:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+      .dsh-comfyui-dock-add[aria-expanded="true"] { background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); }
+      .dsh-comfyui-dock-menu {
+        position: absolute; left: 0; right: 0; bottom: 48px;
+        z-index: 6; max-height: 300px; overflow: auto;
+        padding: 6px; border: .5px solid var(--line); border-radius: 14px;
+        background: var(--card); box-shadow: var(--dsw-elevation-soft);
+      }
+      .dsh-comfyui-dock-menu-head {
+        margin: 0; padding: 4px 10px 2px;
+        color: var(--ink3); font-size: 11px; line-height: 16px;
+      }
+      .dsh-comfyui-dock-menu-item {
+        display: flex; align-items: center; gap: 8px; width: 100%;
+        padding: 6px 10px; border: 0; border-radius: 9px;
+        background: transparent; color: var(--ink);
+        cursor: pointer; font: inherit; font-size: 13px; line-height: 19px;
+        text-align: left;
+      }
+      .dsh-comfyui-dock-menu-item:hover { background: var(--hover); }
+      .dsh-comfyui-dock-menu-item[data-active="true"] { color: var(--primary); font-weight: 600; }
+      .dsh-comfyui-dock-menu-item[data-active="true"]::after { content: "·"; margin-left: auto; }
+      .dsh-comfyui-dock-menu-item:disabled { opacity: .5; cursor: default; }
+      .dsh-comfyui-dock-menu-sep { height: .5px; margin: 4px 6px; background: var(--line); }
+      .dsh-comfyui-dock-menu-empty { margin: 0; padding: 6px 10px; color: var(--ink3); font-size: 12px; }
+      .dsh-comfyui-dock-menu-error { margin: 0 0 4px; padding: 4px 10px; color: var(--dsw-alias-state-error-primary); font-size: 12px; }
       .dsh-comfyui-dock-form {
+        position: relative;
         /* Centred, not bottom-aligned: an empty field is one line tall, and
            flex-end left the round send button sitting below that line. */
         flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
@@ -3652,6 +3697,12 @@ window.__ModuleLoader__.load({
       const [stick, setStick] = useState(true)
       /** Whether the session holds more turns than the column was given. */
       const [truncated, setTruncated] = useState(false)
+      /** Which menu page is open: null, "root", "model", or "preset". */
+      const [menu, setMenu] = useState(null)
+      /** The model catalog and permission presets the menu offers. */
+      const [options, setOptions] = useState(null)
+      const [menuBusy, setMenuBusy] = useState(false)
+      const [menuError, setMenuError] = useState("")
       const logRef = useRef(null)
       /** The newest read wins; an older poll must not overwrite it. */
       const readAt = useRef(0)
@@ -3744,6 +3795,110 @@ window.__ModuleLoader__.load({
           setBusy(false)
         }
       }, [busy, load, sessionId, t])
+      const loadOptions = useCallback(async () => {
+        const response = await fetch(OPTIONS_URL).catch(() => null)
+        if (response === null) return
+        const body = await response.json().catch(() => null)
+        if (body?.ok !== true) return
+        setOptions({
+          models: Array.isArray(body.models) ? body.models : [],
+          model: body.model ?? null,
+          presets: Array.isArray(body.presets) ? body.presets : [],
+          preset: body.preset ?? null,
+        })
+      }, [])
+      const toggleMenu = () => {
+        setMenuError("")
+        setMenu(current => {
+          if (current !== null) return null
+          setOptions(null)
+          void loadOptions()
+          return "root"
+        })
+      }
+      const applyOption = (payload) => {
+        setMenuBusy(true)
+        setMenuError("")
+        fetch(OPTIONS_URL, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        })
+          .then(response => response.json())
+          .then(body => {
+            if (body?.ok !== true) {
+              setMenuError(typeof body?.error === "string" && body.error.length > 0 ? body.error : t("optionFailed"))
+              return
+            }
+            setOptions({
+              models: Array.isArray(body.models) ? body.models : [],
+              model: body.model ?? null,
+              presets: Array.isArray(body.presets) ? body.presets : [],
+              preset: body.preset ?? null,
+            })
+            setMenu(null)
+          })
+          .catch(() => setMenuError(t("optionFailed")))
+          .finally(() => setMenuBusy(false))
+      }
+      const chooseModel = (provider, model) => applyOption({ action: "model", provider, model })
+      const choosePreset = value => applyOption({ action: "preset", value })
+      const presetLabel = () => {
+        if (options === null || typeof options.preset !== "string") return ""
+        const found = options.presets.find(item => item?.value === options.preset)
+        return typeof found?.name === "string" ? found.name : options.preset
+      }
+      const menuRow = (key, label, active, onClick) => h("button", {
+        key,
+        type: "button",
+        className: "dsh-comfyui-dock-menu-item",
+        "data-active": active,
+        disabled: menuBusy,
+        onClick,
+      }, label)
+      const menuRows = () => {
+        if (menu === "root") {
+          return [
+            menuRow("new", t("assistantNew"), false, () => { setMenu(null); startNew() }),
+            h("div", { key: "sep", className: "dsh-comfyui-dock-menu-sep" }),
+            menuRow("model", t("model") + (options?.model?.model ? " · " + options.model.model : ""), false, () => setMenu("model")),
+            menuRow("preset", t("permissions") + (presetLabel().length > 0 ? " · " + presetLabel() : ""), false, () => setMenu("preset")),
+          ]
+        }
+        if (menu === "model") {
+          if (options === null) return [h("p", { key: "load", className: "dsh-comfyui-dock-menu-empty" }, t("loading"))]
+          const rows = []
+          for (const group of options.models) {
+            const name = typeof group?.name === "string" ? group.name : String(group?.id ?? "")
+            rows.push(h("p", { key: "g-" + String(group?.id), className: "dsh-comfyui-dock-menu-head" }, name))
+            for (const item of Array.isArray(group?.models) ? group.models : []) {
+              const modelId = String(item?.id ?? "")
+              const active = options.model?.provider === group?.id && options.model?.model === item?.id
+              rows.push(menuRow("m-" + String(group?.id) + "-" + modelId, typeof item?.name === "string" ? item.name : modelId, active, () => chooseModel(String(group?.id), modelId)))
+            }
+          }
+          if (rows.length === 0) rows.push(h("p", { key: "none", className: "dsh-comfyui-dock-menu-empty" }, t("optionsEmpty")))
+          return rows
+        }
+        if (menu === "preset") {
+          if (options === null) return [h("p", { key: "load", className: "dsh-comfyui-dock-menu-empty" }, t("loading"))]
+          const rows = options.presets.map(option => menuRow("p-" + String(option?.value), typeof option?.name === "string" ? option.name : String(option?.value ?? ""), options.preset === option?.value, () => choosePreset(String(option?.value))))
+          if (rows.length === 0) rows.push(h("p", { key: "none", className: "dsh-comfyui-dock-menu-empty" }, t("optionsEmpty")))
+          return rows
+        }
+        return []
+      }
+      useEffect(() => {
+        if (menu === null) return undefined
+        const close = event => {
+          const target = event.target
+          if (target instanceof Element && target.closest(".dsh-comfyui-dock-menu, .dsh-comfyui-dock-add") !== null) return
+          setMenu(null)
+        }
+        document.addEventListener("pointerdown", close)
+        return () => document.removeEventListener("pointerdown", close)
+      }, [menu])
+
       const send = event => {
         event.preventDefault()
         void admit(draft.trim())
@@ -3838,6 +3993,13 @@ window.__ModuleLoader__.load({
             }, t('retry'))
             : null) : null,
         open ? h('form', { className: 'dsh-comfyui-dock-form', onSubmit: send },
+          h('button', {
+            type: 'button',
+            className: 'dsh-comfyui-dock-add',
+            'aria-label': t('menu'),
+            'aria-expanded': menu !== null,
+            onClick: toggleMenu,
+          }, '+'),
           h('textarea', {
             className: 'dsh-comfyui-dock-input',
             rows: 1,
@@ -3867,6 +4029,11 @@ window.__ModuleLoader__.load({
             stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
             'aria-hidden': 'true',
           }, h('path', { d: 'M12 19V5M6 11l6-6 6 6' }))),
+          menu !== null
+            ? h('div', { className: 'dsh-comfyui-dock-menu' },
+              menuError.length > 0 ? h('p', { className: 'dsh-comfyui-dock-menu-error' }, menuError) : null,
+              ...menuRows())
+            : null,
         ) : null,
       )
     }
