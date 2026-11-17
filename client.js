@@ -108,6 +108,14 @@ window.__ModuleLoader__.load({
       assistantFailed: 'The assistant did not answer',
       assistantEmpty: 'Say what to change. The model uses the tools on this canvas.',
       assistantClosed: 'The editor is still opening.',
+      assistantHint: 'Enter sends, Shift+Enter adds a line. Replies render as markdown.',
+      assistantThinking: 'Thinking…',
+      assistantWorking: 'Working',
+      assistantJump: 'Jump to latest',
+      copy: 'Copy',
+      copied: 'Copied',
+      codeBlock: 'code',
+      retry: 'Retry',
     }
     const zh = {
       title: 'ComfyUI',
@@ -178,6 +186,14 @@ window.__ModuleLoader__.load({
       assistantFailed: '助手没有回复',
       assistantEmpty: '直接说要改哪里。模型会用这张画布上的工具。',
       assistantClosed: '编辑器还在打开。',
+      assistantHint: 'Enter 发送，Shift+Enter 换行；回复按 Markdown 渲染。',
+      assistantThinking: '正在思考…',
+      assistantWorking: '处理中',
+      assistantJump: '回到最新',
+      copy: '复制',
+      copied: '已复制',
+      codeBlock: '代码',
+      retry: '重试',
     }
 
     const CSS = `
@@ -552,25 +568,142 @@ window.__ModuleLoader__.load({
       }
       .dsh-comfyui-dock-row { display: flex; }
       .dsh-comfyui-dock-row[data-role="user"] { justify-content: flex-end; }
+      .dsh-comfyui-dock-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+      .dsh-comfyui-dock-badge {
+        flex: 0 0 auto; padding: 1px 7px; border-radius: 999px;
+        background: color-mix(in srgb, var(--primary) 14%, transparent);
+        color: var(--primary);
+        font-size: 11px; line-height: 16px; letter-spacing: .02em;
+      }
       .dsh-comfyui-dock-msg {
-        max-width: 92%; margin: 0;
-        white-space: pre-wrap; overflow-wrap: anywhere;
+        position: relative; min-width: 0; max-width: 100%;
+        overflow-wrap: anywhere;
       }
       .dsh-comfyui-dock-row[data-role="user"] .dsh-comfyui-dock-msg {
-        padding: 10px 14px; border-radius: var(--r-lg);
-        background: var(--active);
-        color: var(--ink);
+        max-width: 88%; padding: 9px 13px; border-radius: var(--r-lg);
+        background: var(--active); color: var(--ink);
       }
-      .dsh-comfyui-dock-row[data-role="tool"] .dsh-comfyui-dock-msg {
+      .dsh-comfyui-dock-row[data-role="tool"] { padding-left: 2px; }
+      .dsh-comfyui-dock-tool {
+        display: inline-flex; align-items: center; gap: 6px;
+        max-width: 100%; padding: 2px 9px 2px 7px;
+        border: .5px solid var(--line); border-radius: 999px;
+        background: color-mix(in srgb, var(--card) 70%, transparent);
         color: var(--ink3);
         font-family: var(--dsw-font-family-mono, ui-monospace, monospace);
-        font-size: 12px; line-height: 18px;
+        font-size: 11.5px; line-height: 17px;
       }
+      .dsh-comfyui-dock-tool-mark { color: var(--ink3); opacity: .7; }
+      .dsh-comfyui-dock-tool-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .dsh-comfyui-dock-action {
+        /* A quiet control that appears on hover, so a reply reads as text until
+           the reader wants its source. */
+        position: absolute; right: 0; bottom: -18px;
+        padding: 0 4px; border: 0; border-radius: 6px;
+        background: transparent; color: var(--ink3);
+        cursor: pointer; font: inherit; font-size: 11.5px; line-height: 18px;
+        opacity: 0; transition: opacity .15s ease, color .15s ease;
+      }
+      .dsh-comfyui-dock-row:hover .dsh-comfyui-dock-action,
+      .dsh-comfyui-dock-action:focus-visible { opacity: 1; }
+      .dsh-comfyui-dock-action:hover { color: var(--ink); }
+      .dsh-comfyui-thinking {
+        display: inline-flex; align-items: center; gap: 5px;
+        color: var(--ink3); font-size: 12.5px; line-height: 20px;
+      }
+      .dsh-comfyui-thinking-dot {
+        width: 5px; height: 5px; border-radius: 50%;
+        background: currentColor; opacity: .35;
+        animation: dsh-comfyui-pulse 1.1s ease-in-out infinite;
+      }
+      .dsh-comfyui-thinking-dot:nth-child(2) { animation-delay: .15s; }
+      .dsh-comfyui-thinking-dot:nth-child(3) { animation-delay: .3s; }
+      .dsh-comfyui-thinking-label { margin-left: 3px; }
+      @keyframes dsh-comfyui-pulse {
+        0%, 100% { opacity: .25; transform: translateY(0); }
+        50% { opacity: .9; transform: translateY(-1px); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .dsh-comfyui-thinking-dot { animation: none; opacity: .55; }
+      }
+      .dsh-comfyui-dock-emptyblock { padding: 0 4px 24px; }
+      .dsh-comfyui-dock-emptyblock .dsh-comfyui-dock-empty { padding: 0 0 8px; }
+      .dsh-comfyui-dock-hint { margin: 0; color: var(--ink3); font-size: 12px; line-height: 18px; }
+      .dsh-comfyui-dock-jump {
+        align-self: center; margin: -4px 0 8px;
+        padding: 4px 12px; border: .5px solid var(--line); border-radius: 999px;
+        background: var(--card); color: var(--ink2);
+        box-shadow: var(--dsw-elevation-soft);
+        cursor: pointer; font: inherit; font-size: 12px; line-height: 18px;
+      }
+      .dsh-comfyui-dock-jump:hover { color: var(--ink); }
+      .dsh-comfyui-dock-jump[hidden] { display: none; }
       .dsh-comfyui-dock-error {
-        flex: 0 0 auto; margin: 0; padding: 0 18px 8px;
+        flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+        margin: 0; padding: 0 18px 8px;
         color: var(--dsw-alias-state-error-primary);
         font-size: 13px; line-height: 18px;
       }
+      .dsh-comfyui-dock-error-text { flex: 1 1 auto; min-width: 0; }
+      .dsh-comfyui-dock-retry {
+        flex: 0 0 auto; padding: 2px 9px; border: .5px solid currentColor; border-radius: 999px;
+        background: transparent; color: inherit; cursor: pointer;
+        font: inherit; font-size: 12px; line-height: 16px;
+      }
+      .dsh-comfyui-md { font-size: 14px; line-height: 22px; }
+      .dsh-comfyui-md > :first-child { margin-top: 0; }
+      .dsh-comfyui-md > :last-child { margin-bottom: 0; }
+      .dsh-comfyui-md-p { margin: 0 0 8px; white-space: pre-wrap; }
+      .dsh-comfyui-md-heading {
+        margin: 14px 0 6px; font-size: 14.5px; line-height: 21px; font-weight: 600;
+      }
+      .dsh-comfyui-md-list { margin: 0 0 8px; padding-left: 20px; }
+      .dsh-comfyui-md-list li { margin: 2px 0; }
+      .dsh-comfyui-md-quote {
+        margin: 0 0 8px; padding: 2px 0 2px 10px;
+        border-left: 2px solid color-mix(in srgb, var(--ink) 22%, transparent);
+        color: var(--ink2);
+      }
+      .dsh-comfyui-md-rule { margin: 12px 0; border: 0; border-top: .5px solid var(--line); }
+      .dsh-comfyui-md-inline-code {
+        padding: 1px 5px; border-radius: 5px;
+        background: color-mix(in srgb, var(--ink) 8%, transparent);
+        font-family: var(--dsw-font-family-mono, ui-monospace, monospace);
+        font-size: 12.5px;
+      }
+      .dsh-comfyui-md-code {
+        margin: 0 0 8px; border: .5px solid var(--line); border-radius: 10px;
+        background: color-mix(in srgb, var(--card) 80%, transparent);
+        overflow: hidden;
+      }
+      .dsh-comfyui-md-code-head {
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        padding: 3px 6px 3px 10px;
+        border-bottom: .5px solid var(--line);
+        color: var(--ink3);
+        font-size: 11px; line-height: 16px;
+      }
+      .dsh-comfyui-md-lang { text-transform: lowercase; letter-spacing: .02em; }
+      .dsh-comfyui-md-copy {
+        padding: 1px 6px; border: 0; border-radius: 6px;
+        background: transparent; color: var(--ink3); cursor: pointer;
+        font: inherit; font-size: 11px; line-height: 16px;
+      }
+      .dsh-comfyui-md-copy:hover { color: var(--ink); }
+      .dsh-comfyui-md-pre {
+        margin: 0; padding: 9px 11px; overflow: auto;
+        font-family: var(--dsw-font-family-mono, ui-monospace, monospace);
+        font-size: 12.5px; line-height: 19px;
+        tab-size: 2;
+      }
+      .dsh-comfyui-md-pre code { font: inherit; }
+      .dsh-comfyui-md-table-wrap { margin: 0 0 8px; overflow-x: auto; }
+      .dsh-comfyui-md-table { border-collapse: collapse; font-size: 13px; line-height: 19px; }
+      .dsh-comfyui-md-table th,
+      .dsh-comfyui-md-table td { padding: 4px 9px; border: .5px solid var(--line); text-align: left; }
+      .dsh-comfyui-md-table th { font-weight: 600; }
+      .dsh-comfyui-md a { color: var(--dsw-alias-brand-primary); text-decoration: underline; text-underline-offset: 2px; }
+      .dsh-comfyui-dock-row[data-role="user"] .dsh-comfyui-md-p { white-space: pre-wrap; }
       .dsh-comfyui-dock-form {
         /* Centred, not bottom-aligned: an empty field is one line tall, and
            flex-end left the round send button sitting below that line. */
@@ -605,6 +738,7 @@ window.__ModuleLoader__.load({
       .dsh-comfyui-send:focus-visible {
         outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px;
       }
+
     `
 
     /**
@@ -3065,6 +3199,332 @@ window.__ModuleLoader__.load({
       )
     }
 
+    // ── Markdown ────────────────────────────────────────────────────────────
+    // A reply is markdown, and a full engine is a dependency this bundle
+    // cannot carry, so this is the subset a reply actually uses. Everything
+    // below builds React children, never HTML: a graph title or a tool result
+    // cannot inject markup into the DSH page.
+
+    /** Link schemes the column renders; anything else stays plain text. */
+    const SAFE_LINK = /^(?:https?:|mailto:)/iu
+    /** A fenced block's opening line: three backticks or three tildes, then a language. */
+    const FENCE_OPEN = /^\s*(```|~~~)\s*([^\s`]*)\s*$/u
+    /** An inline code span. */
+    const INLINE_CODE = new RegExp('^`([^`]+)`', 'u')
+    /** A heading: one to six hashes and a space. */
+    const HEADING = /^(#{1,6})\s+(.*)$/u
+    /** A horizontal rule: three or more of one marker. */
+    const RULE = /^\s*([-*_])(?:\s*\1){2,}\s*$/u
+    /** A blockquote line. */
+    const QUOTE = /^\s*>\s?(.*)$/u
+    /** A list item: a bullet, or "1." / "1)". */
+    const LIST_ITEM = /^\s*([-*+]|\d+[.)])\s+(.*)$/u
+    /** A table's separator row, under a header row. */
+    const TABLE_RULE = /^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?\s*$/u
+
+    /**
+     * Split one line into inline tokens.
+     *
+     * Only the five spans a reply uses are recognised — code, strong,
+     * emphasis, strike, and links — and the underscore is deliberately not an
+     * emphasis marker: tool names and paths are full of snake_case, and a
+     * renderer that italicises them makes every tool name look broken.
+     *
+     * @param {string} line - one line of markdown.
+     * @returns {{ type: string, text: string, href?: string }[]} tokens in order.
+     */
+    function parseInline(line) {
+      /** @type {{ type: string, text: string, href?: string }[]} */
+      const tokens = []
+      let rest = String(line ?? '')
+      while (rest.length > 0) {
+        const code = INLINE_CODE.exec(rest)
+        if (code !== null) {
+          tokens.push({ type: 'code', text: code[1] })
+          rest = rest.slice(code[0].length)
+          continue
+        }
+        const link = /^\[([^\]]*)\]\(([^)\s]+)\)/u.exec(rest)
+        if (link !== null) {
+          tokens.push({ type: 'link', text: link[1].length > 0 ? link[1] : link[2], href: link[2] })
+          rest = rest.slice(link[0].length)
+          continue
+        }
+        const strong = /^\*\*([^*]+)\*\*/u.exec(rest) ?? /^__([^_]+)__/u.exec(rest)
+        if (strong !== null) {
+          tokens.push({ type: 'strong', text: strong[1] })
+          rest = rest.slice(strong[0].length)
+          continue
+        }
+        const strike = /^~~([^~]+)~~/u.exec(rest)
+        if (strike !== null) {
+          tokens.push({ type: 'strike', text: strike[1] })
+          rest = rest.slice(strike[0].length)
+          continue
+        }
+        const em = /^\*([^*\n]+)\*/u.exec(rest)
+        if (em !== null) {
+          tokens.push({ type: 'em', text: em[1] })
+          rest = rest.slice(em[0].length)
+          continue
+        }
+        const plain = /^[^`\[\]*_~\n]+/u.exec(rest)
+        if (plain !== null) {
+          tokens.push({ type: 'text', text: plain[0] })
+          rest = rest.slice(plain[0].length)
+          continue
+        }
+        tokens.push({ type: 'text', text: rest[0] })
+        rest = rest.slice(1)
+      }
+      // A lone character that starts no span (the underscore in a tool name,
+      // a bracket that opens nothing) arrives as its own token. Join runs of
+      // plain text so the caller sees words, not characters.
+      const merged = []
+      for (const token of tokens) {
+        const last = merged[merged.length - 1]
+        if (token.type === "text" && last !== undefined && last.type === "text") last.text += token.text
+        else merged.push({ ...token })
+      }
+      return merged
+    }
+
+    /**
+     * Parse a message into the blocks the column renders.
+     *
+     * A wrapped list item starts a paragraph instead of continuing the bullet:
+     * that is what the model's own wrapping looks like, and joining it needs
+     * indentation state this subset does not carry.
+     *
+     * @param {string} text - the markdown source.
+     * @returns {any[]} blocks: paragraph, heading, code, list, quote, table, hr.
+     */
+    function parseMarkdown(text) {
+      const lines = String(text ?? '').replace(/\r\n?/gu, '\n').split('\n')
+      /** @type {any[]} */
+      const blocks = []
+      /** Whether this line opens a block that ends a paragraph. */
+      const startsBlock = (line, next) => /^\s*$/u.test(line)
+        || FENCE_OPEN.test(line) || HEADING.test(line) || RULE.test(line)
+        || QUOTE.test(line) || LIST_ITEM.test(line)
+        || (line.includes('|') && typeof next === 'string' && TABLE_RULE.test(next))
+      let index = 0
+      while (index < lines.length) {
+        const line = lines[index]
+        if (/^\s*$/u.test(line)) {
+          index += 1
+          continue
+        }
+        const fence = FENCE_OPEN.exec(line)
+        if (fence !== null) {
+          const closing = new RegExp('^\\s*' + fence[1] + '\\s*$', 'u')
+          /** @type {string[]} */
+          const body = []
+          index += 1
+          while (index < lines.length && !closing.test(lines[index])) {
+            body.push(lines[index])
+            index += 1
+          }
+          index += 1
+          blocks.push({ type: 'code', lang: fence[2], text: body.join('\n') })
+          continue
+        }
+        const heading = HEADING.exec(line)
+        if (heading !== null) {
+          blocks.push({ type: 'heading', level: heading[1].length, text: heading[2] })
+          index += 1
+          continue
+        }
+        if (RULE.test(line)) {
+          blocks.push({ type: 'hr' })
+          index += 1
+          continue
+        }
+        if (QUOTE.test(line)) {
+          /** @type {string[]} */
+          const body = []
+          while (index < lines.length) {
+            const quoted = QUOTE.exec(lines[index])
+            if (quoted === null) break
+            body.push(quoted[1])
+            index += 1
+          }
+          blocks.push({ type: 'quote', text: body.join('\n') })
+          continue
+        }
+        if (line.includes('|') && index + 1 < lines.length && TABLE_RULE.test(lines[index + 1])) {
+          const cells = value => value.replace(/^\s*\|/u, '').replace(/\|\s*$/u, '').split('|').map(cell => cell.trim())
+          /** @type {string[][]} */
+          const rows = []
+          index += 2
+          while (index < lines.length && lines[index].includes('|') && !/^\s*$/u.test(lines[index])) {
+            rows.push(cells(lines[index]))
+            index += 1
+          }
+          blocks.push({ type: 'table', header: cells(line), rows })
+          continue
+        }
+        const item = LIST_ITEM.exec(line)
+        if (item !== null) {
+          const ordered = /^\d/u.test(item[1])
+          /** @type {string[]} */
+          const items = []
+          while (index < lines.length) {
+            const next = LIST_ITEM.exec(lines[index])
+            if (next === null || /^\d/u.test(next[1]) !== ordered) break
+            items.push(next[2])
+            index += 1
+          }
+          blocks.push({ type: 'list', ordered, items })
+          continue
+        }
+        /** @type {string[]} */
+        const paragraph = [line]
+        index += 1
+        while (index < lines.length && !startsBlock(lines[index], lines[index + 1])) {
+          paragraph.push(lines[index])
+          index += 1
+        }
+        blocks.push({ type: 'paragraph', text: paragraph.join('\n') })
+      }
+      return blocks
+    }
+
+    /**
+     * Render inline tokens as React children.
+     * @param {{ type: string, text: string, href?: string }[]} tokens - from parseInline.
+     * @returns {any[]} children in order.
+     */
+    function renderInline(tokens) {
+      return tokens.map((token, index) => {
+        const key = 'i' + index
+        if (token.type === 'code') return h('code', { key, className: 'dsh-comfyui-md-inline-code' }, token.text)
+        if (token.type === 'strong') return h('strong', { key }, token.text)
+        if (token.type === 'em') return h('em', { key }, token.text)
+        if (token.type === 'strike') return h('del', { key }, token.text)
+        if (token.type === 'link') {
+          // A non-http scheme stays text: a reply must not be able to ship a
+          // javascript: link onto the DSH page.
+          if (typeof token.href !== 'string' || !SAFE_LINK.test(token.href)) return h('span', { key }, token.text)
+          return h('a', { key, href: token.href, target: '_blank', rel: 'noreferrer noopener' }, token.text)
+        }
+        return token.text
+      })
+    }
+
+    /**
+     * Copy text to the clipboard.
+     * @param {string} text - what to copy.
+     * @returns {Promise<boolean>} whether the browser took it.
+     */
+    async function copyText(text) {
+      try {
+        if (typeof navigator === 'undefined' || navigator.clipboard === undefined) return false
+        await navigator.clipboard.writeText(text)
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    /**
+     * One fenced block, with its own copy control.
+     * @param {{ lang?: string, text: string, t: (key: string) => string }} props - language, body, locale.
+     * @returns {any} the block.
+     */
+    function CodeBlock({ lang, text, t }) {
+      const [copied, setCopied] = useState(false)
+      const label = typeof lang === 'string' && lang.length > 0 ? lang : t('codeBlock')
+      return h('div', { className: 'dsh-comfyui-md-code' },
+        h('div', { className: 'dsh-comfyui-md-code-head' },
+          h('span', { className: 'dsh-comfyui-md-lang' }, label),
+          h('button', {
+            type: 'button',
+            className: 'dsh-comfyui-md-copy',
+            'aria-label': copied ? t('copied') : t('copy'),
+            onClick: () => {
+              void copyText(text).then(ok => {
+                if (!ok) return
+                setCopied(true)
+                setTimeout(() => setCopied(false), 1400)
+              })
+            },
+          }, copied ? t('copied') : t('copy')),
+        ),
+        h('pre', { className: 'dsh-comfyui-md-pre' }, h('code', null, text)),
+      )
+    }
+
+    /**
+     * Render a message as markdown.
+     * @param {string} text - the message body.
+     * @param {(key: string) => string} t - the locale bound in apply.
+     * @returns {any} one element wrapping the blocks.
+     */
+    function renderMarkdown(text, t) {
+      return h('div', { className: 'dsh-comfyui-md' }, ...parseMarkdown(text).map((block, index) => {
+        const key = 'b' + index
+        if (block.type === 'code') return h(CodeBlock, { key, lang: block.lang, text: block.text, t })
+        // A reply's own headings are never document headings: keep them one
+        // step down so a single "#" cannot out-size the column's title.
+        if (block.type === 'heading') return h('h' + Math.min(4, block.level + 1), { key, className: 'dsh-comfyui-md-heading' }, renderInline(parseInline(block.text)))
+        if (block.type === 'hr') return h('hr', { key, className: 'dsh-comfyui-md-rule' })
+        if (block.type === 'quote') return h('blockquote', { key, className: 'dsh-comfyui-md-quote' }, renderInline(parseInline(block.text)))
+        if (block.type === 'list') {
+          return h(block.ordered ? 'ol' : 'ul', { key, className: 'dsh-comfyui-md-list' },
+            block.items.map((item, itemIndex) => h('li', { key: itemIndex }, renderInline(parseInline(item)))))
+        }
+        if (block.type === 'table') {
+          return h('div', { key, className: 'dsh-comfyui-md-table-wrap' },
+            h('table', { className: 'dsh-comfyui-md-table' },
+              h('thead', null, h('tr', null, block.header.map((cell, cellIndex) => h('th', { key: cellIndex }, renderInline(parseInline(cell)))))),
+              h('tbody', null, block.rows.map((row, rowIndex) => h('tr', { key: rowIndex },
+                row.map((cell, cellIndex) => h('td', { key: cellIndex }, renderInline(parseInline(cell)))))))))
+        }
+        return h('p', { key, className: 'dsh-comfyui-md-p' }, renderInline(parseInline(block.text)))
+      }))
+    }
+
+    /**
+     * A row's copy control: its label flips for a moment so a click is visible.
+     * What it copies is the row's source, not its rendering.
+     * @param {{ text: string, t: (key: string) => string }} props - source and locale.
+     * @returns {any} the button.
+     */
+    function CopyRow({ text, t }) {
+      const [copied, setCopied] = useState(false)
+      return h('button', {
+        type: 'button',
+        className: 'dsh-comfyui-dock-action',
+        'aria-label': copied ? t('copied') : t('copy'),
+        onClick: () => {
+          void copyText(text).then(ok => {
+            if (!ok) return
+            setCopied(true)
+            setTimeout(() => setCopied(false), 1400)
+          })
+        },
+      }, copied ? t('copied') : t('copy'))
+    }
+
+    /**
+     * One row of the column: a bubble of markdown, or a tool call chip.
+     * @param {{ row: { id: string, role: string, text: string }, t: (key: string) => string }} props - the row and the locale.
+     * @returns {any} the row.
+     */
+    function DockRow({ row, t }) {
+      if (row.role === 'tool') {
+        return h('div', { className: 'dsh-comfyui-dock-row', 'data-role': 'tool' },
+          h('div', { className: 'dsh-comfyui-dock-tool' },
+            h('span', { className: 'dsh-comfyui-dock-tool-mark', 'aria-hidden': 'true' }, '›'),
+            h('span', { className: 'dsh-comfyui-dock-tool-name' }, row.text)))
+      }
+      return h('div', { className: 'dsh-comfyui-dock-row', 'data-role': row.role },
+        h('div', { className: 'dsh-comfyui-dock-msg' },
+          renderMarkdown(row.text, t),
+          row.role === 'assistant' ? h(CopyRow, { text: row.text, t }) : null))
+    }
+
     /**
      * The session's composer. A line is admitted to the desk session, not answered here.
      * @param {{ t: (key: string) => string, sessionId: string | null, onSession: (sessionId: string) => void }} props - locale, the desk session, and how a replacement is adopted.
@@ -3075,8 +3535,11 @@ window.__ModuleLoader__.load({
       const [pending, setPending] = useState(null)
       const [draft, setDraft] = useState('')
       const [busy, setBusy] = useState(false)
+      /** @type {[null | { message: string, text: string }, any]} */
       const [error, setError] = useState(null)
       const [open, setOpen] = useState(true)
+      /** Whether the log follows new turns; a reader who scrolled up keeps their place. */
+      const [stick, setStick] = useState(true)
       const logRef = useRef(null)
       /** The newest read wins; an older poll must not overwrite it. */
       const readAt = useRef(0)
@@ -3099,88 +3562,121 @@ window.__ModuleLoader__.load({
           })
         }
       }, [onSession, sessionId])
+      // A user turn with no answer behind it is the model working, not a stall:
+      // this column is the only place a turn shows up.
+      const lastRole = rows.length === 0 ? null : rows[rows.length - 1].role
+      const awaiting = pending !== null || lastRole === 'user'
+      const thinking = awaiting || busy
       useEffect(() => {
         if (sessionId === null || !open) return undefined
         void load()
-        const timer = setInterval(() => { void load() }, 3000)
+        // While a reply is due, read faster: three seconds of silence reads as
+        // "nothing happened" exactly when the model is slow.
+        const timer = setInterval(() => { void load() }, thinking ? 1200 : 3000)
         return () => { clearInterval(timer) }
-      }, [load, sessionId, open])
+      }, [load, sessionId, open, thinking])
       useEffect(() => {
         const log = logRef.current
+        if (log === null || !open || !stick) return
+        log.scrollTop = log.scrollHeight
+      }, [rows, pending, open, stick, thinking])
+      const onScroll = event => {
+        const log = event.currentTarget
+        setStick(log.scrollHeight - log.scrollTop - log.clientHeight < 64)
+      }
+      const jumpToLatest = () => {
+        const log = logRef.current
         if (log !== null) log.scrollTop = log.scrollHeight
-      }, [rows, pending, open])
+        setStick(true)
+      }
       /**
-       * Admit the draft to the desk session.
-       * @param {SubmitEvent} event - the form submit.
+       * Admit one line to the desk session.
+       * @param {string} message - the trimmed text.
+       * @param {{ retry?: boolean }} [options] - a retry keeps the draft as it is.
        * @returns {Promise<void>}
        */
-      async function send(event) {
-        event.preventDefault()
-        const message = draft.trim()
-        if (message === '' || busy) return
+      const admit = useCallback(async (message, { retry = false } = {}) => {
+        if (busy || message.length === 0) return
         if (sessionId === null) {
-          setError(t('assistantClosed'))
+          setError({ message: t('assistantClosed'), text: message })
           return
         }
         setBusy(true)
         setError(null)
-        setDraft('')
+        setStick(true)
         setPending({ text: message })
+        if (!retry) setDraft('')
         try {
           const response = await fetch(DESK_CHAT_URL, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ message }),
           })
-          const body = await response.json()
+          const body = await response.json().catch(() => null)
           if (body?.ok !== true) {
             setPending(null)
             setDraft(message)
-            setError(typeof body?.error === 'string' && body.error.length > 0 ? body.error : t('assistantFailed'))
+            setError({
+              message: typeof body?.error === 'string' && body.error.length > 0 ? body.error : t('assistantFailed'),
+              text: message,
+            })
           } else {
             void load()
           }
         } catch {
           setPending(null)
           setDraft(message)
-          setError(t('assistantFailed'))
+          setError({ message: t('assistantFailed'), text: message })
         } finally {
           setBusy(false)
         }
+      }, [busy, load, sessionId, t])
+      const send = event => {
+        event.preventDefault()
+        void admit(draft.trim())
+      }
+      const startNew = () => {
+        if (busy) return
+        setBusy(true)
+        setError(null)
+        fetch(DESK_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'new' }),
+        })
+          .then(response => response.json())
+          .then(body => {
+            if (body?.ok === true && typeof body.sessionId === 'string') {
+              setRows([])
+              setPending(null)
+              setStick(true)
+              onSession(body.sessionId)
+            } else {
+              setError({
+                message: typeof body?.error === 'string' && body.error.length > 0 ? body.error : t('assistantFailed'),
+                text: '',
+              })
+            }
+          })
+          .catch(() => setError({ message: t('assistantFailed'), text: '' }))
+          .finally(() => setBusy(false))
       }
       const shown = pending === null ? rows : [...rows, { id: 'pending', role: 'user', text: pending.text }]
+      const hint = thinking && lastRole !== 'assistant' ? t('assistantThinking') : ''
       return h('aside', {
         className: open ? 'dsh-comfyui-dock' : 'dsh-comfyui-dock is-closed',
         'aria-label': t('assistant'),
       },
         h('header', { className: 'dsh-comfyui-dock-head' },
-          h('strong', null, t('assistant')),
+          h('div', { className: 'dsh-comfyui-dock-title' },
+            h('strong', null, t('assistant')),
+            thinking ? h('span', { className: 'dsh-comfyui-dock-badge' }, t('assistantWorking')) : null,
+          ),
           h('button', {
             type: 'button',
             className: 'dsh-comfyui-dock-new',
             disabled: busy,
-            onClick: () => {
-              if (busy) return
-              setBusy(true)
-              setError(null)
-              fetch(DESK_URL, {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ action: 'new' }),
-              })
-                .then(response => response.json())
-                .then(body => {
-                  if (body?.ok === true && typeof body.sessionId === 'string') {
-                    setRows([])
-                    setPending(null)
-                    onSession(body.sessionId)
-                  } else {
-                    setError(typeof body?.error === 'string' && body.error.length > 0 ? body.error : t('assistantFailed'))
-                  }
-                })
-                .catch(() => setError(t('assistantFailed')))
-                .finally(() => setBusy(false))
-            },
+            onClick: startNew,
           }, t('assistantNew')),
           h('button', {
             type: 'button',
@@ -3197,16 +3693,34 @@ window.__ModuleLoader__.load({
             h('path', { d: 'M5.5 1.5V14.5' }),
           ) : t('assistant')),
         ),
-        open ? h('div', { className: 'dsh-comfyui-dock-log', ref: logRef },
-          shown.length === 0
-            ? h('p', { className: 'dsh-comfyui-dock-empty' }, t('assistantEmpty'))
-            : shown.map(row => h('div', {
-              key: row.id,
-              className: 'dsh-comfyui-dock-row',
-              'data-role': row.role,
-            }, h('p', { className: 'dsh-comfyui-dock-msg' }, row.text))),
+        open ? h('div', { className: 'dsh-comfyui-dock-log', ref: logRef, onScroll },
+          shown.length === 0 && !thinking
+            ? h('div', { className: 'dsh-comfyui-dock-emptyblock' },
+              h('p', { className: 'dsh-comfyui-dock-empty' }, t('assistantEmpty')),
+              h('p', { className: 'dsh-comfyui-dock-hint' }, t('assistantHint')))
+            : shown.map(row => h(DockRow, { key: row.id, row, t })),
+          thinking ? h('div', { className: 'dsh-comfyui-dock-row', 'data-role': 'assistant', 'data-thinking': 'true' },
+            h('div', { className: 'dsh-comfyui-thinking' },
+              h('span', { className: 'dsh-comfyui-thinking-dot' }),
+              h('span', { className: 'dsh-comfyui-thinking-dot' }),
+              h('span', { className: 'dsh-comfyui-thinking-dot' }),
+              h('span', { className: 'dsh-comfyui-thinking-label' }, hint.length > 0 ? hint : t('assistantSending')))) : null,
         ) : null,
-        open && error !== null ? h('p', { className: 'dsh-comfyui-dock-error' }, error) : null,
+        open ? h('button', {
+          type: 'button',
+          className: 'dsh-comfyui-dock-jump',
+          hidden: stick || shown.length === 0,
+          onClick: jumpToLatest,
+        }, t('assistantJump')) : null,
+        open && error !== null ? h('div', { className: 'dsh-comfyui-dock-error' },
+          h('span', { className: 'dsh-comfyui-dock-error-text' }, error.message),
+          error.text.length > 0 && !busy
+            ? h('button', {
+              type: 'button',
+              className: 'dsh-comfyui-dock-retry',
+              onClick: () => { void admit(error.text, { retry: true }) },
+            }, t('retry'))
+            : null) : null,
         open ? h('form', { className: 'dsh-comfyui-dock-form', onSubmit: send },
           h('textarea', {
             className: 'dsh-comfyui-dock-input',
@@ -3218,7 +3732,7 @@ window.__ModuleLoader__.load({
               setDraft(event.target.value)
               const field = event.target
               field.style.height = 'auto'
-              field.style.height = `${Math.min(field.scrollHeight, 120)}px`
+              field.style.height = Math.min(field.scrollHeight, 120) + 'px'
             },
             onKeyDown: event => {
               if (event.key === 'Enter' && !event.shiftKey) {
@@ -3240,7 +3754,6 @@ window.__ModuleLoader__.load({
         ) : null,
       )
     }
-
     /** Main column: the editor for the desk session, and that session's composer. */
     function Desk() {
       const [sessionId, setSessionId] = useState(null)
@@ -3272,7 +3785,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale'],
       // Editor operations, dictionaries, and the bar/stage rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, captureGraph, applyWorkflowGraph, loadWorkflow, switchTab, closeTab, readTabs, tabLabel, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, mapApiEvent, relayEditorEvents, readPreview, progressSummary, applyRunEvent, runLabel, cancelLabel, TopBar, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, viewShowsAll, describeOperation, en, zh, createSync },
+      __ops: { applyOperation, captureGraph, applyWorkflowGraph, loadWorkflow, switchTab, closeTab, readTabs, tabLabel, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, mapApiEvent, relayEditorEvents, readPreview, progressSummary, applyRunEvent, runLabel, cancelLabel, TopBar, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, viewShowsAll, describeOperation, en, zh, createSync, parseMarkdown, parseInline, renderInline, renderMarkdown },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         deskT = t

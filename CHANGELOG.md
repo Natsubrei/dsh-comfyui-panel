@@ -11,6 +11,24 @@ the version bump.
 
 ## [Unreleased]
 
+### Added
+
+- The right column renders markdown: headings, lists, fenced code with its
+  own copy control, tables, quotes, and inline code, bold, italic, strike,
+  and links. Everything is built as elements, never as HTML, and a link
+  whose scheme is not http, https, or mailto stays text.
+- An assistant turn has a copy control, and a send that failed offers Retry
+  instead of making the reader retype the line.
+- The column reports what it is doing: a Working badge in the header, a
+  thinking indicator while a reply is due, and a faster transcript poll
+  while one is.
+
+### Changed
+
+- A tool call shows as a chip instead of a bare monospace line.
+- The column follows new turns only while the reader is at the bottom.
+  Scrolled up, it leaves their place and offers Jump to latest.
+
 ## [0.10.1] - 2026-11-09
 
 ### Added
