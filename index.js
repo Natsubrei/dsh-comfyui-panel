@@ -53,6 +53,8 @@ export function apply(ctx, rawConfig = {}) {
   /** cached /object_info for comfyui_node_info */
   let objectInfoCache = { at: 0, data: null }
 
+  /** The session commands the column may run; anything else needs the native pickers. */
+  const ALLOWED_COMMANDS = new Set(['/compact', '/export', '/rewind', '/undo'])
   const store = createWorkflowStore(ctx, ctx.logger)
   const commands = createCommandChannel()
   const sessionStore = createSessionStore({
@@ -249,6 +251,16 @@ export function apply(ctx, rawConfig = {}) {
     })
     return () => { void dispose() }
   }, 'dsh-comfyui: desk options route')
+
+  ctx.effect(() => {
+    const dispose = ctx.connection.fetch.register({
+      path: '/api/comfyui/desk/command',
+      methods: ['POST'],
+      requestBody: 'buffered',
+      fetch: request => bridgeDeskCommand(request),
+    })
+    return () => { void dispose() }
+  }, 'dsh-comfyui: desk command route')
 
   // ── HTTP proxy ──────────────────────────────────────────────────────────
 
@@ -838,6 +850,59 @@ export function apply(ctx, rawConfig = {}) {
     return json({ ok: false, error: 'unknown action' }, 400)
   }
 
+  /**
+   * Run one session command the way the native composer does.
+   *
+   * The command registry is a Host remote, so the column reaches the same
+   * compact/export/rewind paths the app itself uses. Only commands whose
+   * effect the column can report are allowed; anything else needs the native
+   * pickers to mean anything.
+   * @param {Request} request - POST with a command string.
+   * @returns {Promise<Response>} the command outcome, or why it did not run.
+   */
+  async function bridgeDeskCommand(request) {
+    if (request.method !== 'POST') return json({ ok: false, error: 'method not allowed' }, 405)
+    let body
+    try {
+      const raw = await request.text()
+      if (raw.length > 4000) return json({ ok: false, error: 'payload is too large' }, 413)
+      body = JSON.parse(raw)
+    } catch {
+      return json({ ok: false, error: 'invalid JSON body' }, 400)
+    }
+    const command = typeof body?.command === 'string' ? body.command.trim() : ''
+    if (!ALLOWED_COMMANDS.has(command)) return json({ ok: false, error: 'command not allowed' }, 400)
+    /** @type {any} */
+    let remote = null
+    try {
+      remote = ctx.remote
+    } catch {
+      remote = null
+    }
+    const runner = remote?.commands
+    if (runner === undefined || typeof runner.execute !== 'function') {
+      return json({ ok: false, error: 'session commands are unavailable' }, 501)
+    }
+    let sessionId
+    try {
+      sessionId = await deskSessionId()
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      return json({ ok: false, error: detail || 'The desk session is unavailable' }, 502)
+    }
+    try {
+      const result = await runner.execute(sessionId, command, [])
+      if (result === null || typeof result !== 'object' || result.ok !== true) {
+        const message = typeof result?.error?.message === 'string' ? result.error.message : 'The command failed'
+        return json({ ok: false, error: message }, 502)
+      }
+      if (result.value === undefined) return json({ ok: false, error: 'unknown command' }, 400)
+      return json({ ok: true, value: result.value })
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      return json({ ok: false, error: detail || 'The command failed' }, 502)
+    }
+  }
   // ── Service bridge ──────────────────────────────────────────────────────
   // The panel manages the ComfyUI process here; no profile configuration is
   // involved. Settings are limited to the checkout directory and auto-start,

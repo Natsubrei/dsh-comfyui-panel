@@ -28,6 +28,7 @@ window.__ModuleLoader__.load({
     const DESK_URL = '/api/comfyui/desk'
     const DESK_CHAT_URL = '/api/comfyui/desk/chat'
     const OPTIONS_URL = '/api/comfyui/desk/options'
+    const COMMAND_URL = '/api/comfyui/desk/command'
     const DESK_TRANSCRIPT_URL = '/api/comfyui/desk/transcript'
     const INTERRUPT_URL = `${PANEL_URL}interrupt`
     /** How long a successful Cancel waits for its event before re-enabling. */
@@ -109,6 +110,12 @@ window.__ModuleLoader__.load({
       assistantFailed: 'The assistant did not answer',
       assistantEmpty: 'Say what to change. The model uses the tools on this canvas.',
       assistantClosed: 'The editor is still opening.',
+      instructions: 'Commands',
+      compact: 'Compact',
+      export: 'Export log',
+      rewind: 'Rewind',
+      undo: 'Undo',
+      commandFailed: 'The command did not run',
       menu: 'Menu',
       model: 'Model',
       permissions: 'Permissions',
@@ -199,6 +206,12 @@ window.__ModuleLoader__.load({
       assistantFailed: '助手没有回复',
       assistantEmpty: '直接说要改哪里。模型会用这张画布上的工具。',
       assistantClosed: '编辑器还在打开。',
+      instructions: '指令',
+      compact: '压缩',
+      export: '下载日志',
+      rewind: '回退',
+      undo: '撤销',
+      commandFailed: '命令没有执行',
       menu: '菜单',
       model: '模型',
       permissions: '访问权限',
@@ -782,7 +795,7 @@ window.__ModuleLoader__.load({
       .dsh-comfyui-dock-add:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
       .dsh-comfyui-dock-add[aria-expanded="true"] { background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); }
       .dsh-comfyui-dock-menu {
-        position: absolute; left: 0; right: 0; bottom: 48px;
+        position: absolute; left: 0; right: 0; bottom: 84px;
         z-index: 6; max-height: 300px; overflow: auto;
         padding: 6px; border: .5px solid var(--line); border-radius: 14px;
         background: var(--card); box-shadow: var(--dsw-elevation-soft);
@@ -805,6 +818,17 @@ window.__ModuleLoader__.load({
       .dsh-comfyui-dock-menu-sep { height: .5px; margin: 4px 6px; background: var(--line); }
       .dsh-comfyui-dock-menu-empty { margin: 0; padding: 6px 10px; color: var(--ink3); font-size: 12px; }
       .dsh-comfyui-dock-menu-error { margin: 0 0 4px; padding: 4px 10px; color: var(--dsw-alias-state-error-primary); font-size: 12px; }
+      .dsh-comfyui-dock-controls {
+        flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+        margin: 0 12px 6px; min-height: 22px;
+      }
+      .dsh-comfyui-dock-chip {
+        max-width: 48%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        padding: 1px 9px; border: .5px solid var(--line); border-radius: 999px;
+        background: transparent; color: var(--ink2);
+        cursor: pointer; font: inherit; font-size: 11.5px; line-height: 17px;
+      }
+      .dsh-comfyui-dock-chip:hover { color: var(--ink); border-color: color-mix(in srgb, var(--ink) 25%, transparent); }
       .dsh-comfyui-dock-form {
         position: relative;
         /* Centred, not bottom-aligned: an empty field is one line tall, and
@@ -3858,11 +3882,16 @@ window.__ModuleLoader__.load({
       }, label)
       const menuRows = () => {
         if (menu === "root") {
+          // The native composer puts commands here, not a new-conversation
+          // action: a new session lives in the header, so the menu only
+          // carries things that act on this session.
           return [
-            menuRow("new", t("assistantNew"), false, () => { setMenu(null); startNew() }),
-            h("div", { key: "sep", className: "dsh-comfyui-dock-menu-sep" }),
+            h("p", { key: "g-cmd", className: "dsh-comfyui-dock-menu-head" }, t("instructions")),
+            menuRow("compact", t("compact"), false, () => runCommand("/compact")),
             menuRow("model", t("model") + (options?.model?.model ? " · " + options.model.model : ""), false, () => setMenu("model")),
-            menuRow("preset", t("permissions") + (presetLabel().length > 0 ? " · " + presetLabel() : ""), false, () => setMenu("preset")),
+            menuRow("export", t("export"), false, () => runCommand("/export")),
+            menuRow("rewind", t("rewind"), false, () => runCommand("/rewind")),
+            menuRow("undo", t("undo"), false, () => runCommand("/undo")),
           ]
         }
         if (menu === "model") {
@@ -3898,6 +3927,31 @@ window.__ModuleLoader__.load({
         document.addEventListener("pointerdown", close)
         return () => document.removeEventListener("pointerdown", close)
       }, [menu])
+
+      const runCommand = command => {
+        setMenuBusy(true)
+        setMenuError("")
+        fetch(COMMAND_URL, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ command }),
+        })
+          .then(response => response.json())
+          .then(body => {
+            if (body?.ok !== true) {
+              setMenuError(typeof body?.error === "string" && body.error.length > 0 ? body.error : t("commandFailed"))
+              return
+            }
+            setMenu(null)
+          })
+          .catch(() => setMenuError(t("commandFailed")))
+          .finally(() => setMenuBusy(false))
+      }
+      useEffect(() => {
+        // The chips under the log name the current model and preset, so the
+        // options are read once on mount as well as when the menu opens.
+        void loadOptions()
+      }, [loadOptions, sessionId])
 
       const send = event => {
         event.preventDefault()
@@ -3992,6 +4046,18 @@ window.__ModuleLoader__.load({
               onClick: () => { void admit(error.text, { retry: true }) },
             }, t('retry'))
             : null) : null,
+        open ? h('div', { className: 'dsh-comfyui-dock-controls' },
+          h('button', {
+            type: 'button',
+            className: 'dsh-comfyui-dock-chip',
+            onClick: () => { setOptions(null); void loadOptions(); setMenu('preset') },
+          }, t('permissions') + (presetLabel().length > 0 ? ' · ' + presetLabel() : '')),
+          h('button', {
+            type: 'button',
+            className: 'dsh-comfyui-dock-chip',
+            onClick: () => { setOptions(null); void loadOptions(); setMenu('model') },
+          }, typeof options?.model?.model === 'string' ? options.model.model : t('model')),
+        ) : null,
         open ? h('form', { className: 'dsh-comfyui-dock-form', onSubmit: send },
           h('button', {
             type: 'button',

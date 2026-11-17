@@ -1841,6 +1841,21 @@ const presetPost = await host.fetches.get('/api/comfyui/desk/options').fetch(new
   body: JSON.stringify({ action: 'preset', value: 'auto' }),
 }))
 assert.equal(presetPost.status, 501)
+
+// The command route accepts only the commands a column can report, and a
+// Host without the commands remote refuses instead of pretending.
+const commandBad = await host.fetches.get('/api/comfyui/desk/command').fetch(new Request('http://127.0.0.1/api/comfyui/desk/command', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ command: '/model' }),
+}))
+assert.equal(commandBad.status, 400)
+const commandRefused = await host.fetches.get('/api/comfyui/desk/command').fetch(new Request('http://127.0.0.1/api/comfyui/desk/command', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ command: '/compact' }),
+}))
+assert.equal(commandRefused.status, 501)
 const deskUnknown = await host.fetches.get('/api/comfyui/desk').fetch(new Request('http://127.0.0.1/api/comfyui/desk', {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
