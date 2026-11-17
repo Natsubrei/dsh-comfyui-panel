@@ -1729,8 +1729,6 @@ assert.throws(
 
 const deskPrompts = []
 const deskRenames = []
-const deskModels = []
-const deskPresets = []
 let deskCreated = 0
 host.services.set('sessionController', {
   async create() {
@@ -1765,25 +1763,8 @@ host.services.set('sessionController', {
     deskPrompts.push(request)
     return { accepted: true }
   },
-  async modelCatalog() {
-    return {
-      default: { provider: 'deepseek', model: 'chat' },
-      routableProviders: ['deepseek'],
-      groups: [{ id: 'deepseek', name: 'DeepSeek', models: [{ id: 'chat', name: 'Chat' }] }],
-    }
-  },
-  async selectModel(request) {
-    deskModels.push(request)
-    return { selected: { provider: request.provider, model: request.model } }
-  },
 })
-host.services.set('permissionPresets', {
-  async catalog() {
-    return { options: [{ value: 'auto', name: 'Auto' }, { value: 'full', name: 'Full access' }] }
-  },
-  current() { return 'auto' },
-  set(session, value) { deskPresets.push([session, value]) },
-})
+
 const deskGet = await host.fetches.get('/api/comfyui/desk').fetch(new Request('http://127.0.0.1/api/comfyui/desk'))
 const deskBody = await deskGet.json()
 assert.equal(deskGet.status, 200)
