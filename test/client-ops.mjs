@@ -1802,4 +1802,122 @@ const stage = (service, extra = {}) => overlayPlan({
   assert.equal(tree.children[1].type, 'ul')
 }
 
+// The time a message was sent is beside the bubble, not inside it, and it is
+// there without hovering: a timestamp the reader has to point at to find is a
+// timestamp the column may as well not carry.
+{
+  const { DockRow } = mod.__ops
+  const walk = node => {
+    if (node === null || node === undefined || typeof node !== 'object') return []
+    if (Array.isArray(node)) return node.flatMap(walk)
+    return [node, ...(node.children ?? []).flatMap(walk)]
+  }
+  const tree = walk(DockRow({ row: { id: 'r1', role: 'user', text: 'hello', at: 1_700_000_000_000 }, t: text }))
+  const meta = tree.find(node => node?.props?.className === 'dsh-comfyui-dock-meta')
+  const msg = tree.find(node => node?.props?.className === 'dsh-comfyui-dock-msg')
+  assert.ok(meta !== undefined, 'the row carries a meta line')
+  assert.ok(msg !== undefined, 'and a bubble')
+  assert.equal(walk(msg).includes(meta), false, 'the time is not inside the bubble')
+  const texts = node => Array.isArray(node)
+    ? node.flatMap(texts)
+    : typeof node === 'string' ? [node] : (node?.children ?? []).flatMap(texts)
+  assert.equal(texts(meta).some(value => /^\d{2}:\d{2}$/u.test(value)), true, 'the clock is in that line')
+  assert.ok(tree.find(node => node?.props?.['data-role'] === 'user') !== undefined, 'the row is the user turn')
+}
+
+// A slash command answers on the session, not on this column, so its own text
+// is the only place its outcome can show up. Every shape the Host may answer
+// with has to end up on that line, including the refusals.
+{
+  const { commandOutcome } = mod.__ops
+  assert.deepEqual(
+    commandOutcome({ ok: true, value: { commandId: 'c1', result: { kind: 'success', text: 'Compacted 3 history items.' } } }),
+    { tone: 'ok', text: 'Compacted 3 history items.' },
+  )
+  assert.deepEqual(
+    commandOutcome({ ok: true, value: { result: { kind: 'error', text: 'Usage: /compact (no arguments)' } } }),
+    { tone: 'error', text: 'Usage: /compact (no arguments)' },
+    'a refused command is reported as one',
+  )
+  assert.deepEqual(
+    commandOutcome({ ok: true, value: { kind: 'success', text: 'Goal set.' } }),
+    { tone: 'ok', text: 'Goal set.' },
+    'a forwarded result is understood too',
+  )
+  assert.equal(commandOutcome({ ok: true, value: undefined }), null, 'an unresolved name says nothing')
+  assert.equal(commandOutcome({ ok: true, value: { result: { kind: 'success', text: '' } } }), null)
+  assert.equal(commandOutcome({ ok: false, error: { message: 'nope' } }), null, 'a transport failure is the menu error, not a note')
+  assert.equal(commandOutcome(null), null)
+}
+
+// The plus menu is the native composer's menu: two sections, and a command
+// that declares an argument is put into the composer instead of being run as
+// it stands. Running them all was why every argument-taking command answered
+// with its own usage line.
+{
+  const { commandSections } = mod.__ops
+  const t = key => en[key] ?? key
+  const sections = commandSections([
+    { name: 'compact', description: 'Compact older conversation history' },
+    { name: 'goal', description: 'Set or view the goal', input: { hint: 'text' } },
+    { name: 'feedback', description: 'Record feedback', input: { hint: 'text' } },
+    { name: 'permission', description: 'Switch the permission preset', input: { hint: 'preset' } },
+    { name: 'rewind', description: 'Go back one turn' },
+    { name: '', description: 'nameless rows are dropped' },
+  ], t)
+  assert.deepEqual(sections.map(section => section.title), [en.sectionAdd, en.sectionCommands])
+  assert.deepEqual(sections[0].rows.map(row => row.name), ['goal'], 'a command that takes text is added, not run')
+  assert.equal(sections[0].rows[0].label, en.commandGoal, 'built-in rows carry the native menu wording')
+  assert.equal(sections[0].rows[0].glyph, 'goal')
+  assert.equal(sections[0].rows[0].action, 'claim')
+  assert.equal(sections[0].rows[0].more, true, 'a row that does not run yet says so')
+  // The model and the permission are the chips beside the field, and feedback
+  // is about the session: none of the three is a row here, though all three
+  // still run when the line is typed.
+  assert.deepEqual(sections[1].rows.map(row => row.name), ['compact', 'rewind'])
+  assert.equal(sections[1].rows[0].label, en.commandCompact)
+  // A command this file does not know keeps the catalog description as its
+  // detail, so a plugin's row still explains itself.
+  assert.equal(sections[1].rows[1].label, 'rewind')
+  assert.equal(sections[1].rows[1].detail, 'Go back one turn')
+  assert.equal(sections[1].rows[1].glyph, null)
+  // A session with no argument-taking commands shows one section, not an empty one.
+  const one = commandSections([{ name: 'compact', description: '' }], t)
+  assert.deepEqual(one.map(section => section.title), [en.sectionCommands])
+  assert.deepEqual(commandSections(undefined, key => key), [], 'no catalog is no menu')
+}
+
+// Typing a slash opens the menu the way the native composer opens it: an
+// empty query is the whole catalog in two sections, and a typed one is the
+// ranked matches instead of a second heading over three rows.
+{
+  const { slashMenu } = mod.__ops
+  const catalog = [
+    { name: 'compact', description: 'Compact history' },
+    { name: 'feedback', description: 'Record feedback', input: { hint: 'text' } },
+    { name: 'export', description: 'Download the log' },
+    { name: 'goal', description: 'Set the goal', input: { hint: 'text' } },
+    { name: 'plan', description: 'Plan mode', input: { hint: 'text' } },
+  ]
+  const t = key => en[key] ?? key
+  const all = slashMenu(catalog, '', t)
+  assert.deepEqual(all.map(section => section.title), [en.sectionAdd, en.sectionCommands])
+
+  const named = slashMenu(catalog, 'co', t)
+  assert.equal(named.length, 1)
+  assert.equal(named[0].title, null, 'a filtered list does not keep the headings')
+  assert.deepEqual(named[0].rows.map(row => row.name), ['compact'], 'a name prefix matches')
+
+  // The label counts too: in Chinese the row says 目标, so 目 has to find it.
+  const byLabel = slashMenu(catalog, '目', key => zh[key] ?? key)
+  assert.deepEqual(byLabel[0].rows.map(row => row.name), ['goal'])
+
+  // Ranked, not alphabetical: a name prefix comes before a name-contains hit.
+  const ranked = slashMenu([...catalog, { name: 'planning-notes', description: '' }], 'plan', t)
+  assert.deepEqual(ranked[0].rows.map(row => row.name), ['plan', 'planning-notes'])
+
+  assert.deepEqual(slashMenu(catalog, 'zzz', t), [], 'no match is no menu')
+  assert.deepEqual(slashMenu(undefined, '', t), [], 'an unread catalog is no menu')
+}
+
 console.log('client ops test passed')

@@ -85,6 +85,7 @@ window.__ModuleLoader__.load({
       serverStop: 'Stop',
       serverBusy: 'Waiting for the previous request',
       serverSave: 'Save',
+      serverSaved: 'Saved',
       serverFailed: 'Could not control ComfyUI',
       serverStartFailed: 'ComfyUI did not start',
       serverExternalHint: 'This ComfyUI was not started by the plugin, so Stop and Restart are unavailable. Restart it where it was launched.',
@@ -107,13 +108,21 @@ window.__ModuleLoader__.load({
       assistantFailed: 'The assistant did not answer',
       assistantEmpty: 'Say what to change. The model uses the tools on this canvas.',
       assistantClosed: 'The editor is still opening.',
-      instructions: 'Commands',
+      sectionAdd: 'Add',
+      sectionCommands: 'Commands',
+      commandGoal: 'Goal',
+      commandGoalDetail: 'Set or view the goal for a long-running task',
+      commandPlan: 'Plan',
+      commandPlanDetail: 'Enter or leave plan mode',
+      commandCompact: 'Compact',
+      commandCompactDetail: 'Compact older conversation history',
+      commandExport: 'Export',
+      commandExportDetail: 'Download this session log as a ZIP archive',
       compact: 'Compact',
       export: 'Export log',
       rewind: 'Rewind',
       undo: 'Undo',
       commandFailed: 'The command did not run',
-      menu: 'Menu',
       model: 'Model',
       permissions: 'Permissions',
       'preset.readOnly': 'Read only',
@@ -136,7 +145,7 @@ window.__ModuleLoader__.load({
       toolResult: 'Result',
       tokens: '{{count}} tokens',
       truncated: 'Showing the latest 40 turns; earlier ones live in the session.',
-      assistantHint: 'Enter sends, Shift+Enter adds a line. Replies render as markdown.',
+      assistantHint: 'Enter sends, Shift+Enter adds a line.',
       assistantThinking: 'Thinking…',
       assistantWorking: 'Working',
       assistantJump: 'Jump to latest',
@@ -191,6 +200,7 @@ window.__ModuleLoader__.load({
       serverStop: '停止',
       serverBusy: '上一次请求还没结束',
       serverSave: '保存',
+      serverSaved: '已保存',
       serverFailed: '无法控制 ComfyUI',
       serverStartFailed: '启动失败',
       serverExternalHint: '这个 ComfyUI 不是插件启动的，停止和重启不可用；请到启动它的地方重启。',
@@ -213,13 +223,21 @@ window.__ModuleLoader__.load({
       assistantFailed: '助手没有回复',
       assistantEmpty: '直接说要改哪里。模型会用这张画布上的工具。',
       assistantClosed: '编辑器还在打开。',
-      instructions: '指令',
+      sectionAdd: '添加',
+      sectionCommands: '指令',
+      commandGoal: '目标',
+      commandGoalDetail: '设置或查看长期任务目标',
+      commandPlan: '计划',
+      commandPlanDetail: '进入或退出计划模式',
+      commandCompact: '压缩',
+      commandCompactDetail: '压缩以上对话内容',
+      commandExport: '下载日志',
+      commandExportDetail: '将当前会话内容导出为 ZIP',
       compact: '压缩',
       export: '下载日志',
       rewind: '回退',
       undo: '撤销',
       commandFailed: '命令没有执行',
-      menu: '菜单',
       model: '模型',
       permissions: '访问权限',
       'preset.readOnly': '仅可查看',
@@ -240,9 +258,9 @@ window.__ModuleLoader__.load({
       toolFailed: '失败',
       toolArgs: '参数',
       toolResult: '结果',
-      tokens: '{{count}} 令牌',
+      tokens: '{{count}} token',
       truncated: '只显示最近 40 条，更早的记录在会话里。',
-      assistantHint: 'Enter 发送，Shift+Enter 换行；回复按 Markdown 渲染。',
+      assistantHint: 'Enter 发送，Shift+Enter 换行。',
       assistantThinking: '正在思考…',
       assistantWorking: '处理中',
       assistantJump: '回到最新',
@@ -501,6 +519,7 @@ window.__ModuleLoader__.load({
       }
       .dsh-comfyui-sheet-head { display: flex; align-items: center; gap: 8px; }
       .dsh-comfyui-sheet-head strong { flex: 1 1 auto; font-size: 13px; font-weight: 600; }
+      .dsh-comfyui-sheet-saved { color: var(--dsw-alias-state-success-primary); font-size: 12px; line-height: 16px; }
       .dsh-comfyui-sheet-body { display: flex; flex-direction: column; gap: 10px; }
       .dsh-comfyui-field { display: flex; flex-direction: column; gap: 6px; }
       .dsh-comfyui-field > span { color: var(--ink2, var(--dsw-alias-label-secondary)); font-size: 12px; line-height: 16px; }
@@ -517,7 +536,9 @@ window.__ModuleLoader__.load({
         display: flex; align-items: center; gap: 8px; cursor: pointer;
         color: var(--ink2, var(--dsw-alias-label-secondary));
       }
-      .dsh-comfyui-sheet-foot { display: flex; justify-content: flex-end; gap: 6px; }
+      .dsh-comfyui-sheet-foot {
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      }
       .dsh-comfyui-sheet-foot .dsh-comfyui-button { height: 30px; padding: 0 14px; border-radius: 9px; }
       .dsh-comfyui-sheet-message { color: var(--dsw-alias-state-error-primary); font-size: 12px; line-height: 16px; }
       .dsh-comfyui-sheet-hint { color: var(--ink2, var(--dsw-alias-label-secondary)); font-size: 12px; line-height: 16px; }
@@ -587,6 +608,9 @@ window.__ModuleLoader__.load({
         cursor: pointer;
         font: inherit;
       }
+      /* The dock sits to the right of the canvas, so the divider in this icon
+         belongs on the right; the glyph is a window with its sidebar. */
+      .dsh-comfyui-dock-toggle svg { transform: rotate(180deg); }
       .dsh-comfyui-dock-toggle:hover {
         background: color-mix(in srgb, var(--ink, var(--dsw-alias-label-primary)) 10%, transparent);
         color: var(--ink, var(--dsw-alias-label-primary));
@@ -622,8 +646,8 @@ window.__ModuleLoader__.load({
         color: var(--ink3);
         font-size: 25px; line-height: 36px; font-weight: 300;
       }
-      .dsh-comfyui-dock-row { display: flex; }
-      .dsh-comfyui-dock-row[data-role="user"] { justify-content: flex-end; }
+      .dsh-comfyui-dock-row { display: flex; flex-direction: column; align-items: flex-start; }
+      .dsh-comfyui-dock-row[data-role="user"] { align-items: flex-end; }
       .dsh-comfyui-dock-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
       .dsh-comfyui-dock-badge {
         flex: 0 0 auto; padding: 1px 7px; border-radius: 999px;
@@ -652,14 +676,11 @@ window.__ModuleLoader__.load({
       .dsh-comfyui-dock-tool-mark { color: var(--ink3); opacity: .7; }
       .dsh-comfyui-dock-tool-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .dsh-comfyui-dock-meta {
-        /* A quiet line under the bubble: a reply reads as text until the reader
-           reaches for its source, its time, or its cost. */
-        display: flex; align-items: center; gap: 8px; margin-top: 2px;
+        /* A quiet line under the bubble, never inside it: the bubble is the
+           message, and the time it was sent is beside that. */
+        display: flex; align-items: center; gap: 8px; margin-top: 3px;
         color: var(--ink3); font-size: 11px; line-height: 16px;
-        opacity: 0; transition: opacity .15s ease;
       }
-      .dsh-comfyui-dock-row:hover .dsh-comfyui-dock-meta,
-      .dsh-comfyui-dock-msg:focus-within .dsh-comfyui-dock-meta { opacity: 1; }
       .dsh-comfyui-dock-action {
         padding: 0; border: 0; border-radius: 6px;
         background: transparent; color: inherit;
@@ -803,18 +824,11 @@ window.__ModuleLoader__.load({
       .dsh-comfyui-md-table th { font-weight: 600; }
       .dsh-comfyui-md a { color: var(--dsw-alias-brand-primary); text-decoration: underline; text-underline-offset: 2px; }
       .dsh-comfyui-dock-row[data-role="user"] .dsh-comfyui-md-p { white-space: pre-wrap; }
-      .dsh-comfyui-dock-add {
-        width: 28px; height: 28px; flex: 0 0 auto; margin-left: -6px;
-        display: grid; place-items: center;
-        border: 0; border-radius: 50%; padding: 0;
-        background: transparent; color: var(--ink2);
-        cursor: pointer; font: inherit; font-size: 18px; line-height: 1;
-      }
-      .dsh-comfyui-dock-add:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
-      .dsh-comfyui-dock-add[aria-expanded="true"] { background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); }
       .dsh-comfyui-dock-menu {
         position: absolute; left: 0; right: 0; bottom: 84px;
-        z-index: 6; max-height: 300px; overflow: auto;
+        /* Tall enough for the two sections the native menu shows; the log
+           above it is what the space comes from. */
+        z-index: 6; max-height: min(58vh, 440px); overflow: auto;
         padding: 6px; border: .5px solid var(--line); border-radius: 14px;
         background: var(--card); box-shadow: var(--dsw-elevation-soft);
       }
@@ -832,13 +846,25 @@ window.__ModuleLoader__.load({
       .dsh-comfyui-dock-menu-item:hover { background: var(--hover); }
       .dsh-comfyui-dock-menu-item[data-active="true"] { color: var(--primary); font-weight: 600; }
       .dsh-comfyui-dock-menu-item[data-active="true"]::after { content: "·"; margin-left: auto; }
+      .dsh-comfyui-dock-menu-item[data-selected="true"] { background: var(--hover); }
       .dsh-comfyui-dock-menu-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 0; }
+      /* A row is the command's own face, the way the native composer shows it:
+         a glyph, a name, and what it does. */
+      .dsh-comfyui-dock-menu-icon { flex: 0 0 auto; display: grid; place-items: center; width: 16px; height: 16px; color: var(--ink3); }
+      .dsh-comfyui-dock-menu-item:hover .dsh-comfyui-dock-menu-icon { color: var(--ink2); }
+      .dsh-comfyui-dock-menu-label { font-size: 13px; line-height: 19px; }
+      .dsh-comfyui-dock-menu-item[data-more="true"]::after { content: "…"; margin-left: auto; color: var(--ink3); }
       .dsh-comfyui-dock-menu-detail { color: var(--ink3); font-size: 11px; font-weight: 400; line-height: 15px; }
       .dsh-comfyui-dock-menu > .dsh-comfyui-dock-menu-detail { margin: 0; padding: 2px 10px 8px; }
       .dsh-comfyui-dock-menu-item:disabled { opacity: .5; cursor: default; }
-      .dsh-comfyui-dock-menu-sep { height: .5px; margin: 4px 6px; background: var(--line); }
       .dsh-comfyui-dock-menu-empty { margin: 0; padding: 6px 10px; color: var(--ink3); font-size: 12px; }
       .dsh-comfyui-dock-menu-error { margin: 0 0 4px; padding: 4px 10px; color: var(--dsw-alias-state-error-primary); font-size: 12px; }
+      .dsh-comfyui-dock-note {
+        margin: 0 12px 6px; padding: 6px 10px; border-radius: 8px;
+        background: color-mix(in srgb, var(--card) 80%, transparent);
+        color: var(--ink2); font-size: 12px; line-height: 17px;
+      }
+      .dsh-comfyui-dock-note[data-tone="error"] { color: var(--dsw-alias-state-error-primary); }
       .dsh-comfyui-dock-controls {
         flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
         margin: 0 12px 6px; min-height: 22px;
@@ -2736,7 +2762,20 @@ window.__ModuleLoader__.load({
       const [serviceCwd, setServiceCwd] = useState('')
       const [serviceAutoStart, setServiceAutoStart] = useState(false)
       const [serviceBusy, setServiceBusy] = useState(false)
-      const [serviceMessage, setServiceMessage] = useState('')
+      /**
+       * What the dialog last told the reader: an error, or the save that
+       * landed. Null until one of them happens.
+       */
+      const [serviceNote, setServiceNote] = useState(
+        /** @type {{ tone: 'ok' | 'error', text: string } | null} */ (null),
+      )
+      // A save is answered once. Left in place it would still say "Saved" after
+      // the next change, so it retires on its own; an error stays.
+      useEffect(() => {
+        if (serviceNote?.tone !== 'ok') return undefined
+        const timer = setTimeout(() => setServiceNote(null), 2500)
+        return () => clearTimeout(timer)
+      }, [serviceNote])
       // Read by the boot clock below; the overlay recomputes the same two facts
       // through `overlayPlan` so the rule itself stays testable.
       const serverStarting = service !== null
@@ -2816,7 +2855,7 @@ window.__ModuleLoader__.load({
 
       const serviceAction = useCallback(async (action) => {
         setServiceBusy(true)
-        setServiceMessage('')
+        setServiceNote(null)
         try {
           const body = { action }
           if (action === 'save' || action === 'start') {
@@ -2835,8 +2874,14 @@ window.__ModuleLoader__.load({
             setServiceCwd(data.settings.cwd)
             setServiceAutoStart(data.settings.autoStart === true)
           }
+          // Saving changes nothing on screen, so say it happened. A start or
+          // stop already shows its result in the bar.
+          if (action === 'save') setServiceNote({ tone: 'ok', text: t('serverSaved') })
         } catch (error) {
-          setServiceMessage(`${t('serverFailed')}: ${error instanceof Error ? error.message : String(error)}`)
+          setServiceNote({
+            tone: 'error',
+            text: `${t('serverFailed')}: ${error instanceof Error ? error.message : String(error)}`,
+          })
         } finally {
           setServiceBusy(false)
         }
@@ -3330,6 +3375,11 @@ window.__ModuleLoader__.load({
         },
           h('div', { className: 'dsh-comfyui-sheet-head' },
             h('strong', null, t('settings')),
+            // Beside the title, where a save is answered, and only for a moment:
+            // the dialog stays open and the note must not keep saying it.
+            serviceNote?.tone === 'ok'
+              ? h('span', { className: 'dsh-comfyui-sheet-saved' }, serviceNote.text)
+              : null,
             h('button', {
               className: 'dsh-comfyui-button dsh-comfyui-icon',
               type: 'button',
@@ -3348,26 +3398,36 @@ window.__ModuleLoader__.load({
                 placeholder: t('serverDirHint'),
                 spellCheck: false,
                 disabled: serviceBusy,
-                onChange: event => setServiceCwd(/** @type {HTMLInputElement} */ (event.target).value),
+                onChange: event => {
+                  setServiceCwd(/** @type {HTMLInputElement} */ (event.target).value)
+                  // A saved note describes the values that were sent; editing one
+                  // makes it stale.
+                  setServiceNote(current => (current?.tone === 'ok' ? null : current))
+                },
               }),
-            ),
-            h('label', { className: 'dsh-comfyui-check' },
-              h('input', {
-                type: 'checkbox',
-                checked: serviceAutoStart,
-                disabled: serviceBusy,
-                onChange: event => setServiceAutoStart(event.target.checked),
-              }),
-              h('span', null, t('serverAutoStart')),
             ),
             dirHint === '' ? null : h('div', { className: 'dsh-comfyui-sheet-hint' }, dirHint),
-            serviceMessage === '' ? null : h('div', { className: 'dsh-comfyui-sheet-message' }, serviceMessage),
+            serviceNote?.tone === 'error'
+              ? h('div', { className: 'dsh-comfyui-sheet-message' }, serviceNote.text)
+              : null,
             severity ? h('div', { className: 'dsh-comfyui-sheet-message' }, String(service.controllerError)) : null,
             service !== null && typeof service.lastError === 'string' && service.lastError !== ''
               ? h('div', { className: 'dsh-comfyui-sheet-message' }, service.lastError)
               : null,
           ),
           h('div', { className: 'dsh-comfyui-sheet-foot' },
+            h('label', { className: 'dsh-comfyui-check' },
+              h('input', {
+                type: 'checkbox',
+                checked: serviceAutoStart,
+                disabled: serviceBusy,
+                onChange: event => {
+                  setServiceAutoStart(event.target.checked)
+                  setServiceNote(current => (current?.tone === 'ok' ? null : current))
+                },
+              }),
+              h('span', null, t('serverAutoStart')),
+            ),
             h('button', {
               className: 'dsh-comfyui-button',
               'data-variant': 'primary',
@@ -3439,7 +3499,23 @@ window.__ModuleLoader__.load({
      * with `ctx.get`, which does not require this plugin to inject them.
      * @type {{ session: any, presets: any, commands: any }}
      */
-    let deskRemotes = { session: null, presets: null, commands: null }
+    /**
+     * The client context, bound in `apply`. Remotes are read through it on
+     * every use: the session and permission namespaces are registered by their
+     * own plugins, and one that applies after this plugin would otherwise stay
+     * missing for the life of the page — which is what an empty model and
+     * permission chip looked like.
+     */
+    let deskCtx = null
+
+    /**
+     * One remote namespace, resolved now.
+     * @param {string} name - the namespace, without the `remote.` prefix.
+     * @returns {any} the namespace, or null before it exists.
+     */
+    function deskRemote(name) {
+      return deskCtx === null ? null : remoteNamespace(deskCtx, `remote.${name}`)
+    }
 
     /**
      * Read one remote namespace. A missing service leaves the menu empty
@@ -3450,8 +3526,9 @@ window.__ModuleLoader__.load({
      */
     function remoteNamespace(ctx, name) {
       try {
-        const value = typeof ctx.get === 'function' ? ctx.get(name) : null
-        return value ?? null
+        // A namespace that its own plugin has not registered yet reads as
+        // absent, which is why callers resolve it per use instead of once.
+        return ctx.get(name) ?? null
       } catch {
         return null
       }
@@ -3822,6 +3899,139 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * One row of the `/` menu.
+     * @typedef {{name: string, label: string, detail: string, glyph: string | null, action: 'claim' | 'run', more: boolean}} CommandRow
+     */
+
+    /**
+     * Rows the menu leaves out. The model and the permission are the chips
+     * beside the field — one place to change each — and feedback is about the
+     * session rather than the canvas this page shows. Every one of them still
+     * runs when the line is typed.
+     */
+    const HIDDEN_COMMANDS = new Set(['feedback', 'permission', 'model'])
+
+    /**
+     * The menu face of one built-in Host command: its two dictionary keys and
+     * the glyph that goes with them.
+     */
+    const COMMAND_FACES = {
+      goal: { label: 'commandGoal', detail: 'commandGoalDetail', glyph: 'goal' },
+      plan: { label: 'commandPlan', detail: 'commandPlanDetail', glyph: 'plan' },
+      compact: { label: 'commandCompact', detail: 'commandCompactDetail', glyph: 'compact' },
+      export: { label: 'commandExport', detail: 'commandExportDetail', glyph: 'export' },
+    }
+
+
+    /**
+     * The `/` menu's two sections, split the way the native composer splits
+     * them: a command that declares an argument is put into the composer so the
+     * argument can be typed, and one that takes none runs where it is.
+     *
+     * Picking a command used to execute it as it stood, so every command that
+     * needs text answered with its own usage line and nothing else happened.
+     * @param {any} commands - the session's command catalog.
+     * @param {(key: string) => string} t - the locale.
+     * @returns {{title: string, rows: CommandRow[]}[]} non-empty sections.
+     */
+    function commandSections(commands, t) {
+      // Nothing to draw before the catalog is read: a menu holding only the
+      // contributed model row would claim the session has one command.
+      if (!Array.isArray(commands)) return []
+      const add = []
+      const run = []
+      for (const command of commands) {
+        const name = typeof command?.name === 'string' ? command.name : ''
+        if (name.length === 0 || HIDDEN_COMMANDS.has(name)) continue
+        const face = COMMAND_FACES[name]
+        const row = {
+          name,
+          label: face === undefined ? name : t(face.label),
+          detail: face === undefined
+            ? (typeof command?.description === 'string' ? command.description : '')
+            : t(face.detail),
+          glyph: face === undefined ? null : face.glyph,
+          // Only the native menu's own rule sends a row to Add: it puts something
+          // into the line. A declared input is that rule's signal.
+          /** @type {'claim' | 'run'} */
+          action: command?.input !== undefined && command?.input !== null ? 'claim' : 'run',
+          more: command?.input !== undefined && command?.input !== null,
+        }
+        if (row.action === 'claim') add.push(row)
+        else run.push(row)
+      }
+      return [
+        { title: t('sectionAdd'), rows: add },
+        { title: t('sectionCommands'), rows: run },
+      ].filter(section => section.rows.length > 0)
+    }
+
+    /**
+     * The rows the `/` menu offers for one query.
+     *
+     * An empty query is the whole catalog in the native menu's two sections; a
+     * typed one is a single ranked list — a name that starts with the query,
+     * then a name or a label that contains it — because two headings over three
+     * filtered rows read as more structure than there is.
+     * @param {any} commands - the session's command catalog.
+     * @param {string} query - what the reader typed after the slash.
+     * @param {(key: string) => string} t - the locale.
+     * @returns {{title: string | null, rows: CommandRow[]}[]} the sections to draw.
+     */
+    function slashMenu(commands, query, t) {
+      const sections = commandSections(commands, t)
+      if (query.length === 0) return sections
+      const needle = query.toLowerCase()
+      const ranked = []
+      for (const row of sections.flatMap(section => section.rows)) {
+        const name = row.name.toLowerCase()
+        const label = row.label.toLowerCase()
+        const rank = name.startsWith(needle) ? 0 : label.includes(needle) ? 1 : name.includes(needle) ? 2 : -1
+        if (rank >= 0) ranked.push({ row, rank })
+      }
+      return ranked.length === 0
+        ? []
+        : [{ title: null, rows: ranked.sort((left, right) => left.rank - right.rank).map(entry => entry.row) }]
+    }
+
+    /** 16px line glyphs for the built-in commands, drawn like the column's own. */
+    function commandGlyph(kind) {
+      /** @type {Record<string, string[]>} */
+      const paths = {
+        goal: ['M8 1.6a6.4 6.4 0 1 0 0 12.8A6.4 6.4 0 0 0 8 1.6Z', 'M8 4.8a3.2 3.2 0 1 0 0 6.4 3.2 3.2 0 0 0 0-6.4Z', 'M8 7.4v1.2'],
+        plan: ['M3 4.4h10', 'M3 8h10', 'M3 11.6h5.5'],
+        compact: ['M2.6 6h10.8', 'M2.6 10h10.8'],
+        export: ['M8 2.6v7.2', 'M5.2 7.2 8 10l2.8-2.8', 'M3 12.4h10'],
+      }
+      const list = paths[kind]
+      if (list === undefined) return null
+      return h('svg', {
+        width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none',
+        stroke: 'currentColor', strokeWidth: 1.2, strokeLinecap: 'round', strokeLinejoin: 'round',
+        'aria-hidden': 'true',
+      }, ...list.map((d, index) => h('path', { key: String(index), d })))
+    }
+
+    /**
+     * What one command execution answered, or null when it said nothing.
+     *
+     * A slash command runs on the session, not on this column: `/compact`
+     * rewrites history the column does not draw, so the command's own text is
+     * the only place its outcome can show up here.
+     * @param {any} result - the remote's `{ ok, value }` for one execution.
+     * @returns {{ tone: 'ok' | 'error', text: string } | null} the message to show.
+     */
+    function commandOutcome(result) {
+      if (result?.ok !== true) return null
+      const value = result.value
+      // The Host answers `{ commandId, result: { kind, text } }`; a shell that
+      // forwarded only the result itself is accepted too.
+      const outcome = value?.result ?? value
+      if (typeof outcome?.text !== 'string' || outcome.text.length === 0) return null
+      return { tone: outcome.kind === 'error' ? 'error' : 'ok', text: outcome.text }
+    }
+
+    /**
      * One row of the column: a bubble of markdown, or a tool card.
      * @param {{ row: any, t: (key: string) => string }} props - the row and the locale.
      * @returns {any} the row.
@@ -3863,12 +4073,11 @@ window.__ModuleLoader__.load({
       const stamp = typeof row.at === "number" ? formatClock(row.at) : ""
       const tokens = typeof row.tokens === "number" ? t("tokens").replace("{{count}}", String(row.tokens)) : ""
       return h("div", { className: "dsh-comfyui-dock-row", "data-role": row.role },
-        h("div", { className: "dsh-comfyui-dock-msg" },
-          renderMarkdown(row.text, t),
-          h("div", { className: "dsh-comfyui-dock-meta" },
-            stamp.length > 0 ? h("span", null, stamp) : null,
-            tokens.length > 0 ? h("span", null, tokens) : null,
-            row.role === "assistant" ? h(CopyRow, { text: row.text, t }) : null)))
+        h("div", { className: "dsh-comfyui-dock-msg" }, renderMarkdown(row.text, t)),
+        h("div", { className: "dsh-comfyui-dock-meta" },
+          stamp.length > 0 ? h("span", null, stamp) : null,
+          tokens.length > 0 ? h("span", null, tokens) : null,
+          row.role === "assistant" ? h(CopyRow, { text: row.text, t }) : null))
     }
 
     /**
@@ -3896,7 +4105,20 @@ window.__ModuleLoader__.load({
       const [options, setOptions] = useState(null)
       const [menuBusy, setMenuBusy] = useState(false)
       const [menuError, setMenuError] = useState("")
+      /** What the last command answered: the only place its outcome is visible. */
+      const [note, setNote] = useState(
+        /** @type {{ tone: 'ok' | 'error', text: string } | null} */ (null),
+      )
+      useEffect(() => {
+        if (note === null) return undefined
+        const timer = setTimeout(() => setNote(null), 6000)
+        return () => clearTimeout(timer)
+      }, [note])
       const logRef = useRef(null)
+      const inputRef = useRef(null)
+      /** Which row of the `/` menu is highlighted, and whether Esc closed it. */
+      const [slashIndex, setSlashIndex] = useState(0)
+      const [slashDismissed, setSlashDismissed] = useState(false)
       /** The newest read wins; an older poll must not overwrite it. */
       const readAt = useRef(0)
       /**
@@ -3969,6 +4191,31 @@ window.__ModuleLoader__.load({
           setError({ message: t('assistantClosed'), text: message })
           return
         }
+        // A line that starts with a slash is a command, not a prompt: the same
+        // rule the native composer follows. Running it here is also what makes
+        // the menu's claim rows work — they only put `/<name> ` in the composer.
+        if (message.trim().startsWith('/')) {
+          const commands = deskRemote('commands')
+          if (commands === null) {
+            setError({ message: t('commandFailed'), text: message })
+            return
+          }
+          setBusy(true)
+          setError(null)
+          if (!retry) setDraft('')
+          const result = await remoteCall(() => commands.execute(sessionId, message.trim(), []))
+          setBusy(false)
+          const outcome = commandOutcome(result)
+          if (outcome !== null) setNote(outcome)
+          else {
+            setError({ message: result?.error?.message ?? t('commandFailed'), text: message })
+            if (retry) setDraft(message)
+          }
+          // A command can change what the session holds (`/compact` rewrites its
+          // history), so the column reads again instead of waiting for its poll.
+          void load()
+          return
+        }
         setBusy(true)
         setError(null)
         setStick(true)
@@ -4007,9 +4254,9 @@ window.__ModuleLoader__.load({
         }
       }
       const loadOptions = useCallback(async () => {
-        const session = deskRemotes.session
-        const presets = deskRemotes.presets
-        const commands = deskRemotes.commands
+        const session = deskRemote('session')
+        const presets = deskRemote('permissionPresets')
+        const commands = deskRemote('commands')
         const catalog = session === null ? null : await remoteCall(() => session.modelCatalog())
         const presetCatalog = presets === null ? null : await remoteCall(() => presets.catalog())
         const listed = sessionId === null || commands === null ? null : await remoteCall(() => commands.list(sessionId))
@@ -4045,29 +4292,63 @@ window.__ModuleLoader__.load({
           commands: listed?.ok === true && Array.isArray(listed.value) ? listed.value : [],
         })
       }, [sessionId])
-      const toggleMenu = () => {
-        setMenuError("")
-        setConfirmPreset(null)
-        setMenu(current => {
-          if (current !== null) return null
-          setOptions(null)
-          void loadOptions()
-          return "root"
-        })
+      /**
+       * Put a command that takes an argument into the composer, the way the
+       * native menu does: the reader finishes the line and sends it.
+       * @param {string} name - the command name without its slash.
+       * @returns {void}
+       */
+      const claimCommand = name => {
+        setDraft('/' + name + ' ')
+        setSlashDismissed(true)
+        setMenuError('')
+        // The argument is the next thing typed, so the field takes the keyboard.
+        setTimeout(() => inputRef.current?.focus(), 0)
       }
-      const finishOption = result => {
-        if (result === null || result.ok !== true) {
-          const message = result?.error?.message
-          setMenuError(typeof message === 'string' && message.length > 0 ? message : t('optionFailed'))
+
+      /**
+       * Take one row of the `/` menu: finish the line, or run what needs no
+       * argument.
+       * @param {CommandRow} row - the row that was chosen.
+       * @returns {void}
+       */
+      const pickCommand = row => {
+        setSlashDismissed(true)
+        setSlashIndex(0)
+        setMenuError('')
+        if (row.action === 'claim') {
+          claimCommand(row.name)
           return
         }
+        runCommand('/' + row.name)
+      }
+      /**
+       * Render one choice's result.
+       * @param {any} result - the remote's `{ ok, value }`.
+       * @param {'menu' | 'note'} where - a picker keeps its list open and reports
+       *   inside it; a command that ran has closed its menu, so its answer and
+       *   its refusal belong on the column's own line.
+       * @returns {void}
+       */
+      const finishOption = (result, where = 'menu') => {
+        if (result === null || result.ok !== true) {
+          const message = result?.error?.message
+          const text = typeof message === 'string' && message.length > 0 ? message : t('optionFailed')
+          if (where === 'note') setNote({ tone: 'error', text })
+          else setMenuError(text)
+          return
+        }
+        // The menu closes on success, so the command's answer has to live
+        // outside it or the reader sees a menu vanish and nothing else.
+        const outcome = commandOutcome(result)
+        if (outcome !== null) setNote(outcome)
         setMenu(null)
         void loadOptions()
       }
       const chooseModel = (provider, model) => {
         setMenuBusy(true)
         setMenuError("")
-        const session = deskRemotes.session
+        const session = deskRemote('session')
         if (session === null || sessionId === null) {
           setMenuBusy(false)
           finishOption(null)
@@ -4087,7 +4368,7 @@ window.__ModuleLoader__.load({
       const choosePreset = value => {
         setMenuBusy(true)
         setMenuError("")
-        const commands = deskRemotes.commands
+        const commands = deskRemote('commands')
         // The native picker submits `/permission <preset>`. There is no
         // `permissionPresets.set`. An unknown name comes back as `ok` with no value.
         if (commands === null || sessionId === null || !/^[A-Za-z0-9_-]+$/u.test(value)) {
@@ -4109,14 +4390,14 @@ window.__ModuleLoader__.load({
       const runCommand = command => {
         setMenuBusy(true)
         setMenuError("")
-        const commands = deskRemotes.commands
+        const commands = deskRemote('commands')
         if (commands === null || sessionId === null) {
           setMenuBusy(false)
           finishOption(null)
           return
         }
         void remoteCall(() => commands.execute(sessionId, command, []))
-          .then(result => finishOption(result))
+          .then(result => finishOption(result, 'note'))
           .finally(() => setMenuBusy(false))
       }
       /**
@@ -4159,25 +4440,31 @@ window.__ModuleLoader__.load({
         disabled: menuBusy,
         onClick,
       }, label)
+      /**
+       * One command row: its glyph, its name, and what it does.
+       * @param {CommandRow} row - the row's face.
+       * @returns {any} the button.
+       */
+      const menuCommand = (row, selected) => h('button', {
+        key: 'c-' + row.name,
+        type: 'button',
+        role: 'option',
+        'aria-selected': selected === true,
+        className: 'dsh-comfyui-dock-menu-item',
+        'data-more': row.more === true,
+        'data-selected': selected === true,
+        disabled: menuBusy,
+        // The keyboard belongs to the composer: a click must not take it, or the
+        // next character would not land in the line being typed.
+        onMouseDown: event => event.preventDefault(),
+        onClick: () => pickCommand(row),
+      },
+        row.glyph === null ? null : h('span', { className: 'dsh-comfyui-dock-menu-icon' }, commandGlyph(row.glyph)),
+        h('span', { className: 'dsh-comfyui-dock-menu-choice' },
+          h('span', { className: 'dsh-comfyui-dock-menu-label' }, row.label),
+          row.detail.length > 0 ? h('span', { className: 'dsh-comfyui-dock-menu-detail' }, row.detail) : null))
+
       const menuRows = () => {
-        if (menu === 'root') {
-          // Commands come from the session registry, so a plugin that adds
-          // /rewind gets an entry here without this file knowing it.
-          const commands = Array.isArray(options?.commands) ? options.commands : []
-          const rows = []
-          if (commands.length > 0) rows.push(h("p", { key: "g-cmd", className: "dsh-comfyui-dock-menu-head" }, t("instructions")))
-          for (const command of commands) {
-            const name = typeof command?.name === 'string' ? command.name : String(command ?? '')
-            if (name.length === 0) continue
-            const title = typeof command?.title === 'string' ? command.title : name
-            rows.push(menuRow('c-' + name, title, false, () => runCommand(name.startsWith('/') ? name : '/' + name)))
-          }
-          if (rows.length === 0) rows.push(h("p", { key: "none", className: "dsh-comfyui-dock-menu-empty" }, t("optionsEmpty")))
-          rows.push(h("div", { key: "sep", className: "dsh-comfyui-dock-menu-sep" }))
-          rows.push(menuRow('model', t('model') + (options?.model?.model ? ' · ' + options.model.model : ''), false, () => setMenu('model')))
-          rows.push(menuRow('preset', presetLabel() || t('permissions'), false, () => { setConfirmPreset(null); setMenu('preset') }))
-          return rows
-        }
         if (menu === 'model') {
           if (options === null) return [h("p", { key: "load", className: "dsh-comfyui-dock-menu-empty" }, t("loading"))]
           if (options.modelFailed) return [h("p", { key: "fail", className: "dsh-comfyui-dock-menu-empty" }, t("optionsFailed"))]
@@ -4232,7 +4519,7 @@ window.__ModuleLoader__.load({
         if (menu === null) return undefined
         const close = event => {
           const target = event.target
-          if (target instanceof Element && target.closest(".dsh-comfyui-dock-menu, .dsh-comfyui-dock-add") !== null) return
+          if (target instanceof Element && target.closest(".dsh-comfyui-dock-menu") !== null) return
           setConfirmPreset(null)
           setMenu(null)
         }
@@ -4276,6 +4563,25 @@ window.__ModuleLoader__.load({
       }
       const shown = pending === null ? rows : [...rows, { id: 'pending', role: 'user', text: pending.text }]
       const hint = thinking && lastRole !== 'assistant' ? t('assistantThinking') : ''
+      // The `/` menu is a leading-token trigger, the way the native composer's
+      // is: it belongs to the command name being typed and closes when the
+      // reader types past it into the argument.
+      const leading = draft.trimStart()
+      const slashQuery = leading.startsWith('/') && !/^\/\S*\s/u.test(leading) ? leading.slice(1) : null
+      const slashOpen = slashQuery !== null && !slashDismissed
+      const slashSections = slashOpen ? slashMenu(options?.commands, slashQuery, t) : []
+      const slashRows = slashSections.flatMap(section => section.rows)
+      const active = slashRows.length === 0 ? 0 : Math.min(slashIndex, slashRows.length - 1)
+      // The catalog is what the menu draws, so opening it reads the catalog
+      // once instead of showing an empty list until the next poll.
+      useEffect(() => {
+        if (!slashOpen) return undefined
+        // The menu takes the surface a picker may be holding.
+        setMenu(null)
+        setMenuError('')
+        void loadOptions()
+        return undefined
+      }, [slashOpen, loadOptions])
       return h('aside', {
         className: open ? 'dsh-comfyui-dock' : 'dsh-comfyui-dock is-closed',
         'aria-label': t('assistant'),
@@ -4328,6 +4634,9 @@ window.__ModuleLoader__.load({
           hidden: stick || shown.length === 0,
           onClick: jumpToLatest,
         }, t('assistantJump')) : null,
+        open && note !== null
+          ? h('div', { className: 'dsh-comfyui-dock-note', 'data-tone': note.tone }, note.text)
+          : null,
         open && error !== null ? h('div', { className: 'dsh-comfyui-dock-error' },
           h('span', { className: 'dsh-comfyui-dock-error-text' }, error.message),
           error.text.length > 0 && !busy
@@ -4351,14 +4660,8 @@ window.__ModuleLoader__.load({
           }, typeof options?.model?.model === 'string' ? options.model.model : t('model')),
         ) : null,
         open ? h('form', { className: 'dsh-comfyui-dock-form', onSubmit: send },
-          h('button', {
-            type: 'button',
-            className: 'dsh-comfyui-dock-add',
-            'aria-label': t('menu'),
-            'aria-expanded': menu !== null,
-            onClick: toggleMenu,
-          }, '+'),
           h('textarea', {
+            ref: inputRef,
             className: 'dsh-comfyui-dock-input',
             rows: 1,
             value: draft,
@@ -4366,11 +4669,33 @@ window.__ModuleLoader__.load({
             'aria-label': t('assistantPlaceholder'),
             onChange: event => {
               setDraft(event.target.value)
+              setSlashIndex(0)
+              setSlashDismissed(false)
               const field = event.target
               field.style.height = 'auto'
               field.style.height = Math.min(field.scrollHeight, 120) + 'px'
             },
             onKeyDown: event => {
+              if (slashOpen) {
+                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                  event.preventDefault()
+                  if (slashRows.length > 0) {
+                    const step = event.key === 'ArrowDown' ? 1 : -1
+                    setSlashIndex((active + step + slashRows.length) % slashRows.length)
+                  }
+                  return
+                }
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  setSlashDismissed(true)
+                  return
+                }
+                if (event.key === 'Enter' && !event.shiftKey && slashRows.length > 0) {
+                  event.preventDefault()
+                  pickCommand(slashRows[active])
+                  return
+                }
+              }
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault()
                 event.currentTarget.form?.requestSubmit()
@@ -4387,11 +4712,28 @@ window.__ModuleLoader__.load({
             stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
             'aria-hidden': 'true',
           }, h('path', { d: 'M12 19V5M6 11l6-6 6 6' }))),
-          menu !== null
-            ? h('div', { className: 'dsh-comfyui-dock-menu' },
-              menuError.length > 0 ? h('p', { className: 'dsh-comfyui-dock-menu-error' }, menuError) : null,
-              ...menuRows())
-            : null,
+          slashOpen
+            ? h('div', {
+              className: 'dsh-comfyui-dock-menu',
+              role: 'listbox',
+              'aria-label': t('sectionCommands'),
+            },
+              // Commands come from the session registry, so a plugin that adds
+              // /rewind appears here without this file knowing it. An empty
+              // query is the native menu's two sections; a typed one is the
+              // ranked matches.
+              slashSections.length === 0
+                ? h('p', { key: 'none', className: 'dsh-comfyui-dock-menu-empty' }, t('optionsEmpty'))
+                : slashSections.map((section, sectionIndex) => h('div', { key: 's' + String(sectionIndex) },
+                  section.title === null
+                    ? null
+                    : h('p', { className: 'dsh-comfyui-dock-menu-head' }, section.title),
+                  section.rows.map(row => menuCommand(row, slashRows[active] === row)))))
+            : menu !== null
+              ? h('div', { className: 'dsh-comfyui-dock-menu' },
+                menuError.length > 0 ? h('p', { className: 'dsh-comfyui-dock-menu-error' }, menuError) : null,
+                ...menuRows())
+              : null,
         ) : null,
       )
     }
@@ -4426,18 +4768,14 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale'],
       // Editor operations, dictionaries, and the bar/stage rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, applyEdits, captureGraph, applyWorkflowGraph, loadWorkflow, switchTab, closeTab, readTabs, tabLabel, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, mapApiEvent, offerRelayEvent, relayEditorEvents, readPreview, progressSummary, applyRunEvent, runLabel, cancelLabel, TopBar, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, viewShowsAll, describeOperation, en, zh, createSync, parseMarkdown, parseInline, renderInline, renderMarkdown },
+      __ops: { applyOperation, applyEdits, captureGraph, applyWorkflowGraph, loadWorkflow, switchTab, closeTab, readTabs, tabLabel, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, mapApiEvent, offerRelayEvent, relayEditorEvents, readPreview, progressSummary, applyRunEvent, runLabel, cancelLabel, TopBar, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, viewShowsAll, describeOperation, en, zh, createSync, parseMarkdown, parseInline, renderInline, renderMarkdown, commandOutcome, DockRow, commandSections, slashMenu },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         // A cordis context throws on an uninjected service property, and that
         // throw took the whole client plugin down with it. Both access paths
         // are tried, and a deployment without either leaves the menu empty
         // instead of removing the panel from the sidebar.
-        deskRemotes = {
-          session: remoteNamespace(ctx, 'remote.session'),
-          presets: remoteNamespace(ctx, 'remote.permissionPresets'),
-          commands: remoteNamespace(ctx, 'remote.commands'),
-        }
+        deskCtx = ctx
         deskT = t
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')
         ctx.effect(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({

@@ -434,6 +434,19 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
       : !composer.empty ? 'the field was not empty'
         : `${composer.top.toFixed(1)} px apart, ${composer.height.toFixed(1)} px taller`)
 
+  // The dock is on the right of the canvas, so the divider in the collapse
+  // icon belongs on the right. The glyph is a window with its sidebar; drawn
+  // once and reused, it points at a sidebar this page does not have.
+  const flip = await browser.evaluate(`(() => {
+    const svg = document.querySelector('.dsh-comfyui-dock:not(.is-closed) .dsh-comfyui-dock-toggle svg')
+    if (svg === null) return null
+    const parts = getComputedStyle(svg).transform.match(/-?[\\d.]+/gu)
+    return parts === null ? null : parts.map(Number).slice(0, 2)
+  })()`)
+  record('the collapse icon points at the right side',
+    Array.isArray(flip) && flip.length === 2 && Math.abs(flip[0] + 1) < 0.01 && Math.abs(flip[1]) < 0.01,
+    Array.isArray(flip) ? `matrix(${flip.join(', ')}, …)` : 'no icon')
+
   await browser.click('.dsh-comfyui-dock-toggle')
   await sleep(300)
   const tab = await browser.evaluate(`(() => {
@@ -519,10 +532,112 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
   record('settings opens as a sheet over the canvas',
     sheet !== null && sheet.w > 200 && Math.abs(sheet.stage - (geometry?.stage ?? 0)) < 1,
     sheet === null ? 'no sheet' : `${(sheet.w).toFixed(0)}×${(sheet.h).toFixed(0)}, canvas ${(sheet.stage).toFixed(0)}`)
+
+  // "Start with DSH" and Save answer two questions about the same draft, so
+  // they share one row instead of stacking two heights.
+  const foot = await browser.evaluate(`(() => {
+    const card = document.querySelector('.dsh-comfyui-sheet')
+    if (card === null) return null
+    const check = card.querySelector('.dsh-comfyui-sheet-foot .dsh-comfyui-check')
+    const save = card.querySelector('.dsh-comfyui-sheet-foot button')
+    if (check === null || save === null) return null
+    const a = check.getBoundingClientRect()
+    const b = save.getBoundingClientRect()
+    return {
+      gap: Math.abs((a.top + a.height / 2) - (b.top + b.height / 2)),
+      overlap: Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top),
+    }
+  })()`)
+  record('the checkbox and Save share one row',
+    foot !== null && foot.gap <= 6 && foot.overlap > 0,
+    foot === null
+      ? 'the checkbox is not in the footer'
+      : `${foot.gap.toFixed(1)} px apart, ${foot.overlap.toFixed(1)} px of shared height`)
+
   await browser.click('.dsh-comfyui-sheet-head .dsh-comfyui-icon')
   await sleep(200)
   const sheetGone = await browser.evaluate(`document.querySelector('.dsh-comfyui-sheet') === null`)
   record('the sheet closes', sheetGone === true, '')
+
+  // Typing a slash opens the session's commands the way the native composer
+  // opens them. The model and the permission are chips beside the field, so
+  // listing them here too would make the menu a second way to change one.
+  const typedSlash = await browser.evaluate(`(() => {
+    const field = document.querySelector('.dsh-comfyui-dock-input')
+    if (field === null) return false
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+    setter.call(field, '/')
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    return true
+  })()`)
+  await sleep(600)
+  const menu = await browser.evaluate(`(() => {
+    const node = document.querySelector('.dsh-comfyui-dock-menu')
+    if (node === null) return null
+    return {
+      // A row is the command's face: a glyph, a name, and what it does, the
+      // way the native composer's menu shows one.
+      rows: [...node.querySelectorAll('.dsh-comfyui-dock-menu-item')].map(item => ({
+        label: item.querySelector('.dsh-comfyui-dock-menu-label')?.textContent.trim() ?? '',
+        detail: item.querySelector('.dsh-comfyui-dock-menu-detail')?.textContent.trim() ?? '',
+        glyph: item.querySelector('.dsh-comfyui-dock-menu-icon svg') !== null,
+      })),
+      sections: node.querySelectorAll('.dsh-comfyui-dock-menu-head').length,
+      // The two chips are the model and the permission; the menu must not
+      // repeat either of them.
+      chips: [...document.querySelectorAll('.dsh-comfyui-dock-controls .dsh-comfyui-dock-chip')]
+        .map(chip => chip.textContent.trim()),
+    }
+  })()`)
+  record('a slash opens the sectioned command menu',
+    typedSlash === true && menu !== null && menu.sections === 2 && menu.chips.length === 2
+      && menu.rows.length >= 3
+      && menu.rows.every(row => row.label !== '' && row.detail !== '' && row.glyph === true),
+    typedSlash !== true ? 'no composer'
+      : menu === null
+        ? 'no menu'
+        : `${menu.rows.length} rows in ${menu.sections} sections, ${menu.chips.length} chips`)
+
+  // A query filters the same menu down to the matches, without the headings.
+  const filtered = await browser.evaluate(`(() => {
+    const field = document.querySelector('.dsh-comfyui-dock-input')
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+    setter.call(field, '/comp')
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    return true
+  })()`)
+  await sleep(400)
+  const narrowed = await browser.evaluate(`(() => {
+    const node = document.querySelector('.dsh-comfyui-dock-menu')
+    if (node === null) return null
+    return {
+      rows: node.querySelectorAll('.dsh-comfyui-dock-menu-item').length,
+      sections: node.querySelectorAll('.dsh-comfyui-dock-menu-head').length,
+    }
+  })()`)
+  record('typing after the slash filters the menu',
+    filtered === true && narrowed !== null && narrowed.rows >= 1 && narrowed.rows <= 2 && narrowed.sections === 0,
+    narrowed === null ? 'no menu' : `${narrowed.rows} rows, ${narrowed.sections} headings`)
+
+  // Escape closes it and leaves the line alone; the field still owns the keys.
+  await browser.evaluate(`(() => {
+    const field = document.querySelector('.dsh-comfyui-dock-input')
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    return true
+  })()`)
+  await sleep(300)
+  const closed = await browser.evaluate(`(() => {
+    const field = document.querySelector('.dsh-comfyui-dock-input')
+    if (field === null) return null
+    const menuGone = document.querySelector('.dsh-comfyui-dock-menu') === null
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+    setter.call(field, '')
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    return { menuGone, kept: true }
+  })()`)
+  record('Escape closes the menu without clearing the line',
+    closed !== null && closed.menuGone === true, closed === null ? 'no composer' : '')
+  await sleep(200)
 
   layer = 'editor'
   const editor = await browser.waitFor(`(() => { const app = ${APP}; return app ? true : null })()`, {

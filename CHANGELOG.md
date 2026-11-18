@@ -75,6 +75,31 @@ the version bump.
 
 ### Changed
 
+- The settings dialog puts "Start with DSH" and Save on one row. A save that
+  landed says so beside the title and then stops, instead of leaving no answer
+  or a note that outlives the value it described.
+- A slash typed into the composer opens the session's commands the way the
+  native composer opens them: two sections, each row a glyph, a name, and what
+  it does; typing on filters the list and the arrow keys move through it. The
+  plus button is gone. A command that takes an argument is put into the line to
+  be finished there instead of running bare and answering with its usage line;
+  one that takes none runs where it is and reports its own answer in the
+  column. The menu carries the commands that act on this canvas: the model, the
+  permission, and feedback are left out — the first two are the chips beside the
+  field, and all three still run when the line is typed.
+- A submitted line that starts with a slash runs as that command, rather than
+  being sent to the model as a prompt.
+- The model and permission chips carry the session's current values again, and
+  their pickers list the choices. Their remote namespaces used to be read once
+  while the client was still starting, before the plugins that own them had
+  registered, so both read as empty for the life of the page.
+- The collapse icon beside New mirrors the column it collapses: the dock is on
+  the right of the canvas, and the glyph now shows its divider there.
+- A message's time, token count and copy control sit under the bubble rather
+  than inside it, and are there without hovering. A time the reader has to
+  point at is a time the column may as well not carry.
+- The empty column's hint is the editing hint only; it no longer also promises
+  that replies render as markdown.
 - A tool call is a card: its name, whether it finished, how long it took, and
   (expanded) the arguments it was called with and the result it returned. A
   call and its result are one card, not two lines.
