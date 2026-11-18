@@ -66,13 +66,6 @@ the version bump.
 - The column reports what it is doing: a Working badge in the header, a
   thinking indicator while a reply is due, and a faster transcript poll
   while one is.
-- The composer's plus button lists the session's own commands — whatever the
-  session registers, a plugin's /rewind included — and the model and
-  permission controls sit beside it as chips. Everything goes through the
-  client remote the native composer uses: commands.list / commands.execute,
-  session.modelCatalog / session.selectModel, and permissionPresets.catalog.
-  Choosing a permission submits `/permission`. This plugin owns no endpoint
-  for any of them, so the menu cannot drift from the app.
 - A new conversation stays in the header; the native plus menu never held one.
 - Each turn carries its time, and a reply its output tokens.
 - The transcript route reports when the session holds more turns than the
@@ -81,13 +74,6 @@ the version bump.
 
 ### Changed
 
-- The package's front page is Simplified Chinese, `README.md`; the English
-  README is `README_en.md`. Each links the other by absolute URL, so the switch
-  works on npm as well as on GitHub. Both are now a feature tour with
-  screenshots of the panel, the command menu and the settings sheet, and the
-  repository has a 1280×640 social preview.
-- `docs/` keeps only what a user reads (`supervise.md`); the ComfyUI surface,
-  the client check loop and the release sequence moved to `dev/`.
 - The settings dialog puts "Start with DSH" and Save on one row. A save that
   landed says so beside the title and then stops, instead of leaving no answer
   or a note that outlives the value it described.
@@ -118,6 +104,13 @@ the version bump.
   call and its result are one card, not two lines.
 - The column follows new turns only while the reader is at the bottom.
   Scrolled up, it leaves their place and offers Jump to latest.
+- The package's front page is Simplified Chinese, `README.md`; the English
+  README is `README_en.md`. Each links the other by absolute URL, so the switch
+  works on npm as well as on GitHub. Both are now a feature tour with
+  screenshots of the panel, the command menu and the settings sheet, and the
+  repository has a 1280×640 social preview.
+- `docs/` keeps only what a user reads (`supervise.md`); the ComfyUI surface,
+  the client check loop and the release sequence moved to `dev/`.
 
 ## [0.10.1] - 2026-11-09
 

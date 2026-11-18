@@ -34,7 +34,9 @@ commit that carries both:
 GitHub can run the same sequence for you: **Actions -> release -> Run
 workflow**, with the version and `dry_run` unchecked. It runs the suite, then
 `scripts/release.mjs` creates the two commits and the tag, pushes, and creates
-the GitHub Release. npm publishing stays manual: after the workflow finishes,
+the GitHub Release. Its body is chosen from the section, not copied: up to
+eight bullets, one per category per round, then a link to the full section,
+because a release page is read at a glance. npm publishing stays manual: after the workflow finishes,
 run `npm publish --access public` from the released tag. Add a `RELEASE_TOKEN`
 secret (fine-grained, contents: write) if the pushed commits should also
 trigger the test workflow; pushes made with the default `GITHUB_TOKEN` do not.

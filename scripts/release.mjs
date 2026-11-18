@@ -26,6 +26,11 @@ import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(import.meta.dirname, '..')
 const COMPARE = 'https://github.com/Natsubrei/dsh-comfyui-panel/compare/v'
+const CHANGELOG_BLOB = 'https://github.com/Natsubrei/dsh-comfyui-panel/blob/main/CHANGELOG.md'
+/** Categories a release body leads with; the rest follows them. */
+const HIGHLIGHT_CATEGORIES = ['Added', 'Changed', 'Fixed', 'Security']
+/** How many changelog bullets a release body shows before the link. */
+const HIGHLIGHTS = 8
 
 /**
  * Today's calendar date in Asia/Shanghai.
@@ -96,6 +101,75 @@ export function sectionBody(changelog, version) {
     kept.push(line)
   }
   return kept.join('\n').trim()
+}
+
+/**
+ * A changelog wraps its prose to a column; a release body renders it, where
+ * every source line is a line break. Unwrap the wrapped lines of paragraphs and
+ * list items, and leave blocks (headings, list markers, tables) to their own
+ * lines.
+ * @param {string} body - a changelog section body.
+ * @returns {string} the body with each paragraph and list item on one line.
+ */
+export function flowNotes(body) {
+  /** A line that starts a new block instead of continuing the previous one. */
+  const startsBlock = (/** @type {string} */ line) => /^(?:#{1,6} |[-*+] |\d+\. |\||```|>)/u.test(line)
+  /** A previous line whose wrapped continuation belongs to it. */
+  const continues = (/** @type {string} */ line) => line !== '' && !/^(?:#{1,6} |\||```|>)/u.test(line)
+  /** @type {string[]} */
+  const out = []
+  for (const line of body.split('\n').map(text => text.trimEnd())) {
+    const previous = out.length === 0 ? '' : out[out.length - 1]
+    if (line === '' || startsBlock(line) || !continues(previous)) out.push(line)
+    else out[out.length - 1] = `${previous} ${line.trim()}`
+  }
+  return out.join('\n')
+}
+
+/**
+ * The body of a GitHub Release: the changelog's own bullets, capped, with a
+ * link to the section that holds the rest. A release page is read at a glance,
+ * while the changelog is where a version is looked up in full.
+ * @param {string} body - a changelog section body.
+ * @param {string} version - release version, x.y.z.
+ * @param {string} date - the section's calendar date, YYYY-MM-DD.
+ * @returns {string} Markdown for the release body.
+ */
+export function releaseNotes(body, version, date) {
+  /** @type {Map<string, string[]>} */
+  const byCategory = new Map()
+  let category = ''
+  for (const line of flowNotes(body).split('\n')) {
+    const heading = /^### ([A-Za-z]+)$/u.exec(line)
+    if (heading !== null) {
+      category = heading[1]
+      continue
+    }
+    if (!line.startsWith('- ')) continue
+    const bullets = byCategory.get(category) ?? []
+    bullets.push(line.slice(2))
+    byCategory.set(category, bullets)
+  }
+  const ordered = [
+    ...HIGHLIGHT_CATEGORIES.filter(name => byCategory.has(name)),
+    ...[...byCategory.keys()].filter(name => !HIGHLIGHT_CATEGORIES.includes(name)),
+  ]
+  // One bullet per category per round, so a long section cannot bury the
+  // headline change of another category behind its own first eight.
+  /** @type {string[]} */
+  const picked = []
+  for (let round = 0; picked.length < HIGHLIGHTS; round += 1) {
+    const before = picked.length
+    for (const name of ordered) {
+      const bullet = byCategory.get(name)?.[round]
+      if (bullet !== undefined && picked.length < HIGHLIGHTS) picked.push(bullet)
+    }
+    if (picked.length === before) break
+  }
+  if (picked.length === 0) return `${flowNotes(body)}\n`
+  // GitHub's heading anchor: "[0.11.0] - 2026-11-18" -> "#0110---2026-11-18".
+  const slug = `[${version}] - ${date}`.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, '').trim().replace(/\s+/gu, '-')
+  return `### Highlights\n\n${picked.map(bullet => `- ${bullet}`).join('\n')}\n\nFull changelog: [CHANGELOG.md](${CHANGELOG_BLOB}#${slug})\n`
 }
 
 /**
@@ -199,7 +273,7 @@ function main() {
   run('git', ['tag', `v${label}`])
 
   if (notesFile !== null) {
-    writeFileSync(resolve(ROOT, notesFile), `${sectionBody(renamed, label)}\n`)
+    writeFileSync(resolve(ROOT, notesFile), releaseNotes(sectionBody(renamed, label), label, date))
   }
 
   console.log(`\nreleased ${label}: ${releaseCommit.slice(0, 8)} + index ${indexCommit.slice(0, 8)}, tag v${label}`)

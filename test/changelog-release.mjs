@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { nameUnreleased, sectionBody, shanghaiDate } from '../scripts/release.mjs'
+import { flowNotes, nameUnreleased, releaseNotes, sectionBody, shanghaiDate } from '../scripts/release.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CATEGORIES = ['Added', 'Changed', 'Deprecated', 'Removed', 'Fixed', 'Security']
@@ -112,6 +112,46 @@ assert.throws(() => nameUnreleased('## Unreleased\n', '0.9.1', '2026-11-05'), /n
 assert.throws(() => nameUnreleased('## [Unreleased]\n', '0.9.1', '2026-11-05'), /compare link/)
 assert.throws(() => nameUnreleased(changelog, '1.0', '2026-11-05'), /x\.y\.z/)
 assert.throws(() => sectionBody(changelog, '9.9.9'), /no "## \[9\.9\.9\]"/)
+
+// A release body renders every source line as a line break, so the column the
+// changelog wraps to would break its own bullets. The notes file is unwrapped.
+const wrapped = [
+  '### Fixed',
+  '',
+  '- A run that stopped being tracked is reported',
+  '  as lost, not as a failure.',
+  '',
+  '### Added',
+  '',
+  '- One more.',
+  '',
+  '| Tool | Does |',
+  '| --- | --- |',
+  '| `a` | One |',
+].join('\n')
+const flowed = flowNotes(wrapped)
+assert.match(flowed, /^- A run that stopped being tracked is reported as lost, not as a failure\.$/mu)
+assert.match(flowed, /^### Fixed\n\n/mu)
+assert.match(flowed, /^### Added\n\n- One more\.$/mu)
+assert.match(flowed, /^\| Tool \| Does \|$/mu)
+assert.equal(flowed.split('\n').some(line => /^\s+\S/u.test(line)), false)
+
+// The release body is a glance, not the section: one bullet per category per
+// round, eight at most, and a link to the part of the changelog that holds the
+// rest. The anchor is GitHub's own slug for the section heading.
+const many = [
+  '### Added', '', ...Array.from({ length: 5 }, (_, i) => `- Added ${i}.`),
+  '', '### Changed', '', '- Changed 0.', '', '### Fixed', '', ...Array.from({ length: 5 }, (_, i) => `- Fixed ${i}.`),
+].join('\n')
+const body = releaseNotes(many, '9.9.9', '2026-01-02')
+assert.match(body, /^### Highlights\n\n/u)
+assert.equal(body.split('\n').filter(line => line.startsWith('- ')).length, 8)
+assert.match(body, /^- Added 0\.$/mu)
+assert.match(body, /^- Changed 0\.$/mu)
+assert.match(body, /^- Fixed 0\.$/mu)
+assert.match(body, /- Added 1\.$/mu)
+assert.match(body, /\[CHANGELOG\.md\]\(https:\/\/github\.com\/Natsubrei\/dsh-comfyui-panel\/blob\/main\/CHANGELOG\.md#999---2026-01-02\)$/mu)
+assert.equal(releaseNotes('', '9.9.9', '2026-01-02'), '\n')
 
 const carried = [
   '## [Unreleased]',
