@@ -492,6 +492,21 @@ export async function runChecks(browser, { out, bootMs = 0, errorsSince = 0, exc
   const reopened = await browser.evaluate(`document.querySelector('.dsh-comfyui-dock:not(.is-closed) .dsh-comfyui-dock-input') !== null`)
   record('the tab opens the column', reopened === true, '')
 
+  // The two chips are the only place the session's model and permission show,
+  // and the remotes that answer them register after this plugin's own `apply`.
+  // A captured reference stays empty for the life of the page, which no unit
+  // test sees: the elements are there and only their text is wrong.
+  const chipsReady = await browser.waitFor(`(() => {
+    const box = document.querySelector('.dsh-comfyui-dock-controls')
+    return box !== null && box.getAttribute('data-ready') === 'true'
+  })()`, { label: 'the model and permission chips', timeout: 10_000 }).catch(() => null)
+  const chips = chipsReady === true
+    ? await browser.evaluate(`[...document.querySelectorAll('.dsh-comfyui-dock-controls .dsh-comfyui-dock-chip')].map(chip => chip.textContent.trim())`)
+    : null
+  record('the chips name the session\'s model and permission',
+    Array.isArray(chips) && chips.length === 2 && chips.every(text => text.length > 0),
+    Array.isArray(chips) ? chips.join(' · ') : 'the chips never left their placeholders')
+
   // The toolbar must not sit in a ComfyUI corner, and Settings must open as a
   // sheet attached to it rather than take a row from the canvas.
   const geometry = await browser.evaluate(`(() => {

@@ -1,7 +1,7 @@
 # Coding standards
 
-For the reviewer of a change, this file records the two judgement rules the
-suite, the type check and the pre-commit hook cannot enforce.
+For the reviewer of a change, this file records the judgement rules the suite,
+the type check and the pre-commit hook cannot enforce.
 
 ## 1. A new frontend dependency is documented in the same change
 
@@ -26,3 +26,16 @@ model acts on a state the editor is not in.
 
 Lands in: `client.js` for the check; `test/client-ops.mjs` for the
 missing-capability case.
+
+## 3. A remote namespace is resolved where it is used
+
+`remote.<name>` is registered by the plugin that owns it, which may apply after
+this one: read `ctx.get('remote.…')` at the call, never once while this plugin
+applies. A captured reference stays `null` for the life of the page and the UI
+it feeds stays empty.
+
+Why: the model and permission chips read as placeholders for a whole session
+because the reference was captured in `apply()`, and nothing failed.
+
+Lands in: `client.js` for the lookup; `test/ui/panel.mjs` for a check that the
+chips carry values, since no unit test sees a live namespace.

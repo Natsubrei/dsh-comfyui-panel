@@ -19,6 +19,15 @@ changes still need a full page refresh (hard reload); `pnpm run dev:web` does
 not rebuild profile bundles by default. `package.json` is the source of truth
 for the version.
 
+The client half is served as one bundle,
+`/plugins/??…,dsh-comfyui-panel/client.js…&rev=<hash>`, where `rev` is a hash of
+that file's size and timestamps as the Host read it — of its metadata, not of
+its contents. That makes "did my edit reach the page?" one look: reload and find
+this URL in the Network panel. A `rev` that did not change while the file did
+means the Host still serves the previous copy, so toggle the bundle again; an
+edit present in the file and absent from the page is not a browser-cache
+problem.
+
 The toggle also reconciles the client-module graph, which keys each package by
 the path the loader resolved when the plugin started. Move or rename the
 checkout and the client half drops out of the boot manifest: the Host tools keep
@@ -36,8 +45,24 @@ library it wants), and it uses a **blank draft session** — created, or the one
 already open — so it never touches a conversation that has content.
 
 The check needs the address `dsh web` prints on start — its `?token=…` is the
-only one that authenticates — or a cookie from the browser; `test/ui/README.md`
-covers both.
+only one that authenticates — or a cookie from the browser. When neither is at
+hand, `test/ui/README.md` → **Machines without a browser or a token** covers
+both, in the order to try them: `~/.dsh/dsh.log` first (written only when the
+server was started through `scripts/dsh-web.sh`), then the `dsh web:` line or
+the `dsh-auth-…` cookie from the user; the same section handles `CHROME_BIN` and
+the browser's shared libraries.
+
+## Ask the page a question
+
+`npm run eval -- '<expression>'` (or `node scripts/panel-eval.mjs`) opens the
+GUI, evaluates one expression, and prints the result as JSON. It takes the same
+`--url` / `--cookie` / `DSH_WEB_COOKIE` as the check. `--panel` mounts the panel
+in a scratch session, for a question about the editor; `--reuse-session` mounts
+it in the session the GUI already has open — by the `AGENTS.md` gotcha about a
+second browser profile, that session is what the fresh editor syncs, so reuse it
+only when the question is about that session. Use this before writing a script
+for a single fact and before adding a temporary global to `client.js`: an
+expression cannot ship.
 
 ## The manual pass
 

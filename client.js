@@ -4646,7 +4646,11 @@ window.__ModuleLoader__.load({
               onClick: () => { void admit(error.text, { retry: true }) },
             }, t('retry'))
             : null) : null,
-        open ? h('div', { className: 'dsh-comfyui-dock-controls' },
+        open ? h('div', {
+          className: 'dsh-comfyui-dock-controls',
+          // The chips read as placeholders until the remotes behind them answer.
+          'data-ready': presetLabel().length > 0 && typeof options?.model?.model === 'string',
+        },
           h('button', {
             type: 'button',
             className: 'dsh-comfyui-dock-chip',
