@@ -11,6 +11,19 @@ the version bump.
 
 ## [Unreleased]
 
+### Fixed
+
+- The permission menu shows the same three modes as the native picker:
+  read only, workspace write, and full access, with full access asking
+  before it switches.
+- The model and permission menus read `remote.session` and
+  `remote.permissionPresets`, which are their own services. Reading them off
+  `remote` threw, and the throw was shown as an empty list. The current
+  permission comes from the session's `permissions` projection, and choosing
+  one submits `/permission`, which is the command the native picker runs.
+- The transcript's "earlier turns" line follows the history page's `hasMore`.
+  A page of 40 records is not truncated when that page is the whole session.
+
 ### Added
 
 - The right column renders markdown: headings, lists, fenced code with its
@@ -26,9 +39,9 @@ the version bump.
   session registers, a plugin's /rewind included — and the model and
   permission controls sit beside it as chips. Everything goes through the
   client remote the native composer uses: commands.list / commands.execute,
-  session.modelCatalog / session.selectModel, permissionPresets.catalog. This
-  plugin owns no endpoint for any of them, so the menu cannot drift from the
-  app.
+  session.modelCatalog / session.selectModel, and permissionPresets.catalog.
+  Choosing a permission submits `/permission`. This plugin owns no endpoint
+  for any of them, so the menu cannot drift from the app.
 - A new conversation stays in the header; the native plus menu never held one.
 - Each turn carries its time, and a reply its output tokens.
 - The transcript route reports when the session holds more turns than the

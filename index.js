@@ -633,14 +633,15 @@ export function apply(ctx, rawConfig = {}) {
         address: { kind: 'session', sessionId },
         maxMessages: MAX_TRANSCRIPT,
       }, request.signal)
-      // A full page means older turns exist; the column says so instead of
-      // starting mid-thread with no explanation.
+      // `hasMore` is the history page's own "older records exist". A page that
+      // happens to hold 40 records is the whole session when `hasMore` is
+      // false, and most of those records are not turns the column shows.
       const records = page?.records ?? []
       return json({
         ok: true,
         sessionId,
         rows: transcriptRows(records),
-        truncated: records.length >= MAX_TRANSCRIPT,
+        truncated: page?.hasMore === true,
       })
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)

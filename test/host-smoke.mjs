@@ -1730,6 +1730,7 @@ assert.throws(
 const deskPrompts = []
 const deskRenames = []
 let deskCreated = 0
+let deskHasMore = false
 host.services.set('sessionController', {
   async create() {
     deskCreated += 1
@@ -1742,6 +1743,7 @@ host.services.set('sessionController', {
   },
   async events() {
     return {
+      hasMore: deskHasMore,
       records: [{
         type: 'event',
         event: {
@@ -1756,7 +1758,6 @@ host.services.set('sessionController', {
           },
         },
       }],
-      hasMore: false,
     }
   },
   async prompt(request) {
@@ -1797,6 +1798,10 @@ const transcriptBody = await transcript.json()
 assert.equal(transcript.status, 200)
 assert.deepEqual(transcriptBody.rows, [{ id: '9', role: 'assistant', text: 'Steps are 20.' }])
 assert.equal(transcriptBody.truncated, false)
+deskHasMore = true
+const transcriptMore = await (await host.fetches.get('/api/comfyui/desk/transcript').fetch(new Request('http://127.0.0.1/api/comfyui/desk/transcript'))).json()
+assert.equal(transcriptMore.truncated, true)
+deskHasMore = false
 const deskUnknown = await host.fetches.get('/api/comfyui/desk').fetch(new Request('http://127.0.0.1/api/comfyui/desk', {
   method: 'POST',
   headers: { 'content-type': 'application/json' },

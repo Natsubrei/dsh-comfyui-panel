@@ -117,7 +117,18 @@ window.__ModuleLoader__.load({
       menu: 'Menu',
       model: 'Model',
       permissions: 'Permissions',
+      'preset.readOnly': 'Read only',
+      'preset.readOnlyDetail': 'Look, but do not change files unless you approve it.',
+      'preset.workspaceWrite': 'Workspace write',
+      'preset.workspaceWriteDetail': 'Edit files in the workspace. Anything wider asks first.',
+      'preset.fullAccess': 'Full access',
+      'preset.fullAccessDetail': 'Skip the confirmations, including file changes and commands.',
+      confirmFullTitle: 'Enable Full access?',
+      confirmFullBody: 'Full access lets the agent do more without asking, including sensitive actions, file changes, and commands. Use it only when you trust this task.',
+      confirmFullEnable: 'Enable Full access',
+      confirmCancel: 'Cancel',
       optionFailed: 'Could not change it',
+      optionsFailed: 'The choices could not be read',
       optionsEmpty: 'Nothing to choose here',
       toolRunning: 'Running',
       toolDone: 'Done',
@@ -213,7 +224,18 @@ window.__ModuleLoader__.load({
       menu: '菜单',
       model: '模型',
       permissions: '访问权限',
+      'preset.readOnly': '仅可查看',
+      'preset.readOnlyDetail': '不能直接改文件，改动都要先批准。',
+      'preset.workspaceWrite': '工作区内修改',
+      'preset.workspaceWriteDetail': '可以改工作区里的文件，超出范围会先问你。',
+      'preset.fullAccess': '完全权限',
+      'preset.fullAccessDetail': '不再逐步确认，可以直接改文件、执行命令。',
+      confirmFullTitle: '确认启用完全权限？',
+      confirmFullBody: '启用完全权限后，智能体将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。',
+      confirmFullEnable: '启用完全权限',
+      confirmCancel: '取消',
       optionFailed: '切换失败',
+      optionsFailed: '读不到可选项',
       optionsEmpty: '没有可选项',
       toolRunning: '运行中',
       toolDone: '完成',
@@ -812,6 +834,9 @@ window.__ModuleLoader__.load({
       .dsh-comfyui-dock-menu-item:hover { background: var(--hover); }
       .dsh-comfyui-dock-menu-item[data-active="true"] { color: var(--primary); font-weight: 600; }
       .dsh-comfyui-dock-menu-item[data-active="true"]::after { content: "·"; margin-left: auto; }
+      .dsh-comfyui-dock-menu-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 0; }
+      .dsh-comfyui-dock-menu-detail { color: var(--ink3); font-size: 11px; font-weight: 400; line-height: 15px; }
+      .dsh-comfyui-dock-menu > .dsh-comfyui-dock-menu-detail { margin: 0; padding: 2px 10px 8px; }
       .dsh-comfyui-dock-menu-item:disabled { opacity: .5; cursor: default; }
       .dsh-comfyui-dock-menu-sep { height: .5px; margin: 4px 6px; background: var(--line); }
       .dsh-comfyui-dock-menu-empty { margin: 0; padding: 6px 10px; color: var(--ink3); font-size: 12px; }
@@ -821,11 +846,14 @@ window.__ModuleLoader__.load({
         margin: 0 12px 6px; min-height: 22px;
       }
       .dsh-comfyui-dock-chip {
-        max-width: 48%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        /* 30/70 of the row; shrinkable so the 6px gap does not overflow it. */
+        flex: 0 1 30%; min-width: 0; max-width: 30%;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         padding: 1px 9px; border: .5px solid var(--line); border-radius: 999px;
         background: transparent; color: var(--ink2);
         cursor: pointer; font: inherit; font-size: 11.5px; line-height: 17px;
       }
+      .dsh-comfyui-dock-chip[data-kind="model"] { flex-basis: 70%; max-width: 70%; }
       .dsh-comfyui-dock-chip:hover { color: var(--ink); border-color: color-mix(in srgb, var(--ink) 25%, transparent); }
       .dsh-comfyui-dock-form {
         position: relative;
@@ -3288,7 +3316,29 @@ window.__ModuleLoader__.load({
     /** Locale bound in `apply`. The main panel renders after that assignment. */
     let deskT = key => key
     /** The client remote, bound in apply; null when the Host has none. */
-    let deskRemote = null
+    /**
+     * The three remote namespaces the column calls. Each is its own Cordis
+     * service (`remote.session`, not a field of `remote`); `apply` reads them
+     * with `ctx.get`, which does not require this plugin to inject them.
+     * @type {{ session: any, presets: any, commands: any }}
+     */
+    let deskRemotes = { session: null, presets: null, commands: null }
+
+    /**
+     * Read one remote namespace. A missing service leaves the menu empty
+     * instead of taking the panel down.
+     * @param {any} ctx - the client context.
+     * @param {string} name - the Cordis service name.
+     * @returns {any} the namespace, or null.
+     */
+    function remoteNamespace(ctx, name) {
+      try {
+        const value = typeof ctx.get === 'function' ? ctx.get(name) : null
+        return value ?? null
+      } catch {
+        return null
+      }
+    }
 
     /** Badge outline of the ComfyUI mark: a rounded square on a 520 grid. */
     const COMFY_BADGE = 'M0 184.335C0 119.812 0 87.5502 12.5571 62.9055C23.6026 41.2274 41.2274 23.6026 62.9055 12.5571C87.5502 0 119.812 0 184.335 0H335.665C400.188 0 432.45 0 457.094 12.5571C478.773 23.6026 496.397 41.2274 507.443 62.9055C520 87.5502 520 119.812 520 184.335V335.665C520 400.188 520 432.45 507.443 457.094C496.397 478.773 478.773 496.397 457.094 507.443C432.45 520 400.188 520 335.665 520H184.335C119.812 520 87.5502 520 62.9055 507.443C41.2274 496.397 23.6026 478.773 12.5571 457.094C0 432.45 0 400.188 0 335.665V184.335Z'
@@ -3723,6 +3773,8 @@ window.__ModuleLoader__.load({
       const [truncated, setTruncated] = useState(false)
       /** Which menu page is open: null, "root", "model", or "preset". */
       const [menu, setMenu] = useState(null)
+      /** Full access waits for the same confirmation the native picker shows. */
+      const [confirmPreset, setConfirmPreset] = useState(null)
       /** The model catalog and permission presets the menu offers. */
       const [options, setOptions] = useState(null)
       const [menuBusy, setMenuBusy] = useState(false)
@@ -3730,6 +3782,17 @@ window.__ModuleLoader__.load({
       const logRef = useRef(null)
       /** The newest read wins; an older poll must not overwrite it. */
       const readAt = useRef(0)
+      /**
+       * A choice just made. The projection it writes lags the call that made
+       * it, so the next read would paint the previous value back. Hold the
+       * choice until a read agrees with it.
+       */
+      const held = useRef({ model: null, preset: null })
+      useEffect(() => {
+        // A held choice belongs to the session that made it; a new conversation
+        // must not inherit it.
+        held.current = { model: null, preset: null }
+      }, [sessionId])
       const load = useCallback(async () => {
         const stamp = Date.now()
         if (stamp < readAt.current) return
@@ -3827,20 +3890,47 @@ window.__ModuleLoader__.load({
         }
       }
       const loadOptions = useCallback(async () => {
-        if (deskRemote === null) return
-        const catalog = await remoteCall(() => deskRemote.session.modelCatalog())
-        const presets = await remoteCall(() => deskRemote.permissionPresets.catalog())
-        const commands = sessionId === null ? null : await remoteCall(() => deskRemote.commands.list(sessionId))
+        const session = deskRemotes.session
+        const presets = deskRemotes.presets
+        const commands = deskRemotes.commands
+        const catalog = session === null ? null : await remoteCall(() => session.modelCatalog())
+        const presetCatalog = presets === null ? null : await remoteCall(() => presets.catalog())
+        const listed = sessionId === null || commands === null ? null : await remoteCall(() => commands.list(sessionId))
+        // The catalog has no "current". The session projection does: `permissions`
+        // is `{ currentValue }`, and `modelSelection` is the provider and model.
+        const projected = session === null || sessionId === null
+          ? null
+          : await remoteCall(() => session.projections({ sessionId }))
+        const values = projected?.ok === true && projected.value?.kind === 'sequenced'
+          ? projected.value.values
+          : null
+        const projectedModel = values?.modelSelection
+        let model = projectedModel !== null && typeof projectedModel === 'object' && typeof projectedModel.provider === 'string'
+          ? projectedModel
+          : (catalog?.ok === true ? catalog.value?.default ?? null : null)
+        const heldModel = held.current.model
+        if (heldModel !== null) {
+          if (model?.provider === heldModel.provider && model?.model === heldModel.model) held.current.model = null
+          else model = heldModel
+        }
+        let preset = typeof values?.permissions?.currentValue === 'string' ? values.permissions.currentValue : null
+        if (held.current.preset !== null) {
+          if (preset === held.current.preset) held.current.preset = null
+          else preset = held.current.preset
+        }
         setOptions({
           models: catalog?.ok === true && Array.isArray(catalog.value?.groups) ? catalog.value.groups : [],
-          model: catalog?.ok === true ? catalog.value?.default ?? null : null,
-          presets: presets?.ok === true && Array.isArray(presets.value?.options) ? presets.value.options : [],
-          preset: presets?.ok === true ? presets.value?.current ?? null : null,
-          commands: commands?.ok === true && Array.isArray(commands.value) ? commands.value : [],
+          model,
+          modelFailed: catalog === null || catalog.ok !== true,
+          presets: presetCatalog?.ok === true && Array.isArray(presetCatalog.value?.options) ? presetCatalog.value.options : [],
+          preset,
+          presetFailed: presetCatalog === null || presetCatalog.ok !== true,
+          commands: listed?.ok === true && Array.isArray(listed.value) ? listed.value : [],
         })
       }, [sessionId])
       const toggleMenu = () => {
         setMenuError("")
+        setConfirmPreset(null)
         setMenu(current => {
           if (current !== null) return null
           setOptions(null)
@@ -3860,28 +3950,89 @@ window.__ModuleLoader__.load({
       const chooseModel = (provider, model) => {
         setMenuBusy(true)
         setMenuError("")
-        void remoteCall(() => deskRemote.session.selectModel({ sessionId, provider, model }))
-          .then(result => finishOption(result))
+        const session = deskRemotes.session
+        if (session === null || sessionId === null) {
+          setMenuBusy(false)
+          finishOption(null)
+          return
+        }
+        void remoteCall(() => session.selectModel({ sessionId, provider, model }))
+          .then(result => {
+            const selected = result?.ok === true ? (result.value?.selected ?? { provider, model }) : null
+            if (selected !== null && typeof selected.provider === 'string') {
+              held.current.model = selected
+              setOptions(current => current === null ? current : { ...current, model: selected, modelFailed: false })
+            }
+            finishOption(result)
+          })
           .finally(() => setMenuBusy(false))
       }
       const choosePreset = value => {
         setMenuBusy(true)
         setMenuError("")
-        void remoteCall(() => deskRemote.permissionPresets.set({ sessionId, value }))
-          .then(result => finishOption(result))
+        const commands = deskRemotes.commands
+        // The native picker submits `/permission <preset>`. There is no
+        // `permissionPresets.set`. An unknown name comes back as `ok` with no value.
+        if (commands === null || sessionId === null || !/^[A-Za-z0-9_-]+$/u.test(value)) {
+          setMenuBusy(false)
+          finishOption(null)
+          return
+        }
+        void remoteCall(() => commands.execute(sessionId, '/permission ' + value, []))
+          .then(result => {
+            const failed = result === null || result.ok !== true || result.value === undefined
+            if (!failed) {
+              held.current.preset = value
+              setOptions(current => current === null ? current : { ...current, preset: value })
+            }
+            finishOption(failed ? { ok: false, error: { message: result?.error?.message || t('optionFailed') } } : result)
+          })
           .finally(() => setMenuBusy(false))
       }
       const runCommand = command => {
         setMenuBusy(true)
         setMenuError("")
-        void remoteCall(() => deskRemote.commands.execute(sessionId, command, []))
+        const commands = deskRemotes.commands
+        if (commands === null || sessionId === null) {
+          setMenuBusy(false)
+          finishOption(null)
+          return
+        }
+        void remoteCall(() => commands.execute(sessionId, command, []))
           .then(result => finishOption(result))
           .finally(() => setMenuBusy(false))
+      }
+      /**
+       * The three modes the native permission picker shows, in its order.
+       * Anything else the catalog returns (auto, custom) keeps the host's own name.
+       */
+      const PERMISSION_MODES = [
+        ['read-only', 'preset.readOnly', 'preset.readOnlyDetail'],
+        ['workspace-write', 'preset.workspaceWrite', 'preset.workspaceWriteDetail'],
+        ['danger-full-access', 'preset.fullAccess', 'preset.fullAccessDetail'],
+      ]
+      const permissionCopy = option => {
+        const known = PERMISSION_MODES.find(([value]) => value === option?.value)
+        if (known !== undefined) return { label: t(known[1]), detail: t(known[2]) }
+        const name = typeof option?.name === 'string' && option.name.length > 0 ? option.name : String(option?.value ?? '')
+        const detail = typeof option?.description === 'string' ? option.description : ''
+        return { label: name, detail }
+      }
+      const orderedPresets = presets => {
+        const known = []
+        const rest = []
+        for (const option of presets) {
+          const index = PERMISSION_MODES.findIndex(([value]) => value === option?.value)
+          if (index >= 0) known[index] = option
+          else rest.push(option)
+        }
+        return [...known.filter(option => option !== undefined), ...rest]
       }
       const presetLabel = () => {
         if (options === null || typeof options.preset !== 'string') return ''
         const found = options.presets.find(item => item?.value === options.preset)
-        return typeof found?.name === 'string' ? found.name : options.preset
+        if (found === undefined) return permissionCopy({ value: options.preset, name: options.preset }).label
+        return permissionCopy(found).label
       }
       const menuRow = (key, label, active, onClick) => h('button', {
         key,
@@ -3907,11 +4058,12 @@ window.__ModuleLoader__.load({
           if (rows.length === 0) rows.push(h("p", { key: "none", className: "dsh-comfyui-dock-menu-empty" }, t("optionsEmpty")))
           rows.push(h("div", { key: "sep", className: "dsh-comfyui-dock-menu-sep" }))
           rows.push(menuRow('model', t('model') + (options?.model?.model ? ' · ' + options.model.model : ''), false, () => setMenu('model')))
-          rows.push(menuRow('preset', t('permissions') + (presetLabel().length > 0 ? ' · ' + presetLabel() : ''), false, () => setMenu('preset')))
+          rows.push(menuRow('preset', presetLabel() || t('permissions'), false, () => { setConfirmPreset(null); setMenu('preset') }))
           return rows
         }
         if (menu === 'model') {
           if (options === null) return [h("p", { key: "load", className: "dsh-comfyui-dock-menu-empty" }, t("loading"))]
+          if (options.modelFailed) return [h("p", { key: "fail", className: "dsh-comfyui-dock-menu-empty" }, t("optionsFailed"))]
           const rows = []
           for (const group of options.models) {
             const name = typeof group?.name === 'string' ? group.name : String(group?.id ?? '')
@@ -3927,7 +4079,33 @@ window.__ModuleLoader__.load({
         }
         if (menu === 'preset') {
           if (options === null) return [h("p", { key: "load", className: "dsh-comfyui-dock-menu-empty" }, t("loading"))]
-          const rows = options.presets.map(option => menuRow('p-' + String(option?.value), typeof option?.name === 'string' ? option.name : String(option?.value ?? ''), options.preset === option?.value, () => choosePreset(String(option?.value))))
+          if (options.presetFailed) return [h("p", { key: "fail", className: "dsh-comfyui-dock-menu-empty" }, t("optionsFailed"))]
+          if (confirmPreset !== null) {
+            return [
+              h('p', { key: 'title', className: 'dsh-comfyui-dock-menu-head' }, t('confirmFullTitle')),
+              h('p', { key: 'body', className: 'dsh-comfyui-dock-menu-detail' }, t('confirmFullBody')),
+              menuRow('cancel', t('confirmCancel'), false, () => setConfirmPreset(null)),
+              menuRow('enable', t('confirmFullEnable'), false, () => {
+                const value = confirmPreset
+                setConfirmPreset(null)
+                choosePreset(value)
+              }),
+            ]
+          }
+          const rows = orderedPresets(options.presets).map(option => {
+            const value = String(option?.value ?? '')
+            const copy = permissionCopy(option)
+            const label = h('span', { className: 'dsh-comfyui-dock-menu-choice' },
+              h('span', null, copy.label),
+              copy.detail.length > 0 ? h('span', { className: 'dsh-comfyui-dock-menu-detail' }, copy.detail) : null)
+            return menuRow('p-' + value, label, options.preset === option?.value, () => {
+              if (value === 'danger-full-access' && options.preset !== value) {
+                setConfirmPreset(value)
+                return
+              }
+              choosePreset(value)
+            })
+          })
           if (rows.length === 0) rows.push(h("p", { key: "none", className: "dsh-comfyui-dock-menu-empty" }, t("optionsEmpty")))
           return rows
         }
@@ -3938,6 +4116,7 @@ window.__ModuleLoader__.load({
         const close = event => {
           const target = event.target
           if (target instanceof Element && target.closest(".dsh-comfyui-dock-menu, .dsh-comfyui-dock-add") !== null) return
+          setConfirmPreset(null)
           setMenu(null)
         }
         document.addEventListener("pointerdown", close)
@@ -4045,11 +4224,12 @@ window.__ModuleLoader__.load({
           h('button', {
             type: 'button',
             className: 'dsh-comfyui-dock-chip',
-            onClick: () => { setOptions(null); void loadOptions(); setMenu('preset') },
-          }, t('permissions') + (presetLabel().length > 0 ? ' · ' + presetLabel() : '')),
+            onClick: () => { setConfirmPreset(null); setOptions(null); void loadOptions(); setMenu('preset') },
+          }, presetLabel() || t('permissions')),
           h('button', {
             type: 'button',
             className: 'dsh-comfyui-dock-chip',
+            'data-kind': 'model',
             onClick: () => { setOptions(null); void loadOptions(); setMenu('model') },
           }, typeof options?.model?.model === 'string' ? options.model.model : t('model')),
         ) : null,
@@ -4136,18 +4316,10 @@ window.__ModuleLoader__.load({
         // throw took the whole client plugin down with it. Both access paths
         // are tried, and a deployment without either leaves the menu empty
         // instead of removing the panel from the sidebar.
-        deskRemote = null
-        try {
-          if (typeof ctx.get === 'function') deskRemote = ctx.get('remote') ?? null
-        } catch {
-          deskRemote = null
-        }
-        if (deskRemote === null) {
-          try {
-            deskRemote = ctx.remote ?? null
-          } catch {
-            deskRemote = null
-          }
+        deskRemotes = {
+          session: remoteNamespace(ctx, 'remote.session'),
+          presets: remoteNamespace(ctx, 'remote.permissionPresets'),
+          commands: remoteNamespace(ctx, 'remote.commands'),
         }
         deskT = t
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')
