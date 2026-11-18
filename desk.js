@@ -6,47 +6,130 @@
 const MAX_MESSAGE = 4000
 
 /** Rows the dock shows at most; the session keeps the full history. */
-const MAX_TRANSCRIPT = 40
+export const MAX_TRANSCRIPT = 40
+
+/** How much of one tool argument or result the column keeps. */
+const MAX_TOOL_TEXT = 800
+
+/**
+ * Bound one tool string for the column.
+ * @param {unknown} value - the raw text.
+ * @param {number} [limit] - characters to keep.
+ * @returns {string | null} the clipped text, or null when there is nothing to show.
+ */
+function clip(value, limit = MAX_TOOL_TEXT) {
+  if (typeof value !== 'string') return null
+  const text = value.trim()
+  if (text.length === 0) return null
+  return text.length > limit ? text.slice(0, limit) + '…' : text
+}
+
+/**
+ * The arguments a tool was called with, as the column shows them.
+ *
+ * An empty payload is dropped: `{}` is what every argument-less tool sends,
+ * and a card whose detail is "{}" teaches the reader nothing.
+ *
+ * @param {unknown} raw - the `arguments` string from `tool/call`.
+ * @returns {string | null} the payload, or null.
+ */
+function toolArguments(raw) {
+  const text = clip(raw)
+  if (text === null) return null
+  try {
+    const parsed = JSON.parse(text)
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) && Object.keys(parsed).length === 0) return null
+    return text
+  } catch {
+    return text
+  }
+}
+
+/**
+ * The visible text of one message's content.
+ * @param {unknown} content - a message's `content` blocks.
+ * @returns {string} the text blocks, joined; empty when there are none.
+ */
+function contentText(content) {
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter(block => block?.type === 'text' && typeof block.text === 'string')
+    .map(block => block.text)
+    .join('\n')
+    .trim()
+}
 
 /**
  * Reduce session wire records to the rows the dock renders.
  *
- * Only the human prompt and the model's visible text are shown. Injected
- * context (`source.kind !== 'user'`), reasoning, and tool results stay out;
- * a tool call appears by name so a long run is visible before the reply.
+ * A tool call becomes one row that its result fills in, so the column shows a
+ * finished edit as one card instead of two lines. Injected context (a message
+ * whose `source.kind` is not `user`) and reasoning stay out; a tool result is
+ * trimmed, because the column is a conversation, not a log.
  *
  * @param {readonly any[]} records - `SessionHistoryRecord`s from `sessionController.events`.
- * @returns {{ id: string, role: string, text: string }[]} the rows, oldest first.
+ * @returns {{ id: string, role: string, text: string, at?: number, tokens?: number, name?: string, args?: string, result?: string, status?: string, durationMs?: number }[]} the rows, oldest first.
  */
 export function transcriptRows(records) {
+  /** @type {any[]} */
   const rows = []
+  /** @type {Map<string, any>} callId -> the row its result paints. */
+  const calls = new Map()
   for (const record of records) {
     if (record?.type !== 'event') continue
     const event = record.event
     if (event === null || typeof event !== 'object') continue
-    const id = String(event.seq)
     const data = event.data
     if (data === null || typeof data !== 'object') continue
-    if (event.type === 'tool/call') {
-      if (typeof data.name === 'string' && data.name.length > 0) {
-        rows.push({ id, role: 'tool', text: data.name })
+    const id = String(event.seq)
+    /** When the event happened; the wire carries it beside the data. */
+    const at = typeof event.time === 'number' ? event.time : null
+    if (event.type === 'user/message' || event.type === 'assistant/message') {
+      // A user message stores the message itself; an assistant message stores
+      // `{ message, stream, usage }`. Both fields are optional in the wire type.
+      const message = data.message === undefined ? data : data.message
+      if (message === null || typeof message !== 'object') continue
+      if (event.type === 'user/message' && message.source?.kind !== 'user') continue
+      const text = contentText(message.content)
+      if (text.length === 0) continue
+      /** @type {any} */
+      const row = { id, role: event.type === 'user/message' ? 'user' : 'assistant', text }
+      if (at !== null) row.at = at
+      // Output tokens are the one usage figure a reader can act on; the input
+      // count is the whole context and reads as noise per turn.
+      if (event.type === 'assistant/message' && typeof data.usage?.outputTokens === 'number') {
+        row.tokens = data.usage.outputTokens
       }
+      rows.push(row)
       continue
     }
-    if (event.type !== 'user/message' && event.type !== 'assistant/message') continue
-    // A user message stores the message itself; an assistant message stores
-    // `{ message, stream, usage }`. Both fields are optional in the wire type.
-    const message = data.message === undefined ? data : data.message
-    if (message === null || typeof message !== 'object') continue
-    if (event.type === 'user/message' && message.source?.kind !== 'user') continue
-    if (!Array.isArray(message.content)) continue
-    const text = message.content
-      .filter(block => block?.type === 'text' && typeof block.text === 'string')
-      .map(block => block.text)
-      .join('\n')
-      .trim()
-    if (text.length === 0) continue
-    rows.push({ id, role: event.type === 'user/message' ? 'user' : 'assistant', text })
+    if (event.type === 'tool/call') {
+      const name = typeof data.name === 'string' && data.name.length > 0 ? data.name : 'tool'
+      /** @type {any} */
+      const row = { id, role: 'tool', name, text: name, status: 'running' }
+      if (at !== null) row.at = at
+      const args = toolArguments(data.arguments)
+      if (args !== null) row.args = args
+      rows.push(row)
+      if (typeof data.callId === 'string' && data.callId.length > 0) calls.set(data.callId, row)
+      continue
+    }
+    if (event.type === 'tool/result') {
+      const message = data.message
+      const callId = typeof data.toolCallId === 'string'
+        ? data.toolCallId
+        : (typeof message?.source?.callId === 'string' ? message.source.callId : null)
+      if (callId === null) continue
+      const row = calls.get(callId)
+      // A result whose call fell outside the window has nowhere to paint.
+      if (row === undefined) continue
+      row.status = data.isError === true ? 'error' : 'done'
+      const result = clip(contentText(message?.content))
+      if (result !== null) row.result = result
+      if (at !== null && typeof row.at === 'number' && at >= row.at) row.durationMs = at - row.at
+      calls.delete(callId)
+      continue
+    }
   }
   return rows.slice(-MAX_TRANSCRIPT)
 }

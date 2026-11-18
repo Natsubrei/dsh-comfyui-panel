@@ -11,6 +11,51 @@ the version bump.
 
 ## [Unreleased]
 
+### Fixed
+
+- The permission menu shows the same three modes as the native picker:
+  read only, workspace write, and full access, with full access asking
+  before it switches.
+- The model and permission menus read `remote.session` and
+  `remote.permissionPresets`, which are their own services. Reading them off
+  `remote` threw, and the throw was shown as an empty list. The current
+  permission comes from the session's `permissions` projection, and choosing
+  one submits `/permission`, which is the command the native picker runs.
+- The transcript's "earlier turns" line follows the history page's `hasMore`.
+  A page of 40 records is not truncated when that page is the whole session.
+
+### Added
+
+- The right column renders markdown: headings, lists, fenced code with its
+  own copy control, tables, quotes, and inline code, bold, italic, strike,
+  and links. Everything is built as elements, never as HTML, and a link
+  whose scheme is not http, https, or mailto stays text.
+- An assistant turn has a copy control, and a send that failed offers Retry
+  instead of making the reader retype the line.
+- The column reports what it is doing: a Working badge in the header, a
+  thinking indicator while a reply is due, and a faster transcript poll
+  while one is.
+- The composer's plus button lists the session's own commands — whatever the
+  session registers, a plugin's /rewind included — and the model and
+  permission controls sit beside it as chips. Everything goes through the
+  client remote the native composer uses: commands.list / commands.execute,
+  session.modelCatalog / session.selectModel, and permissionPresets.catalog.
+  Choosing a permission submits `/permission`. This plugin owns no endpoint
+  for any of them, so the menu cannot drift from the app.
+- A new conversation stays in the header; the native plus menu never held one.
+- Each turn carries its time, and a reply its output tokens.
+- The transcript route reports when the session holds more turns than the
+  column was given, and the column says so at the top instead of starting
+  mid-thread.
+
+### Changed
+
+- A tool call is a card: its name, whether it finished, how long it took, and
+  (expanded) the arguments it was called with and the result it returned. A
+  call and its result are one card, not two lines.
+- The column follows new turns only while the reader is at the bottom.
+  Scrolled up, it leaves their place and offers Jump to latest.
+
 ## [0.10.1] - 2026-11-09
 
 ### Added

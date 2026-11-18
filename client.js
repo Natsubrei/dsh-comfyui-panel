@@ -108,6 +108,43 @@ window.__ModuleLoader__.load({
       assistantFailed: 'The assistant did not answer',
       assistantEmpty: 'Say what to change. The model uses the tools on this canvas.',
       assistantClosed: 'The editor is still opening.',
+      instructions: 'Commands',
+      compact: 'Compact',
+      export: 'Export log',
+      rewind: 'Rewind',
+      undo: 'Undo',
+      commandFailed: 'The command did not run',
+      menu: 'Menu',
+      model: 'Model',
+      permissions: 'Permissions',
+      'preset.readOnly': 'Read only',
+      'preset.readOnlyDetail': 'Look, but do not change files unless you approve it.',
+      'preset.workspaceWrite': 'Workspace write',
+      'preset.workspaceWriteDetail': 'Edit files in the workspace. Anything wider asks first.',
+      'preset.fullAccess': 'Full access',
+      'preset.fullAccessDetail': 'Skip the confirmations, including file changes and commands.',
+      confirmFullTitle: 'Enable Full access?',
+      confirmFullBody: 'Full access lets the agent do more without asking, including sensitive actions, file changes, and commands. Use it only when you trust this task.',
+      confirmFullEnable: 'Enable Full access',
+      confirmCancel: 'Cancel',
+      optionFailed: 'Could not change it',
+      optionsFailed: 'The choices could not be read',
+      optionsEmpty: 'Nothing to choose here',
+      toolRunning: 'Running',
+      toolDone: 'Done',
+      toolFailed: 'Failed',
+      toolArgs: 'Arguments',
+      toolResult: 'Result',
+      tokens: '{{count}} tokens',
+      truncated: 'Showing the latest 40 turns; earlier ones live in the session.',
+      assistantHint: 'Enter sends, Shift+Enter adds a line. Replies render as markdown.',
+      assistantThinking: 'Thinking…',
+      assistantWorking: 'Working',
+      assistantJump: 'Jump to latest',
+      copy: 'Copy',
+      copied: 'Copied',
+      codeBlock: 'code',
+      retry: 'Retry',
     }
     const zh = {
       title: 'ComfyUI',
@@ -178,6 +215,43 @@ window.__ModuleLoader__.load({
       assistantFailed: '助手没有回复',
       assistantEmpty: '直接说要改哪里。模型会用这张画布上的工具。',
       assistantClosed: '编辑器还在打开。',
+      instructions: '指令',
+      compact: '压缩',
+      export: '下载日志',
+      rewind: '回退',
+      undo: '撤销',
+      commandFailed: '命令没有执行',
+      menu: '菜单',
+      model: '模型',
+      permissions: '访问权限',
+      'preset.readOnly': '仅可查看',
+      'preset.readOnlyDetail': '不能直接改文件，改动都要先批准。',
+      'preset.workspaceWrite': '工作区内修改',
+      'preset.workspaceWriteDetail': '可以改工作区里的文件，超出范围会先问你。',
+      'preset.fullAccess': '完全权限',
+      'preset.fullAccessDetail': '不再逐步确认，可以直接改文件、执行命令。',
+      confirmFullTitle: '确认启用完全权限？',
+      confirmFullBody: '启用完全权限后，智能体将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。',
+      confirmFullEnable: '启用完全权限',
+      confirmCancel: '取消',
+      optionFailed: '切换失败',
+      optionsFailed: '读不到可选项',
+      optionsEmpty: '没有可选项',
+      toolRunning: '运行中',
+      toolDone: '完成',
+      toolFailed: '失败',
+      toolArgs: '参数',
+      toolResult: '结果',
+      tokens: '{{count}} 令牌',
+      truncated: '只显示最近 40 条，更早的记录在会话里。',
+      assistantHint: 'Enter 发送，Shift+Enter 换行；回复按 Markdown 渲染。',
+      assistantThinking: '正在思考…',
+      assistantWorking: '处理中',
+      assistantJump: '回到最新',
+      copy: '复制',
+      copied: '已复制',
+      codeBlock: '代码',
+      retry: '重试',
     }
 
     const CSS = `
@@ -552,26 +626,237 @@ window.__ModuleLoader__.load({
       }
       .dsh-comfyui-dock-row { display: flex; }
       .dsh-comfyui-dock-row[data-role="user"] { justify-content: flex-end; }
+      .dsh-comfyui-dock-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+      .dsh-comfyui-dock-badge {
+        flex: 0 0 auto; padding: 1px 7px; border-radius: 999px;
+        background: color-mix(in srgb, var(--primary) 14%, transparent);
+        color: var(--primary);
+        font-size: 11px; line-height: 16px; letter-spacing: .02em;
+      }
       .dsh-comfyui-dock-msg {
-        max-width: 92%; margin: 0;
-        white-space: pre-wrap; overflow-wrap: anywhere;
+        position: relative; min-width: 0; max-width: 100%;
+        overflow-wrap: anywhere;
       }
       .dsh-comfyui-dock-row[data-role="user"] .dsh-comfyui-dock-msg {
-        padding: 10px 14px; border-radius: var(--r-lg);
-        background: var(--active);
-        color: var(--ink);
+        max-width: 88%; padding: 9px 13px; border-radius: var(--r-lg);
+        background: var(--active); color: var(--ink);
       }
-      .dsh-comfyui-dock-row[data-role="tool"] .dsh-comfyui-dock-msg {
+      .dsh-comfyui-dock-row[data-role="tool"] { padding-left: 2px; }
+      .dsh-comfyui-dock-tool {
+        display: inline-flex; align-items: center; gap: 6px;
+        max-width: 100%; padding: 2px 9px 2px 7px;
+        border: .5px solid var(--line); border-radius: 999px;
+        background: color-mix(in srgb, var(--card) 70%, transparent);
         color: var(--ink3);
         font-family: var(--dsw-font-family-mono, ui-monospace, monospace);
-        font-size: 12px; line-height: 18px;
+        font-size: 11.5px; line-height: 17px;
       }
+      .dsh-comfyui-dock-tool-mark { color: var(--ink3); opacity: .7; }
+      .dsh-comfyui-dock-tool-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .dsh-comfyui-dock-meta {
+        /* A quiet line under the bubble: a reply reads as text until the reader
+           reaches for its source, its time, or its cost. */
+        display: flex; align-items: center; gap: 8px; margin-top: 2px;
+        color: var(--ink3); font-size: 11px; line-height: 16px;
+        opacity: 0; transition: opacity .15s ease;
+      }
+      .dsh-comfyui-dock-row:hover .dsh-comfyui-dock-meta,
+      .dsh-comfyui-dock-msg:focus-within .dsh-comfyui-dock-meta { opacity: 1; }
+      .dsh-comfyui-dock-action {
+        padding: 0; border: 0; border-radius: 6px;
+        background: transparent; color: inherit;
+        cursor: pointer; font: inherit; font-size: 11px; line-height: 16px;
+      }
+      .dsh-comfyui-dock-action:hover { color: var(--ink); }
+      .dsh-comfyui-dock-card {
+        max-width: 100%; min-width: 0;
+        border: .5px solid var(--line); border-radius: 10px;
+        background: color-mix(in srgb, var(--card) 70%, transparent);
+        overflow: hidden;
+      }
+      .dsh-comfyui-dock-card-head {
+        display: flex; align-items: center; gap: 7px; width: 100%;
+        padding: 5px 10px 5px 8px;
+        border: 0; background: transparent; cursor: pointer;
+        color: var(--ink2); font: inherit; font-size: 12px; line-height: 18px;
+        text-align: left;
+      }
+      .dsh-comfyui-dock-card-head:disabled { cursor: default; }
+      .dsh-comfyui-dock-card-mark { flex: 0 0 auto; color: var(--ink3); font-size: 10px; }
+      .dsh-comfyui-dock-card-name {
+        flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        font-family: var(--dsw-font-family-mono, ui-monospace, monospace);
+        font-size: 11.5px;
+      }
+      .dsh-comfyui-dock-card-status { flex: 0 0 auto; color: var(--ink3); font-size: 11px; }
+      .dsh-comfyui-dock-card[data-status="error"] .dsh-comfyui-dock-card-status { color: var(--dsw-alias-state-error-primary); }
+      .dsh-comfyui-dock-card-body { border-top: .5px solid var(--line); padding: 6px 10px 8px; }
+      .dsh-comfyui-dock-card-block + .dsh-comfyui-dock-card-block { margin-top: 6px; }
+      .dsh-comfyui-dock-card-label {
+        display: block; margin-bottom: 2px;
+        color: var(--ink3); font-size: 10.5px; line-height: 15px;
+      }
+      .dsh-comfyui-dock-card-pre {
+        margin: 0; max-height: 180px; overflow: auto;
+        font-family: var(--dsw-font-family-mono, ui-monospace, monospace);
+        font-size: 11.5px; line-height: 17px;
+        white-space: pre-wrap; word-break: break-word;
+        color: var(--ink2);
+      }
+      .dsh-comfyui-dock-truncated {
+        margin: 0 0 6px; padding: 4px 8px; border-radius: 8px;
+        background: color-mix(in srgb, var(--ink) 5%, transparent);
+        color: var(--ink3); font-size: 11px; line-height: 16px;
+      }
+      .dsh-comfyui-thinking {
+        display: inline-flex; align-items: center; gap: 5px;
+        color: var(--ink3); font-size: 12.5px; line-height: 20px;
+      }
+      .dsh-comfyui-thinking-dot {
+        width: 5px; height: 5px; border-radius: 50%;
+        background: currentColor; opacity: .35;
+        animation: dsh-comfyui-pulse 1.1s ease-in-out infinite;
+      }
+      .dsh-comfyui-thinking-dot:nth-child(2) { animation-delay: .15s; }
+      .dsh-comfyui-thinking-dot:nth-child(3) { animation-delay: .3s; }
+      .dsh-comfyui-thinking-label { margin-left: 3px; }
+      @keyframes dsh-comfyui-pulse {
+        0%, 100% { opacity: .25; transform: translateY(0); }
+        50% { opacity: .9; transform: translateY(-1px); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .dsh-comfyui-thinking-dot { animation: none; opacity: .55; }
+      }
+      .dsh-comfyui-dock-emptyblock { padding: 0 4px 24px; }
+      .dsh-comfyui-dock-emptyblock .dsh-comfyui-dock-empty { padding: 0 0 8px; }
+      .dsh-comfyui-dock-hint { margin: 0; color: var(--ink3); font-size: 12px; line-height: 18px; }
+      .dsh-comfyui-dock-jump {
+        align-self: center; margin: -4px 0 8px;
+        padding: 4px 12px; border: .5px solid var(--line); border-radius: 999px;
+        background: var(--card); color: var(--ink2);
+        box-shadow: var(--dsw-elevation-soft);
+        cursor: pointer; font: inherit; font-size: 12px; line-height: 18px;
+      }
+      .dsh-comfyui-dock-jump:hover { color: var(--ink); }
+      .dsh-comfyui-dock-jump[hidden] { display: none; }
       .dsh-comfyui-dock-error {
-        flex: 0 0 auto; margin: 0; padding: 0 18px 8px;
+        flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+        margin: 0; padding: 0 18px 8px;
         color: var(--dsw-alias-state-error-primary);
         font-size: 13px; line-height: 18px;
       }
+      .dsh-comfyui-dock-error-text { flex: 1 1 auto; min-width: 0; }
+      .dsh-comfyui-dock-retry {
+        flex: 0 0 auto; padding: 2px 9px; border: .5px solid currentColor; border-radius: 999px;
+        background: transparent; color: inherit; cursor: pointer;
+        font: inherit; font-size: 12px; line-height: 16px;
+      }
+      .dsh-comfyui-md { font-size: 14px; line-height: 22px; }
+      .dsh-comfyui-md > :first-child { margin-top: 0; }
+      .dsh-comfyui-md > :last-child { margin-bottom: 0; }
+      .dsh-comfyui-md-p { margin: 0 0 8px; white-space: pre-wrap; }
+      .dsh-comfyui-md-heading {
+        margin: 14px 0 6px; font-size: 14.5px; line-height: 21px; font-weight: 600;
+      }
+      .dsh-comfyui-md-list { margin: 0 0 8px; padding-left: 20px; }
+      .dsh-comfyui-md-list li { margin: 2px 0; }
+      .dsh-comfyui-md-quote {
+        margin: 0 0 8px; padding: 2px 0 2px 10px;
+        border-left: 2px solid color-mix(in srgb, var(--ink) 22%, transparent);
+        color: var(--ink2);
+      }
+      .dsh-comfyui-md-rule { margin: 12px 0; border: 0; border-top: .5px solid var(--line); }
+      .dsh-comfyui-md-inline-code {
+        padding: 1px 5px; border-radius: 5px;
+        background: color-mix(in srgb, var(--ink) 8%, transparent);
+        font-family: var(--dsw-font-family-mono, ui-monospace, monospace);
+        font-size: 12.5px;
+      }
+      .dsh-comfyui-md-code {
+        margin: 0 0 8px; border: .5px solid var(--line); border-radius: 10px;
+        background: color-mix(in srgb, var(--card) 80%, transparent);
+        overflow: hidden;
+      }
+      .dsh-comfyui-md-code-head {
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        padding: 3px 6px 3px 10px;
+        border-bottom: .5px solid var(--line);
+        color: var(--ink3);
+        font-size: 11px; line-height: 16px;
+      }
+      .dsh-comfyui-md-lang { text-transform: lowercase; letter-spacing: .02em; }
+      .dsh-comfyui-md-copy {
+        padding: 1px 6px; border: 0; border-radius: 6px;
+        background: transparent; color: var(--ink3); cursor: pointer;
+        font: inherit; font-size: 11px; line-height: 16px;
+      }
+      .dsh-comfyui-md-copy:hover { color: var(--ink); }
+      .dsh-comfyui-md-pre {
+        margin: 0; padding: 9px 11px; overflow: auto;
+        font-family: var(--dsw-font-family-mono, ui-monospace, monospace);
+        font-size: 12.5px; line-height: 19px;
+        tab-size: 2;
+      }
+      .dsh-comfyui-md-pre code { font: inherit; }
+      .dsh-comfyui-md-table-wrap { margin: 0 0 8px; overflow-x: auto; }
+      .dsh-comfyui-md-table { border-collapse: collapse; font-size: 13px; line-height: 19px; }
+      .dsh-comfyui-md-table th,
+      .dsh-comfyui-md-table td { padding: 4px 9px; border: .5px solid var(--line); text-align: left; }
+      .dsh-comfyui-md-table th { font-weight: 600; }
+      .dsh-comfyui-md a { color: var(--dsw-alias-brand-primary); text-decoration: underline; text-underline-offset: 2px; }
+      .dsh-comfyui-dock-row[data-role="user"] .dsh-comfyui-md-p { white-space: pre-wrap; }
+      .dsh-comfyui-dock-add {
+        width: 28px; height: 28px; flex: 0 0 auto; margin-left: -6px;
+        display: grid; place-items: center;
+        border: 0; border-radius: 50%; padding: 0;
+        background: transparent; color: var(--ink2);
+        cursor: pointer; font: inherit; font-size: 18px; line-height: 1;
+      }
+      .dsh-comfyui-dock-add:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+      .dsh-comfyui-dock-add[aria-expanded="true"] { background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink); }
+      .dsh-comfyui-dock-menu {
+        position: absolute; left: 0; right: 0; bottom: 84px;
+        z-index: 6; max-height: 300px; overflow: auto;
+        padding: 6px; border: .5px solid var(--line); border-radius: 14px;
+        background: var(--card); box-shadow: var(--dsw-elevation-soft);
+      }
+      .dsh-comfyui-dock-menu-head {
+        margin: 0; padding: 4px 10px 2px;
+        color: var(--ink3); font-size: 11px; line-height: 16px;
+      }
+      .dsh-comfyui-dock-menu-item {
+        display: flex; align-items: center; gap: 8px; width: 100%;
+        padding: 6px 10px; border: 0; border-radius: 9px;
+        background: transparent; color: var(--ink);
+        cursor: pointer; font: inherit; font-size: 13px; line-height: 19px;
+        text-align: left;
+      }
+      .dsh-comfyui-dock-menu-item:hover { background: var(--hover); }
+      .dsh-comfyui-dock-menu-item[data-active="true"] { color: var(--primary); font-weight: 600; }
+      .dsh-comfyui-dock-menu-item[data-active="true"]::after { content: "·"; margin-left: auto; }
+      .dsh-comfyui-dock-menu-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 0; }
+      .dsh-comfyui-dock-menu-detail { color: var(--ink3); font-size: 11px; font-weight: 400; line-height: 15px; }
+      .dsh-comfyui-dock-menu > .dsh-comfyui-dock-menu-detail { margin: 0; padding: 2px 10px 8px; }
+      .dsh-comfyui-dock-menu-item:disabled { opacity: .5; cursor: default; }
+      .dsh-comfyui-dock-menu-sep { height: .5px; margin: 4px 6px; background: var(--line); }
+      .dsh-comfyui-dock-menu-empty { margin: 0; padding: 6px 10px; color: var(--ink3); font-size: 12px; }
+      .dsh-comfyui-dock-menu-error { margin: 0 0 4px; padding: 4px 10px; color: var(--dsw-alias-state-error-primary); font-size: 12px; }
+      .dsh-comfyui-dock-controls {
+        flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+        margin: 0 12px 6px; min-height: 22px;
+      }
+      .dsh-comfyui-dock-chip {
+        /* 30/70 of the row; shrinkable so the 6px gap does not overflow it. */
+        flex: 0 1 30%; min-width: 0; max-width: 30%;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        padding: 1px 9px; border: .5px solid var(--line); border-radius: 999px;
+        background: transparent; color: var(--ink2);
+        cursor: pointer; font: inherit; font-size: 11.5px; line-height: 17px;
+      }
+      .dsh-comfyui-dock-chip[data-kind="model"] { flex-basis: 70%; max-width: 70%; }
+      .dsh-comfyui-dock-chip:hover { color: var(--ink); border-color: color-mix(in srgb, var(--ink) 25%, transparent); }
       .dsh-comfyui-dock-form {
+        position: relative;
         /* Centred, not bottom-aligned: an empty field is one line tall, and
            flex-end left the round send button sitting below that line. */
         flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
@@ -605,6 +890,7 @@ window.__ModuleLoader__.load({
       .dsh-comfyui-send:focus-visible {
         outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px;
       }
+
     `
 
     /**
@@ -3029,6 +3315,30 @@ window.__ModuleLoader__.load({
 
     /** Locale bound in `apply`. The main panel renders after that assignment. */
     let deskT = key => key
+    /** The client remote, bound in apply; null when the Host has none. */
+    /**
+     * The three remote namespaces the column calls. Each is its own Cordis
+     * service (`remote.session`, not a field of `remote`); `apply` reads them
+     * with `ctx.get`, which does not require this plugin to inject them.
+     * @type {{ session: any, presets: any, commands: any }}
+     */
+    let deskRemotes = { session: null, presets: null, commands: null }
+
+    /**
+     * Read one remote namespace. A missing service leaves the menu empty
+     * instead of taking the panel down.
+     * @param {any} ctx - the client context.
+     * @param {string} name - the Cordis service name.
+     * @returns {any} the namespace, or null.
+     */
+    function remoteNamespace(ctx, name) {
+      try {
+        const value = typeof ctx.get === 'function' ? ctx.get(name) : null
+        return value ?? null
+      } catch {
+        return null
+      }
+    }
 
     /** Badge outline of the ComfyUI mark: a rounded square on a 520 grid. */
     const COMFY_BADGE = 'M0 184.335C0 119.812 0 87.5502 12.5571 62.9055C23.6026 41.2274 41.2274 23.6026 62.9055 12.5571C87.5502 0 119.812 0 184.335 0H335.665C400.188 0 432.45 0 457.094 12.5571C478.773 23.6026 496.397 41.2274 507.443 62.9055C520 87.5502 520 119.812 520 184.335V335.665C520 400.188 520 432.45 507.443 457.094C496.397 478.773 478.773 496.397 457.094 507.443C432.45 520 400.188 520 335.665 520H184.335C119.812 520 87.5502 520 62.9055 507.443C41.2274 496.397 23.6026 478.773 12.5571 457.094C0 432.45 0 400.188 0 335.665V184.335Z'
@@ -3065,6 +3375,385 @@ window.__ModuleLoader__.load({
       )
     }
 
+    // ── Markdown ────────────────────────────────────────────────────────────
+    // A reply is markdown, and a full engine is a dependency this bundle
+    // cannot carry, so this is the subset a reply actually uses. Everything
+    // below builds React children, never HTML: a graph title or a tool result
+    // cannot inject markup into the DSH page.
+
+    /** Link schemes the column renders; anything else stays plain text. */
+    const SAFE_LINK = /^(?:https?:|mailto:)/iu
+    /** A fenced block's opening line: three backticks or three tildes, then a language. */
+    const FENCE_OPEN = /^\s*(```|~~~)\s*([^\s`]*)\s*$/u
+    /** An inline code span. */
+    const INLINE_CODE = new RegExp('^`([^`]+)`', 'u')
+    /** A heading: one to six hashes and a space. */
+    const HEADING = /^(#{1,6})\s+(.*)$/u
+    /** A horizontal rule: three or more of one marker. */
+    const RULE = /^\s*([-*_])(?:\s*\1){2,}\s*$/u
+    /** A blockquote line. */
+    const QUOTE = /^\s*>\s?(.*)$/u
+    /** A list item: a bullet, or "1." / "1)". */
+    const LIST_ITEM = /^\s*([-*+]|\d+[.)])\s+(.*)$/u
+    /** A table's separator row, under a header row. */
+    const TABLE_RULE = /^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?\s*$/u
+
+    /**
+     * Split one line into inline tokens.
+     *
+     * Only the five spans a reply uses are recognised — code, strong,
+     * emphasis, strike, and links — and the underscore is deliberately not an
+     * emphasis marker: tool names and paths are full of snake_case, and a
+     * renderer that italicises them makes every tool name look broken.
+     *
+     * @param {string} line - one line of markdown.
+     * @returns {{ type: string, text: string, href?: string }[]} tokens in order.
+     */
+    function parseInline(line) {
+      /** @type {{ type: string, text: string, href?: string }[]} */
+      const tokens = []
+      let rest = String(line ?? '')
+      while (rest.length > 0) {
+        const code = INLINE_CODE.exec(rest)
+        if (code !== null) {
+          tokens.push({ type: 'code', text: code[1] })
+          rest = rest.slice(code[0].length)
+          continue
+        }
+        const link = /^\[([^\]]*)\]\(([^)\s]+)\)/u.exec(rest)
+        if (link !== null) {
+          tokens.push({ type: 'link', text: link[1].length > 0 ? link[1] : link[2], href: link[2] })
+          rest = rest.slice(link[0].length)
+          continue
+        }
+        const strong = /^\*\*([^*]+)\*\*/u.exec(rest) ?? /^__([^_]+)__/u.exec(rest)
+        if (strong !== null) {
+          tokens.push({ type: 'strong', text: strong[1] })
+          rest = rest.slice(strong[0].length)
+          continue
+        }
+        const strike = /^~~([^~]+)~~/u.exec(rest)
+        if (strike !== null) {
+          tokens.push({ type: 'strike', text: strike[1] })
+          rest = rest.slice(strike[0].length)
+          continue
+        }
+        const em = /^\*([^*\n]+)\*/u.exec(rest)
+        if (em !== null) {
+          tokens.push({ type: 'em', text: em[1] })
+          rest = rest.slice(em[0].length)
+          continue
+        }
+        const plain = /^[^`\[\]*_~\n]+/u.exec(rest)
+        if (plain !== null) {
+          tokens.push({ type: 'text', text: plain[0] })
+          rest = rest.slice(plain[0].length)
+          continue
+        }
+        tokens.push({ type: 'text', text: rest[0] })
+        rest = rest.slice(1)
+      }
+      // A lone character that starts no span (the underscore in a tool name,
+      // a bracket that opens nothing) arrives as its own token. Join runs of
+      // plain text so the caller sees words, not characters.
+      const merged = []
+      for (const token of tokens) {
+        const last = merged[merged.length - 1]
+        if (token.type === "text" && last !== undefined && last.type === "text") last.text += token.text
+        else merged.push({ ...token })
+      }
+      return merged
+    }
+
+    /**
+     * Parse a message into the blocks the column renders.
+     *
+     * A wrapped list item starts a paragraph instead of continuing the bullet:
+     * that is what the model's own wrapping looks like, and joining it needs
+     * indentation state this subset does not carry.
+     *
+     * @param {string} text - the markdown source.
+     * @returns {any[]} blocks: paragraph, heading, code, list, quote, table, hr.
+     */
+    function parseMarkdown(text) {
+      const lines = String(text ?? '').replace(/\r\n?/gu, '\n').split('\n')
+      /** @type {any[]} */
+      const blocks = []
+      /** Whether this line opens a block that ends a paragraph. */
+      const startsBlock = (line, next) => /^\s*$/u.test(line)
+        || FENCE_OPEN.test(line) || HEADING.test(line) || RULE.test(line)
+        || QUOTE.test(line) || LIST_ITEM.test(line)
+        || (line.includes('|') && typeof next === 'string' && TABLE_RULE.test(next))
+      let index = 0
+      while (index < lines.length) {
+        const line = lines[index]
+        if (/^\s*$/u.test(line)) {
+          index += 1
+          continue
+        }
+        const fence = FENCE_OPEN.exec(line)
+        if (fence !== null) {
+          const closing = new RegExp('^\\s*' + fence[1] + '\\s*$', 'u')
+          /** @type {string[]} */
+          const body = []
+          index += 1
+          while (index < lines.length && !closing.test(lines[index])) {
+            body.push(lines[index])
+            index += 1
+          }
+          index += 1
+          blocks.push({ type: 'code', lang: fence[2], text: body.join('\n') })
+          continue
+        }
+        const heading = HEADING.exec(line)
+        if (heading !== null) {
+          blocks.push({ type: 'heading', level: heading[1].length, text: heading[2] })
+          index += 1
+          continue
+        }
+        if (RULE.test(line)) {
+          blocks.push({ type: 'hr' })
+          index += 1
+          continue
+        }
+        if (QUOTE.test(line)) {
+          /** @type {string[]} */
+          const body = []
+          while (index < lines.length) {
+            const quoted = QUOTE.exec(lines[index])
+            if (quoted === null) break
+            body.push(quoted[1])
+            index += 1
+          }
+          blocks.push({ type: 'quote', text: body.join('\n') })
+          continue
+        }
+        if (line.includes('|') && index + 1 < lines.length && TABLE_RULE.test(lines[index + 1])) {
+          const cells = value => value.replace(/^\s*\|/u, '').replace(/\|\s*$/u, '').split('|').map(cell => cell.trim())
+          /** @type {string[][]} */
+          const rows = []
+          index += 2
+          while (index < lines.length && lines[index].includes('|') && !/^\s*$/u.test(lines[index])) {
+            rows.push(cells(lines[index]))
+            index += 1
+          }
+          blocks.push({ type: 'table', header: cells(line), rows })
+          continue
+        }
+        const item = LIST_ITEM.exec(line)
+        if (item !== null) {
+          const ordered = /^\d/u.test(item[1])
+          /** @type {string[]} */
+          const items = []
+          while (index < lines.length) {
+            const next = LIST_ITEM.exec(lines[index])
+            if (next === null || /^\d/u.test(next[1]) !== ordered) break
+            items.push(next[2])
+            index += 1
+          }
+          blocks.push({ type: 'list', ordered, items })
+          continue
+        }
+        /** @type {string[]} */
+        const paragraph = [line]
+        index += 1
+        while (index < lines.length && !startsBlock(lines[index], lines[index + 1])) {
+          paragraph.push(lines[index])
+          index += 1
+        }
+        blocks.push({ type: 'paragraph', text: paragraph.join('\n') })
+      }
+      return blocks
+    }
+
+    /**
+     * Render inline tokens as React children.
+     * @param {{ type: string, text: string, href?: string }[]} tokens - from parseInline.
+     * @returns {any[]} children in order.
+     */
+    function renderInline(tokens) {
+      return tokens.map((token, index) => {
+        const key = 'i' + index
+        if (token.type === 'code') return h('code', { key, className: 'dsh-comfyui-md-inline-code' }, token.text)
+        if (token.type === 'strong') return h('strong', { key }, token.text)
+        if (token.type === 'em') return h('em', { key }, token.text)
+        if (token.type === 'strike') return h('del', { key }, token.text)
+        if (token.type === 'link') {
+          // A non-http scheme stays text: a reply must not be able to ship a
+          // javascript: link onto the DSH page.
+          if (typeof token.href !== 'string' || !SAFE_LINK.test(token.href)) return h('span', { key }, token.text)
+          return h('a', { key, href: token.href, target: '_blank', rel: 'noreferrer noopener' }, token.text)
+        }
+        return token.text
+      })
+    }
+
+    /**
+     * Copy text to the clipboard.
+     * @param {string} text - what to copy.
+     * @returns {Promise<boolean>} whether the browser took it.
+     */
+    async function copyText(text) {
+      try {
+        if (typeof navigator === 'undefined' || navigator.clipboard === undefined) return false
+        await navigator.clipboard.writeText(text)
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    /**
+     * One fenced block, with its own copy control.
+     * @param {{ lang?: string, text: string, t: (key: string) => string }} props - language, body, locale.
+     * @returns {any} the block.
+     */
+    function CodeBlock({ lang, text, t }) {
+      const [copied, setCopied] = useState(false)
+      const label = typeof lang === 'string' && lang.length > 0 ? lang : t('codeBlock')
+      return h('div', { className: 'dsh-comfyui-md-code' },
+        h('div', { className: 'dsh-comfyui-md-code-head' },
+          h('span', { className: 'dsh-comfyui-md-lang' }, label),
+          h('button', {
+            type: 'button',
+            className: 'dsh-comfyui-md-copy',
+            'aria-label': copied ? t('copied') : t('copy'),
+            onClick: () => {
+              void copyText(text).then(ok => {
+                if (!ok) return
+                setCopied(true)
+                setTimeout(() => setCopied(false), 1400)
+              })
+            },
+          }, copied ? t('copied') : t('copy')),
+        ),
+        h('pre', { className: 'dsh-comfyui-md-pre' }, h('code', null, text)),
+      )
+    }
+
+    /**
+     * Render a message as markdown.
+     * @param {string} text - the message body.
+     * @param {(key: string) => string} t - the locale bound in apply.
+     * @returns {any} one element wrapping the blocks.
+     */
+    function renderMarkdown(text, t) {
+      return h('div', { className: 'dsh-comfyui-md' }, ...parseMarkdown(text).map((block, index) => {
+        const key = 'b' + index
+        if (block.type === 'code') return h(CodeBlock, { key, lang: block.lang, text: block.text, t })
+        // A reply's own headings are never document headings: keep them one
+        // step down so a single "#" cannot out-size the column's title.
+        if (block.type === 'heading') return h('h' + Math.min(4, block.level + 1), { key, className: 'dsh-comfyui-md-heading' }, renderInline(parseInline(block.text)))
+        if (block.type === 'hr') return h('hr', { key, className: 'dsh-comfyui-md-rule' })
+        if (block.type === 'quote') return h('blockquote', { key, className: 'dsh-comfyui-md-quote' }, renderInline(parseInline(block.text)))
+        if (block.type === 'list') {
+          return h(block.ordered ? 'ol' : 'ul', { key, className: 'dsh-comfyui-md-list' },
+            block.items.map((item, itemIndex) => h('li', { key: itemIndex }, renderInline(parseInline(item)))))
+        }
+        if (block.type === 'table') {
+          return h('div', { key, className: 'dsh-comfyui-md-table-wrap' },
+            h('table', { className: 'dsh-comfyui-md-table' },
+              h('thead', null, h('tr', null, block.header.map((cell, cellIndex) => h('th', { key: cellIndex }, renderInline(parseInline(cell)))))),
+              h('tbody', null, block.rows.map((row, rowIndex) => h('tr', { key: rowIndex },
+                row.map((cell, cellIndex) => h('td', { key: cellIndex }, renderInline(parseInline(cell)))))))))
+        }
+        return h('p', { key, className: 'dsh-comfyui-md-p' }, renderInline(parseInline(block.text)))
+      }))
+    }
+
+    /**
+     * A row's copy control: its label flips for a moment so a click is visible.
+     * What it copies is the row's source, not its rendering.
+     * @param {{ text: string, t: (key: string) => string }} props - source and locale.
+     * @returns {any} the button.
+     */
+    function CopyRow({ text, t }) {
+      const [copied, setCopied] = useState(false)
+      return h('button', {
+        type: 'button',
+        className: 'dsh-comfyui-dock-action',
+        'aria-label': copied ? t('copied') : t('copy'),
+        onClick: () => {
+          void copyText(text).then(ok => {
+            if (!ok) return
+            setCopied(true)
+            setTimeout(() => setCopied(false), 1400)
+          })
+        },
+      }, copied ? t('copied') : t('copy'))
+    }
+
+    /**
+     * A clock label for one event time.
+     * @param {number} at - epoch milliseconds.
+     * @returns {string} HH:MM in the page zone.
+     */
+    function formatClock(at) {
+      const date = new Date(at)
+      return String(date.getHours()).padStart(2, "0") + ":" + String(date.getMinutes()).padStart(2, "0")
+    }
+
+    /**
+     * A short duration for a finished tool call.
+     * @param {number} ms - milliseconds.
+     * @returns {string} "800ms", "1.2s", or "3m".
+     */
+    function formatDuration(ms) {
+      if (ms < 1000) return Math.round(ms) + "ms"
+      if (ms < 60000) return (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + "s"
+      return Math.round(ms / 60000) + "m"
+    }
+
+    /**
+     * One row of the column: a bubble of markdown, or a tool card.
+     * @param {{ row: any, t: (key: string) => string }} props - the row and the locale.
+     * @returns {any} the row.
+     */
+    function DockRow({ row, t }) {
+      const [expanded, setExpanded] = useState(false)
+      if (row.role === "tool") {
+        const status = row.status === "error" ? t("toolFailed") : row.status === "done" ? t("toolDone") : t("toolRunning")
+        const timing = typeof row.durationMs === "number" ? " · " + formatDuration(row.durationMs) : ""
+        const hasDetail = typeof row.args === "string" || typeof row.result === "string"
+        return h("div", { className: "dsh-comfyui-dock-row", "data-role": "tool" },
+          h("div", { className: "dsh-comfyui-dock-card", "data-status": row.status ?? "running" },
+            h("button", {
+              type: "button",
+              className: "dsh-comfyui-dock-card-head",
+              disabled: !hasDetail,
+              "aria-expanded": expanded,
+              onClick: () => setExpanded(value => !value),
+            },
+              h("span", { className: "dsh-comfyui-dock-card-mark", "aria-hidden": "true" }, hasDetail ? (expanded ? "▾" : "▸") : "·"),
+              h("span", { className: "dsh-comfyui-dock-card-name" }, typeof row.name === "string" ? row.name : row.text),
+              h("span", { className: "dsh-comfyui-dock-card-status" }, status + timing),
+            ),
+            expanded
+              ? h("div", { className: "dsh-comfyui-dock-card-body" },
+                typeof row.args === "string"
+                  ? h("div", { className: "dsh-comfyui-dock-card-block" },
+                    h("span", { className: "dsh-comfyui-dock-card-label" }, t("toolArgs")),
+                    h("pre", { className: "dsh-comfyui-dock-card-pre" }, row.args))
+                  : null,
+                typeof row.result === "string"
+                  ? h("div", { className: "dsh-comfyui-dock-card-block" },
+                    h("span", { className: "dsh-comfyui-dock-card-label" }, t("toolResult")),
+                    h("pre", { className: "dsh-comfyui-dock-card-pre" }, row.result))
+                  : null)
+              : null,
+          ))
+      }
+      const stamp = typeof row.at === "number" ? formatClock(row.at) : ""
+      const tokens = typeof row.tokens === "number" ? t("tokens").replace("{{count}}", String(row.tokens)) : ""
+      return h("div", { className: "dsh-comfyui-dock-row", "data-role": row.role },
+        h("div", { className: "dsh-comfyui-dock-msg" },
+          renderMarkdown(row.text, t),
+          h("div", { className: "dsh-comfyui-dock-meta" },
+            stamp.length > 0 ? h("span", null, stamp) : null,
+            tokens.length > 0 ? h("span", null, tokens) : null,
+            row.role === "assistant" ? h(CopyRow, { text: row.text, t }) : null)))
+    }
+
     /**
      * The session's composer. A line is admitted to the desk session, not answered here.
      * @param {{ t: (key: string) => string, sessionId: string | null, onSession: (sessionId: string) => void }} props - locale, the desk session, and how a replacement is adopted.
@@ -3075,11 +3764,35 @@ window.__ModuleLoader__.load({
       const [pending, setPending] = useState(null)
       const [draft, setDraft] = useState('')
       const [busy, setBusy] = useState(false)
+      /** @type {[null | { message: string, text: string }, any]} */
       const [error, setError] = useState(null)
       const [open, setOpen] = useState(true)
+      /** Whether the log follows new turns; a reader who scrolled up keeps their place. */
+      const [stick, setStick] = useState(true)
+      /** Whether the session holds more turns than the column was given. */
+      const [truncated, setTruncated] = useState(false)
+      /** Which menu page is open: null, "root", "model", or "preset". */
+      const [menu, setMenu] = useState(null)
+      /** Full access waits for the same confirmation the native picker shows. */
+      const [confirmPreset, setConfirmPreset] = useState(null)
+      /** The model catalog and permission presets the menu offers. */
+      const [options, setOptions] = useState(null)
+      const [menuBusy, setMenuBusy] = useState(false)
+      const [menuError, setMenuError] = useState("")
       const logRef = useRef(null)
       /** The newest read wins; an older poll must not overwrite it. */
       const readAt = useRef(0)
+      /**
+       * A choice just made. The projection it writes lags the call that made
+       * it, so the next read would paint the previous value back. Hold the
+       * choice until a read agrees with it.
+       */
+      const held = useRef({ model: null, preset: null })
+      useEffect(() => {
+        // A held choice belongs to the session that made it; a new conversation
+        // must not inherit it.
+        held.current = { model: null, preset: null }
+      }, [sessionId])
       const load = useCallback(async () => {
         const stamp = Date.now()
         if (stamp < readAt.current) return
@@ -3093,94 +3806,373 @@ window.__ModuleLoader__.load({
         }
         if (body?.ok === true && Array.isArray(body.rows)) {
           setRows(body.rows)
+          setTruncated(body.truncated === true)
           setPending(current => {
             if (current === null) return null
             return body.rows.some(row => row.role === 'user' && row.text === current.text) ? null : current
           })
         }
       }, [onSession, sessionId])
+      // A user turn with no answer behind it is the model working, not a stall:
+      // this column is the only place a turn shows up.
+      const lastRole = rows.length === 0 ? null : rows[rows.length - 1].role
+      const awaiting = pending !== null || lastRole === 'user'
+      const thinking = awaiting || busy
       useEffect(() => {
         if (sessionId === null || !open) return undefined
         void load()
-        const timer = setInterval(() => { void load() }, 3000)
+        // While a reply is due, read faster: three seconds of silence reads as
+        // "nothing happened" exactly when the model is slow.
+        const timer = setInterval(() => { void load() }, thinking ? 1200 : 3000)
         return () => { clearInterval(timer) }
-      }, [load, sessionId, open])
+      }, [load, sessionId, open, thinking])
       useEffect(() => {
         const log = logRef.current
+        if (log === null || !open || !stick) return
+        log.scrollTop = log.scrollHeight
+      }, [rows, pending, open, stick, thinking])
+      const onScroll = event => {
+        const log = event.currentTarget
+        setStick(log.scrollHeight - log.scrollTop - log.clientHeight < 64)
+      }
+      const jumpToLatest = () => {
+        const log = logRef.current
         if (log !== null) log.scrollTop = log.scrollHeight
-      }, [rows, pending, open])
+        setStick(true)
+      }
       /**
-       * Admit the draft to the desk session.
-       * @param {SubmitEvent} event - the form submit.
+       * Admit one line to the desk session.
+       * @param {string} message - the trimmed text.
+       * @param {{ retry?: boolean }} [options] - a retry keeps the draft as it is.
        * @returns {Promise<void>}
        */
-      async function send(event) {
-        event.preventDefault()
-        const message = draft.trim()
-        if (message === '' || busy) return
+      const admit = useCallback(async (message, { retry = false } = {}) => {
+        if (busy || message.length === 0) return
         if (sessionId === null) {
-          setError(t('assistantClosed'))
+          setError({ message: t('assistantClosed'), text: message })
           return
         }
         setBusy(true)
         setError(null)
-        setDraft('')
+        setStick(true)
         setPending({ text: message })
+        if (!retry) setDraft('')
         try {
           const response = await fetch(DESK_CHAT_URL, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ message }),
           })
-          const body = await response.json()
+          const body = await response.json().catch(() => null)
           if (body?.ok !== true) {
             setPending(null)
             setDraft(message)
-            setError(typeof body?.error === 'string' && body.error.length > 0 ? body.error : t('assistantFailed'))
+            setError({
+              message: typeof body?.error === 'string' && body.error.length > 0 ? body.error : t('assistantFailed'),
+              text: message,
+            })
           } else {
             void load()
           }
         } catch {
           setPending(null)
           setDraft(message)
-          setError(t('assistantFailed'))
+          setError({ message: t('assistantFailed'), text: message })
         } finally {
           setBusy(false)
         }
+      }, [busy, load, sessionId, t])
+      const remoteCall = async fn => {
+        try {
+          return await fn()
+        } catch {
+          return null
+        }
+      }
+      const loadOptions = useCallback(async () => {
+        const session = deskRemotes.session
+        const presets = deskRemotes.presets
+        const commands = deskRemotes.commands
+        const catalog = session === null ? null : await remoteCall(() => session.modelCatalog())
+        const presetCatalog = presets === null ? null : await remoteCall(() => presets.catalog())
+        const listed = sessionId === null || commands === null ? null : await remoteCall(() => commands.list(sessionId))
+        // The catalog has no "current". The session projection does: `permissions`
+        // is `{ currentValue }`, and `modelSelection` is the provider and model.
+        const projected = session === null || sessionId === null
+          ? null
+          : await remoteCall(() => session.projections({ sessionId }))
+        const values = projected?.ok === true && projected.value?.kind === 'sequenced'
+          ? projected.value.values
+          : null
+        const projectedModel = values?.modelSelection
+        let model = projectedModel !== null && typeof projectedModel === 'object' && typeof projectedModel.provider === 'string'
+          ? projectedModel
+          : (catalog?.ok === true ? catalog.value?.default ?? null : null)
+        const heldModel = held.current.model
+        if (heldModel !== null) {
+          if (model?.provider === heldModel.provider && model?.model === heldModel.model) held.current.model = null
+          else model = heldModel
+        }
+        let preset = typeof values?.permissions?.currentValue === 'string' ? values.permissions.currentValue : null
+        if (held.current.preset !== null) {
+          if (preset === held.current.preset) held.current.preset = null
+          else preset = held.current.preset
+        }
+        setOptions({
+          models: catalog?.ok === true && Array.isArray(catalog.value?.groups) ? catalog.value.groups : [],
+          model,
+          modelFailed: catalog === null || catalog.ok !== true,
+          presets: presetCatalog?.ok === true && Array.isArray(presetCatalog.value?.options) ? presetCatalog.value.options : [],
+          preset,
+          presetFailed: presetCatalog === null || presetCatalog.ok !== true,
+          commands: listed?.ok === true && Array.isArray(listed.value) ? listed.value : [],
+        })
+      }, [sessionId])
+      const toggleMenu = () => {
+        setMenuError("")
+        setConfirmPreset(null)
+        setMenu(current => {
+          if (current !== null) return null
+          setOptions(null)
+          void loadOptions()
+          return "root"
+        })
+      }
+      const finishOption = result => {
+        if (result === null || result.ok !== true) {
+          const message = result?.error?.message
+          setMenuError(typeof message === 'string' && message.length > 0 ? message : t('optionFailed'))
+          return
+        }
+        setMenu(null)
+        void loadOptions()
+      }
+      const chooseModel = (provider, model) => {
+        setMenuBusy(true)
+        setMenuError("")
+        const session = deskRemotes.session
+        if (session === null || sessionId === null) {
+          setMenuBusy(false)
+          finishOption(null)
+          return
+        }
+        void remoteCall(() => session.selectModel({ sessionId, provider, model }))
+          .then(result => {
+            const selected = result?.ok === true ? (result.value?.selected ?? { provider, model }) : null
+            if (selected !== null && typeof selected.provider === 'string') {
+              held.current.model = selected
+              setOptions(current => current === null ? current : { ...current, model: selected, modelFailed: false })
+            }
+            finishOption(result)
+          })
+          .finally(() => setMenuBusy(false))
+      }
+      const choosePreset = value => {
+        setMenuBusy(true)
+        setMenuError("")
+        const commands = deskRemotes.commands
+        // The native picker submits `/permission <preset>`. There is no
+        // `permissionPresets.set`. An unknown name comes back as `ok` with no value.
+        if (commands === null || sessionId === null || !/^[A-Za-z0-9_-]+$/u.test(value)) {
+          setMenuBusy(false)
+          finishOption(null)
+          return
+        }
+        void remoteCall(() => commands.execute(sessionId, '/permission ' + value, []))
+          .then(result => {
+            const failed = result === null || result.ok !== true || result.value === undefined
+            if (!failed) {
+              held.current.preset = value
+              setOptions(current => current === null ? current : { ...current, preset: value })
+            }
+            finishOption(failed ? { ok: false, error: { message: result?.error?.message || t('optionFailed') } } : result)
+          })
+          .finally(() => setMenuBusy(false))
+      }
+      const runCommand = command => {
+        setMenuBusy(true)
+        setMenuError("")
+        const commands = deskRemotes.commands
+        if (commands === null || sessionId === null) {
+          setMenuBusy(false)
+          finishOption(null)
+          return
+        }
+        void remoteCall(() => commands.execute(sessionId, command, []))
+          .then(result => finishOption(result))
+          .finally(() => setMenuBusy(false))
+      }
+      /**
+       * The three modes the native permission picker shows, in its order.
+       * Anything else the catalog returns (auto, custom) keeps the host's own name.
+       */
+      const PERMISSION_MODES = [
+        ['read-only', 'preset.readOnly', 'preset.readOnlyDetail'],
+        ['workspace-write', 'preset.workspaceWrite', 'preset.workspaceWriteDetail'],
+        ['danger-full-access', 'preset.fullAccess', 'preset.fullAccessDetail'],
+      ]
+      const permissionCopy = option => {
+        const known = PERMISSION_MODES.find(([value]) => value === option?.value)
+        if (known !== undefined) return { label: t(known[1]), detail: t(known[2]) }
+        const name = typeof option?.name === 'string' && option.name.length > 0 ? option.name : String(option?.value ?? '')
+        const detail = typeof option?.description === 'string' ? option.description : ''
+        return { label: name, detail }
+      }
+      const orderedPresets = presets => {
+        const known = []
+        const rest = []
+        for (const option of presets) {
+          const index = PERMISSION_MODES.findIndex(([value]) => value === option?.value)
+          if (index >= 0) known[index] = option
+          else rest.push(option)
+        }
+        return [...known.filter(option => option !== undefined), ...rest]
+      }
+      const presetLabel = () => {
+        if (options === null || typeof options.preset !== 'string') return ''
+        const found = options.presets.find(item => item?.value === options.preset)
+        if (found === undefined) return permissionCopy({ value: options.preset, name: options.preset }).label
+        return permissionCopy(found).label
+      }
+      const menuRow = (key, label, active, onClick) => h('button', {
+        key,
+        type: "button",
+        className: "dsh-comfyui-dock-menu-item",
+        "data-active": active,
+        disabled: menuBusy,
+        onClick,
+      }, label)
+      const menuRows = () => {
+        if (menu === 'root') {
+          // Commands come from the session registry, so a plugin that adds
+          // /rewind gets an entry here without this file knowing it.
+          const commands = Array.isArray(options?.commands) ? options.commands : []
+          const rows = []
+          if (commands.length > 0) rows.push(h("p", { key: "g-cmd", className: "dsh-comfyui-dock-menu-head" }, t("instructions")))
+          for (const command of commands) {
+            const name = typeof command?.name === 'string' ? command.name : String(command ?? '')
+            if (name.length === 0) continue
+            const title = typeof command?.title === 'string' ? command.title : name
+            rows.push(menuRow('c-' + name, title, false, () => runCommand(name.startsWith('/') ? name : '/' + name)))
+          }
+          if (rows.length === 0) rows.push(h("p", { key: "none", className: "dsh-comfyui-dock-menu-empty" }, t("optionsEmpty")))
+          rows.push(h("div", { key: "sep", className: "dsh-comfyui-dock-menu-sep" }))
+          rows.push(menuRow('model', t('model') + (options?.model?.model ? ' · ' + options.model.model : ''), false, () => setMenu('model')))
+          rows.push(menuRow('preset', presetLabel() || t('permissions'), false, () => { setConfirmPreset(null); setMenu('preset') }))
+          return rows
+        }
+        if (menu === 'model') {
+          if (options === null) return [h("p", { key: "load", className: "dsh-comfyui-dock-menu-empty" }, t("loading"))]
+          if (options.modelFailed) return [h("p", { key: "fail", className: "dsh-comfyui-dock-menu-empty" }, t("optionsFailed"))]
+          const rows = []
+          for (const group of options.models) {
+            const name = typeof group?.name === 'string' ? group.name : String(group?.id ?? '')
+            rows.push(h('p', { key: 'g-' + String(group?.id), className: 'dsh-comfyui-dock-menu-head' }, name))
+            for (const item of Array.isArray(group?.models) ? group.models : []) {
+              const modelId = String(item?.id ?? '')
+              const active = options.model?.provider === group?.id && options.model?.model === item?.id
+              rows.push(menuRow('m-' + String(group?.id) + '-' + modelId, typeof item?.name === 'string' ? item.name : modelId, active, () => chooseModel(String(group?.id), modelId)))
+            }
+          }
+          if (rows.length === 0) rows.push(h("p", { key: "none", className: "dsh-comfyui-dock-menu-empty" }, t("optionsEmpty")))
+          return rows
+        }
+        if (menu === 'preset') {
+          if (options === null) return [h("p", { key: "load", className: "dsh-comfyui-dock-menu-empty" }, t("loading"))]
+          if (options.presetFailed) return [h("p", { key: "fail", className: "dsh-comfyui-dock-menu-empty" }, t("optionsFailed"))]
+          if (confirmPreset !== null) {
+            return [
+              h('p', { key: 'title', className: 'dsh-comfyui-dock-menu-head' }, t('confirmFullTitle')),
+              h('p', { key: 'body', className: 'dsh-comfyui-dock-menu-detail' }, t('confirmFullBody')),
+              menuRow('cancel', t('confirmCancel'), false, () => setConfirmPreset(null)),
+              menuRow('enable', t('confirmFullEnable'), false, () => {
+                const value = confirmPreset
+                setConfirmPreset(null)
+                choosePreset(value)
+              }),
+            ]
+          }
+          const rows = orderedPresets(options.presets).map(option => {
+            const value = String(option?.value ?? '')
+            const copy = permissionCopy(option)
+            const label = h('span', { className: 'dsh-comfyui-dock-menu-choice' },
+              h('span', null, copy.label),
+              copy.detail.length > 0 ? h('span', { className: 'dsh-comfyui-dock-menu-detail' }, copy.detail) : null)
+            return menuRow('p-' + value, label, options.preset === option?.value, () => {
+              if (value === 'danger-full-access' && options.preset !== value) {
+                setConfirmPreset(value)
+                return
+              }
+              choosePreset(value)
+            })
+          })
+          if (rows.length === 0) rows.push(h("p", { key: "none", className: "dsh-comfyui-dock-menu-empty" }, t("optionsEmpty")))
+          return rows
+        }
+        return []
+      }
+      useEffect(() => {
+        if (menu === null) return undefined
+        const close = event => {
+          const target = event.target
+          if (target instanceof Element && target.closest(".dsh-comfyui-dock-menu, .dsh-comfyui-dock-add") !== null) return
+          setConfirmPreset(null)
+          setMenu(null)
+        }
+        document.addEventListener("pointerdown", close)
+        return () => document.removeEventListener("pointerdown", close)
+      }, [menu])
+      useEffect(() => {
+        // The chips under the log name the current model and preset, so the
+        // options are read once on mount as well as when the menu opens.
+        void loadOptions()
+      }, [loadOptions, sessionId])
+      const send = event => {
+        event.preventDefault()
+        void admit(draft.trim())
+      }
+      const startNew = () => {
+        if (busy) return
+        setBusy(true)
+        setError(null)
+        fetch(DESK_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'new' }),
+        })
+          .then(response => response.json())
+          .then(body => {
+            if (body?.ok === true && typeof body.sessionId === 'string') {
+              setRows([])
+              setPending(null)
+              setStick(true)
+              onSession(body.sessionId)
+            } else {
+              setError({
+                message: typeof body?.error === 'string' && body.error.length > 0 ? body.error : t('assistantFailed'),
+                text: '',
+              })
+            }
+          })
+          .catch(() => setError({ message: t('assistantFailed'), text: '' }))
+          .finally(() => setBusy(false))
       }
       const shown = pending === null ? rows : [...rows, { id: 'pending', role: 'user', text: pending.text }]
+      const hint = thinking && lastRole !== 'assistant' ? t('assistantThinking') : ''
       return h('aside', {
         className: open ? 'dsh-comfyui-dock' : 'dsh-comfyui-dock is-closed',
         'aria-label': t('assistant'),
       },
         h('header', { className: 'dsh-comfyui-dock-head' },
-          h('strong', null, t('assistant')),
+          h('div', { className: 'dsh-comfyui-dock-title' },
+            h('strong', null, t('assistant')),
+            thinking ? h('span', { className: 'dsh-comfyui-dock-badge' }, t('assistantWorking')) : null,
+          ),
           h('button', {
             type: 'button',
             className: 'dsh-comfyui-dock-new',
             disabled: busy,
-            onClick: () => {
-              if (busy) return
-              setBusy(true)
-              setError(null)
-              fetch(DESK_URL, {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ action: 'new' }),
-              })
-                .then(response => response.json())
-                .then(body => {
-                  if (body?.ok === true && typeof body.sessionId === 'string') {
-                    setRows([])
-                    setPending(null)
-                    onSession(body.sessionId)
-                  } else {
-                    setError(typeof body?.error === 'string' && body.error.length > 0 ? body.error : t('assistantFailed'))
-                  }
-                })
-                .catch(() => setError(t('assistantFailed')))
-                .finally(() => setBusy(false))
-            },
+            onClick: startNew,
           }, t('assistantNew')),
           h('button', {
             type: 'button',
@@ -3197,17 +4189,58 @@ window.__ModuleLoader__.load({
             h('path', { d: 'M5.5 1.5V14.5' }),
           ) : t('assistant')),
         ),
-        open ? h('div', { className: 'dsh-comfyui-dock-log', ref: logRef },
-          shown.length === 0
-            ? h('p', { className: 'dsh-comfyui-dock-empty' }, t('assistantEmpty'))
-            : shown.map(row => h('div', {
-              key: row.id,
-              className: 'dsh-comfyui-dock-row',
-              'data-role': row.role,
-            }, h('p', { className: 'dsh-comfyui-dock-msg' }, row.text))),
+        open ? h('div', { className: 'dsh-comfyui-dock-log', ref: logRef, onScroll },
+          truncated && shown.length > 0
+            ? h('p', { className: 'dsh-comfyui-dock-truncated' }, t('truncated'))
+            : null,
+          shown.length === 0 && !thinking
+            ? h('div', { className: 'dsh-comfyui-dock-emptyblock' },
+              h('p', { className: 'dsh-comfyui-dock-empty' }, t('assistantEmpty')),
+              h('p', { className: 'dsh-comfyui-dock-hint' }, t('assistantHint')))
+            : shown.map(row => h(DockRow, { key: row.id, row, t })),
+          thinking ? h('div', { className: 'dsh-comfyui-dock-row', 'data-role': 'assistant', 'data-thinking': 'true' },
+            h('div', { className: 'dsh-comfyui-thinking' },
+              h('span', { className: 'dsh-comfyui-thinking-dot' }),
+              h('span', { className: 'dsh-comfyui-thinking-dot' }),
+              h('span', { className: 'dsh-comfyui-thinking-dot' }),
+              h('span', { className: 'dsh-comfyui-thinking-label' }, hint.length > 0 ? hint : t('assistantSending')))) : null,
         ) : null,
-        open && error !== null ? h('p', { className: 'dsh-comfyui-dock-error' }, error) : null,
+        open ? h('button', {
+          type: 'button',
+          className: 'dsh-comfyui-dock-jump',
+          hidden: stick || shown.length === 0,
+          onClick: jumpToLatest,
+        }, t('assistantJump')) : null,
+        open && error !== null ? h('div', { className: 'dsh-comfyui-dock-error' },
+          h('span', { className: 'dsh-comfyui-dock-error-text' }, error.message),
+          error.text.length > 0 && !busy
+            ? h('button', {
+              type: 'button',
+              className: 'dsh-comfyui-dock-retry',
+              onClick: () => { void admit(error.text, { retry: true }) },
+            }, t('retry'))
+            : null) : null,
+        open ? h('div', { className: 'dsh-comfyui-dock-controls' },
+          h('button', {
+            type: 'button',
+            className: 'dsh-comfyui-dock-chip',
+            onClick: () => { setConfirmPreset(null); setOptions(null); void loadOptions(); setMenu('preset') },
+          }, presetLabel() || t('permissions')),
+          h('button', {
+            type: 'button',
+            className: 'dsh-comfyui-dock-chip',
+            'data-kind': 'model',
+            onClick: () => { setOptions(null); void loadOptions(); setMenu('model') },
+          }, typeof options?.model?.model === 'string' ? options.model.model : t('model')),
+        ) : null,
         open ? h('form', { className: 'dsh-comfyui-dock-form', onSubmit: send },
+          h('button', {
+            type: 'button',
+            className: 'dsh-comfyui-dock-add',
+            'aria-label': t('menu'),
+            'aria-expanded': menu !== null,
+            onClick: toggleMenu,
+          }, '+'),
           h('textarea', {
             className: 'dsh-comfyui-dock-input',
             rows: 1,
@@ -3218,7 +4251,7 @@ window.__ModuleLoader__.load({
               setDraft(event.target.value)
               const field = event.target
               field.style.height = 'auto'
-              field.style.height = `${Math.min(field.scrollHeight, 120)}px`
+              field.style.height = Math.min(field.scrollHeight, 120) + 'px'
             },
             onKeyDown: event => {
               if (event.key === 'Enter' && !event.shiftKey) {
@@ -3237,10 +4270,14 @@ window.__ModuleLoader__.load({
             stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
             'aria-hidden': 'true',
           }, h('path', { d: 'M12 19V5M6 11l6-6 6 6' }))),
+          menu !== null
+            ? h('div', { className: 'dsh-comfyui-dock-menu' },
+              menuError.length > 0 ? h('p', { className: 'dsh-comfyui-dock-menu-error' }, menuError) : null,
+              ...menuRows())
+            : null,
         ) : null,
       )
     }
-
     /** Main column: the editor for the desk session, and that session's composer. */
     function Desk() {
       const [sessionId, setSessionId] = useState(null)
@@ -3272,9 +4309,18 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale'],
       // Editor operations, dictionaries, and the bar/stage rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, captureGraph, applyWorkflowGraph, loadWorkflow, switchTab, closeTab, readTabs, tabLabel, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, mapApiEvent, relayEditorEvents, readPreview, progressSummary, applyRunEvent, runLabel, cancelLabel, TopBar, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, viewShowsAll, describeOperation, en, zh, createSync },
+      __ops: { applyOperation, captureGraph, applyWorkflowGraph, loadWorkflow, switchTab, closeTab, readTabs, tabLabel, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, mapApiEvent, relayEditorEvents, readPreview, progressSummary, applyRunEvent, runLabel, cancelLabel, TopBar, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, viewShowsAll, describeOperation, en, zh, createSync, parseMarkdown, parseInline, renderInline, renderMarkdown },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
+        // A cordis context throws on an uninjected service property, and that
+        // throw took the whole client plugin down with it. Both access paths
+        // are tried, and a deployment without either leaves the menu empty
+        // instead of removing the panel from the sidebar.
+        deskRemotes = {
+          session: remoteNamespace(ctx, 'remote.session'),
+          presets: remoteNamespace(ctx, 'remote.permissionPresets'),
+          commands: remoteNamespace(ctx, 'remote.commands'),
+        }
         deskT = t
         ctx.effect(() => ctx.locale.register(NS, { en, zh }), 'dsh-comfyui: dictionaries')
         ctx.effect(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({

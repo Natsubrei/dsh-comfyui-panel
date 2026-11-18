@@ -118,11 +118,61 @@ import { DeskSessionMissing, ensureDeskSession, sendDeskMessage, transcriptRows 
   ]
   assert.deepEqual(transcriptRows(records), [
     { id: '1', role: 'user', text: 'set steps to 20' },
-    { id: '3', role: 'tool', text: 'comfyui_edit' },
+    { id: '3', role: 'tool', name: 'comfyui_edit', text: 'comfyui_edit', status: 'running' },
     { id: '4', role: 'assistant', text: 'Done.' },
   ])
   assert.deepEqual(transcriptRows([]), [])
   assert.deepEqual(transcriptRows([{ type: 'event', event: { type: 'step/start', seq: 1, data: {} } }]), [])
 }
 
+
+{
+  // A call and its result are one card: the result paints onto the row the
+  // call opened, so a finished edit reads as one line, not two.
+  const records = [
+    { type: 'event', event: { type: 'tool/call', seq: 5, time: 1000, data: {
+      callId: 'call-1', name: 'comfyui_run', arguments: '{"wait":true}',
+    } } },
+    { type: 'event', event: { type: 'tool/result', seq: 6, time: 2600, data: {
+      toolCallId: 'call-1', isError: false,
+      message: { role: 'tool', content: [{ type: 'text', text: 'prompt_id p1' }] },
+    } } },
+  ]
+  assert.deepEqual(transcriptRows(records), [{
+    id: '5', role: 'tool', name: 'comfyui_run', text: 'comfyui_run',
+    status: 'done', at: 1000, args: '{"wait":true}', result: 'prompt_id p1', durationMs: 1600,
+  }])
+}
+
+{
+  // A failed call says so, and an empty argument payload is dropped rather
+  // than shown as "{}".
+  const records = [
+    { type: 'event', event: { type: 'tool/call', seq: 7, data: { callId: 'c2', name: 'comfyui_edit', arguments: '{}' } } },
+    { type: 'event', event: { type: 'tool/result', seq: 8, data: {
+      toolCallId: 'c2', isError: true, message: { content: [{ type: 'text', text: 'node 9 not found' }] } } } },
+  ]
+  const [row] = transcriptRows(records)
+  assert.equal(row.status, 'error')
+  assert.equal(row.result, 'node 9 not found')
+  assert.equal(row.args, undefined)
+}
+
+{
+  // Time and output tokens ride along with a reply, and the window keeps the
+  // newest turns only.
+  const assistant = { type: 'event', event: { type: 'assistant/message', seq: 9, time: 1700, data: {
+    message: { role: 'assistant', source: { kind: 'model' }, content: [{ type: 'text', text: 'Done.' }] },
+    usage: { outputTokens: 42 },
+  } } }
+  assert.deepEqual(transcriptRows([assistant]), [{ id: '9', role: 'assistant', text: 'Done.', at: 1700, tokens: 42 }])
+  const many = Array.from({ length: 45 }, (_, index) => ({
+    type: 'event',
+    event: { type: 'user/message', seq: index + 1, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'm' + (index + 1) }] } },
+  }))
+  const trimmed = transcriptRows(many)
+  assert.equal(trimmed.length, 40)
+  assert.equal(trimmed[0].id, '6')
+  assert.equal(trimmed.at(-1).id, '45')
+}
 console.log('desk test passed')

@@ -31,7 +31,7 @@ const mod = registered.factory(dependency => {
   if (dependency === 'react') return fakeReact
   throw new Error(`unexpected dependency "${dependency}"`)
 })
-const { applyOperation, coerceWidgetValue, en, zh } = mod.__ops
+const { applyOperation, coerceWidgetValue, en, zh, parseMarkdown, parseInline, renderInline, renderMarkdown } = mod.__ops
 
 function makeGraph() {
   const nodes = new Map()
@@ -1490,6 +1490,75 @@ const stage = (service, extra = {}) => overlayPlan({
     assert.equal(image?.props.title, 'a.png')
     assert.equal(render(running).some(node => node.type === 'img'), false, 'no preview URL, no thumbnail')
   }
+}
+
+// ── Markdown ─────────────────────────────────────────────────────────────
+// The dock renders model replies, which are markdown. These cover the parser,
+// not the tree: the tree is one createElement per block, and the fake above
+// already asserts the shape a caller needs.
+{
+  // Inline spans keep their order and their text.
+  assert.deepEqual(parseInline('set **steps** to `20`'), [
+    { type: 'text', text: 'set ' },
+    { type: 'strong', text: 'steps' },
+    { type: 'text', text: ' to ' },
+    { type: 'code', text: '20' },
+  ])
+  assert.deepEqual(parseInline('[docs](https://example.com/a)'), [
+    { type: 'link', text: 'docs', href: 'https://example.com/a' },
+  ])
+  // An underscore is not an emphasis marker: tool names and paths are full of
+  // snake_case, and italicising them makes every tool name look broken.
+  assert.deepEqual(parseInline('comfyui_workflow_save'), [{ type: 'text', text: 'comfyui_workflow_save' }])
+  assert.deepEqual(parseInline('*now* ~~before~~'), [
+    { type: 'em', text: 'now' },
+    { type: 'text', text: ' ' },
+    { type: 'strike', text: 'before' },
+  ])
+}
+
+{
+  // Blocks: a heading, a fenced block, both list kinds, a table, a quote, a rule.
+  assert.deepEqual(parseMarkdown('# Steps\n\nDo it.'), [
+    { type: 'heading', level: 1, text: 'Steps' },
+    { type: 'paragraph', text: 'Do it.' },
+  ])
+  assert.deepEqual(parseMarkdown('```js\nconst a = 1\n```'), [
+    { type: 'code', lang: 'js', text: 'const a = 1' },
+  ])
+  assert.deepEqual(parseMarkdown('- one\n- two'), [{ type: 'list', ordered: false, items: ['one', 'two'] }])
+  assert.deepEqual(parseMarkdown('1. one\n2. two'), [{ type: 'list', ordered: true, items: ['one', 'two'] }])
+  assert.deepEqual(parseMarkdown('| a | b |\n| --- | --- |\n| 1 | 2 |'), [
+    { type: 'table', header: ['a', 'b'], rows: [['1', '2']] },
+  ])
+  assert.deepEqual(parseMarkdown('> note'), [{ type: 'quote', text: 'note' }])
+  assert.deepEqual(parseMarkdown('---'), [{ type: 'hr' }])
+  // A paragraph ends where a block begins, so a list under a line of text is
+  // not swallowed into that line.
+  assert.deepEqual(parseMarkdown('Intro\n- one'), [
+    { type: 'paragraph', text: 'Intro' },
+    { type: 'list', ordered: false, items: ['one'] },
+  ])
+}
+
+{
+  // A reply must not be able to ship a javascript: link onto the DSH page.
+  const unsafe = renderInline([{ type: 'link', text: 'click', href: 'javascript:alert(1)' }])
+  assert.equal(unsafe[0].type, 'span')
+  assert.equal(unsafe[0].children[0], 'click')
+  const safe = renderInline([{ type: 'link', text: 'docs', href: 'https://example.com' }])
+  assert.equal(safe[0].type, 'a')
+  assert.equal(safe[0].props.rel, 'noreferrer noopener')
+  assert.equal(safe[0].props.target, '_blank')
+}
+
+{
+  // A reply's "#" renders one step down: a single hash must not out-size the
+  // column's own title.
+  const tree = renderMarkdown('# Hi\n\n- a', key => key)
+  assert.equal(tree.type, 'div')
+  assert.equal(tree.children[0].type, 'h2')
+  assert.equal(tree.children[1].type, 'ul')
 }
 
 console.log('client ops test passed')

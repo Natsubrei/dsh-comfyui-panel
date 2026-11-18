@@ -30,7 +30,7 @@ import { createServiceController, frontendReport } from './service.js'
 import { createCommandChannel } from './commands.js'
 import { createSessionStore, validWorkflowName } from './session-store.js'
 import { createRunTracker, queueHas, TERMINAL_RUN_STATUSES } from './run-tracker.js'
-import { DeskSessionMissing, ensureDeskSession, sendDeskMessage, transcriptRows } from './desk.js'
+import { DeskSessionMissing, MAX_TRANSCRIPT, ensureDeskSession, sendDeskMessage, transcriptRows } from './desk.js'
 
 export { takeCommand } from './commands.js'
 
@@ -631,9 +631,18 @@ export function apply(ctx, rawConfig = {}) {
     try {
       const page = await sessions.events({
         address: { kind: 'session', sessionId },
-        maxMessages: 40,
+        maxMessages: MAX_TRANSCRIPT,
       }, request.signal)
-      return json({ ok: true, sessionId, rows: transcriptRows(page?.records ?? []) })
+      // `hasMore` is the history page's own "older records exist". A page that
+      // happens to hold 40 records is the whole session when `hasMore` is
+      // false, and most of those records are not turns the column shows.
+      const records = page?.records ?? []
+      return json({
+        ok: true,
+        sessionId,
+        rows: transcriptRows(records),
+        truncated: page?.hasMore === true,
+      })
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       return json({ ok: false, error: detail || 'The transcript could not be read' }, 502)
