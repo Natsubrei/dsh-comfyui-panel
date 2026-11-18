@@ -130,12 +130,14 @@ try {
   assert.equal(adoptDirectory(null, '/opt/ComfyUI'), '/opt/ComfyUI')
   assert.equal(adoptDirectory(null, null), null)
 
-  // comfy-cli's own locations, not a list this plugin guessed.
+  // comfy-cli's own locations, not a list this plugin guessed. Each answer is
+  // built the way its own platform builds paths, so these hold on any Host.
   assert.equal(comfyCliConfigPath('/srv/user', 'linux'), '/srv/user/.config/comfy-cli/config.ini')
   assert.equal(comfyCliConfigPath('/srv/user', 'darwin'), '/srv/user/Library/Application Support/comfy-cli/config.ini')
-  assert.equal(comfyCliConfigPath('C:\\data', 'win32'), 'C:\\data/AppData/Local/comfy-cli/config.ini')
+  assert.equal(comfyCliConfigPath('C:\\data', 'win32'), 'C:\\data\\AppData\\Local\\comfy-cli\\config.ini')
   assert.equal(comfyCliDefaultInstall('/srv/user', 'linux'), '/srv/user/comfy/ComfyUI')
   assert.equal(comfyCliDefaultInstall('/srv/user', 'darwin'), '/srv/user/Documents/comfy/ComfyUI')
+  assert.equal(comfyCliDefaultInstall('C:\\data', 'win32'), 'C:\\data\\Documents\\comfy\\ComfyUI')
 
   // default_workspace leads, recent follows, blanks and junk are dropped.
   assert.deepEqual(

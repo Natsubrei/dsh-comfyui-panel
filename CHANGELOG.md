@@ -13,6 +13,15 @@ the version bump.
 
 ### Fixed
 
+- On Windows, a ComfyUI that was already running showed as stopped instead of
+  external. Naming the listener needs `ss`, `lsof`, or `/proc`, and Windows
+  has none of them, so the pid was unknown and the snapshot read that as "no
+  server". The state now says external with no pid, and goes back to stopped
+  once the upstream stops answering.
+- The comfy-cli lookups build their paths the way the platform they describe
+  builds them, rather than with the Host's separator. On Windows a POSIX home
+  came back with backslashes, which broke the discovery assertions and the
+  candidates they compared.
 - The permission menu shows the same three modes as the native picker:
   read only, workspace write, and full access, with full access asking
   before it switches.

@@ -14,7 +14,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, posix, resolve, win32 } from 'node:path'
 import { createSupervisor, defaultLogPath } from './supervisor.js'
 
 /** Whether a directory looks like a ComfyUI checkout (`main.py` at its root). */
@@ -47,6 +47,19 @@ export function checkoutDir(directory, { isCheckout = isComfyUiDir } = {}) {
 }
 
 /**
+ * The path flavor of a named platform.
+ *
+ * A function that answers "where does that platform keep this file" must build
+ * the path the way that platform does. The Host's own `join` does not: run on
+ * Windows, it would turn a Linux home into a backslash path.
+ * @param {string} platform - `process.platform`.
+ * @returns {typeof posix} that platform's path flavor.
+ */
+function pathFor(platform) {
+  return platform === 'win32' ? win32 : posix
+}
+
+/**
  * Where comfy-cli keeps `config.ini`. These are its own paths
  * (`comfy_cli/constants.py`, `DEFAULT_CONFIG`), not ones this plugin invented.
  * @param {string} home - the user's home directory.
@@ -54,9 +67,10 @@ export function checkoutDir(directory, { isCheckout = isComfyUiDir } = {}) {
  * @returns {string} the config file.
  */
 export function comfyCliConfigPath(home, platform) {
-  if (platform === 'win32') return join(home, 'AppData', 'Local', 'comfy-cli', 'config.ini')
-  if (platform === 'darwin') return join(home, 'Library', 'Application Support', 'comfy-cli', 'config.ini')
-  return join(home, '.config', 'comfy-cli', 'config.ini')
+  const p = pathFor(platform)
+  if (platform === 'win32') return p.join(home, 'AppData', 'Local', 'comfy-cli', 'config.ini')
+  if (platform === 'darwin') return p.join(home, 'Library', 'Application Support', 'comfy-cli', 'config.ini')
+  return p.join(home, '.config', 'comfy-cli', 'config.ini')
 }
 
 /**
@@ -68,8 +82,9 @@ export function comfyCliConfigPath(home, platform) {
  * @returns {string} that directory.
  */
 export function comfyCliDefaultInstall(home, platform) {
-  if (platform === 'win32' || platform === 'darwin') return join(home, 'Documents', 'comfy', 'ComfyUI')
-  return join(home, 'comfy', 'ComfyUI')
+  const p = pathFor(platform)
+  if (platform === 'win32' || platform === 'darwin') return p.join(home, 'Documents', 'comfy', 'ComfyUI')
+  return p.join(home, 'comfy', 'ComfyUI')
 }
 
 /**
@@ -121,16 +136,17 @@ export function discoverComfyUi({
     }
   },
 } = {}) {
+  const p = pathFor(platform)
   const candidates = []
   if (typeof env.COMFYUI_HOME === 'string' && env.COMFYUI_HOME.length > 0) {
-    candidates.push(resolve(env.COMFYUI_HOME))
+    candidates.push(p.resolve(env.COMFYUI_HOME))
   }
   for (const recorded of comfyCliWorkspaces(readText(comfyCliConfigPath(home, platform)))) {
-    if (isAbsolute(recorded)) candidates.push(resolve(recorded))
+    if (p.isAbsolute(recorded)) candidates.push(p.resolve(recorded))
   }
   candidates.push(comfyCliDefaultInstall(home, platform))
   for (const candidate of candidates) {
-    if (isCheckout(candidate)) return { cwd: resolve(candidate), candidates }
+    if (isCheckout(candidate)) return { cwd: p.resolve(candidate), candidates }
   }
   return { cwd: null, candidates }
 }
@@ -404,11 +420,16 @@ export function createServiceController({
   let lastError = null
   /** A healthy server this controller cannot prove it may manage. */
   let externalPid = null
+  /**
+   * The same state when the platform cannot name the listener. Windows has no
+   * `ss`, `lsof`, or `/proc`, so every external server lands here with no pid.
+   */
+  let externalUnnamed = false
 
   const snapshot = () => {
     const base = supervisor?.snapshot() ?? {
       enabled: true,
-      state: externalPid === null ? 'stopped' : 'external',
+      state: externalPid === null && !externalUnnamed ? 'stopped' : 'external',
       pid: externalPid,
       restarts: 0,
       lastExit: null,
@@ -446,6 +467,11 @@ export function createServiceController({
     /** Health plus supervisor state for the panel and `comfyui_status`. */
     async status() {
       const health = await probe().catch(() => false)
+      // An upstream that stopped answering must not stay reported as external.
+      if (health !== true) {
+        externalPid = null
+        externalUnnamed = false
+      }
       return { ...snapshot(), health }
     },
     /** Status without an extra health probe (tools that already probed). */
@@ -475,12 +501,16 @@ export function createServiceController({
       const pid = findListener(port)
       if (pid === null || !serves(pid, plan.cwd)) {
         externalPid = pid
+        // A platform that cannot name the listener still has a server there.
+        // Reporting "stopped" would tell the panel the port is empty.
+        externalUnnamed = pid === null
         logger?.info(`dsh-comfyui: ComfyUI is listening upstream but was not started from ${plan.cwd}; leaving it external`)
         return snapshot()
       }
       const target = ensureSupervisor()
       if (typeof target.attach === 'function') target.attach(pid)
       externalPid = null
+      externalUnnamed = false
       return snapshot()
     },
     /** Save panel settings; does not start anything. */
@@ -494,6 +524,7 @@ export function createServiceController({
       configuredPlan = null
       lastError = null
       externalPid = null
+      externalUnnamed = false
       return snapshot()
     },
     /**
@@ -502,6 +533,7 @@ export function createServiceController({
      */
     async start() {
       externalPid = null
+      externalUnnamed = false
       const snap = supervisor?.snapshot()
       // A stopped supervisor instance cannot be started again (it latched its
       // stop); drop it so the next start builds a fresh one.
@@ -516,7 +548,7 @@ export function createServiceController({
     async stop() {
       const snap = supervisor?.snapshot()
       if (snap === undefined) {
-        if (externalPid !== null) throw new Error('ComfyUI was started outside the plugin, so the plugin will not stop it. Stop it where it was launched.')
+        if (externalPid !== null || externalUnnamed) throw new Error('ComfyUI was started outside the plugin, so the plugin will not stop it. Stop it where it was launched.')
         return snapshot()
       }
       if (snap.state === 'external') {
@@ -529,7 +561,7 @@ export function createServiceController({
     /** Restart an owned process; adopts an external one again if it is gone. */
     async restart() {
       const snap = supervisor?.snapshot()
-      if (snap === undefined && externalPid !== null) {
+      if (snap === undefined && (externalPid !== null || externalUnnamed)) {
         throw new Error('ComfyUI was started outside the plugin; restart it where it was launched.')
       }
       if (snap?.state === 'external') throw new Error('ComfyUI was started outside the plugin; restart it where it was launched.')

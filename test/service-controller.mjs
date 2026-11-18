@@ -96,6 +96,24 @@ function makeController(initial = {}) {
   assert.equal(controller.snapshot().owned, true)
 }
 
+// A platform that cannot name the listener still reports the server external.
+// Windows has no ss, lsof, or /proc, so this is every external server there.
+{
+  const { controller, supervisor, answers } = makeController({ pid: null })
+  const adopted = await controller.adopt(true)
+  assert.equal(adopted.state, 'external')
+  assert.equal(adopted.pid, null)
+  assert.equal(adopted.owned, false)
+  assert.equal(supervisor.calls.attach.length, 0)
+  await assert.rejects(controller.stop(), /started outside the plugin/)
+  await assert.rejects(controller.restart(), /started outside the plugin/)
+  // It goes away: the reported state returns to stopped instead of staying external.
+  answers.healthy = false
+  const gone = await controller.status()
+  assert.equal(gone.state, 'stopped')
+  assert.equal(gone.health, false)
+}
+
 // A portable build is unzipped into one folder holding `ComfyUI/`: saving that
 // folder stores the checkout inside it, so the next start finds the files.
 {

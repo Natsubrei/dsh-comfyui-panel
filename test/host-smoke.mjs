@@ -1847,7 +1847,10 @@ assert.equal(savedService.settings.cwd, comfyRoot)
 // saved settings describe a different server: it stays external, with its pid.
 assert.equal(savedService.state, 'external')
 assert.equal(savedService.owned, false)
-assert.ok(Number.isInteger(savedService.pid), 'an external server is named by pid')
+// Windows cannot name the listener, so the pid is only required where the
+// platform can report one.
+assert.ok(savedService.pid === null || Number.isInteger(savedService.pid), 'an external server is named by pid when the platform can')
+if (process.platform !== 'win32') assert.ok(Number.isInteger(savedService.pid), 'an external server is named by pid')
 const storedSettings = storage.state.settings.get('service')
 assert.equal(storedSettings.cwd, comfyRoot)
 assert.equal(storedSettings.autoStart, false)
