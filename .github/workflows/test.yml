@@ -20,10 +20,16 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Windows is a supported target, not just the platform the author happens to
+    # use: two of the bugs this suite found were Windows-only, and a Linux-only
+    # matrix reported green through both. The ${{ matrix.os }} dimension makes
+    # those failures land on the pull request instead.
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         node: ['22', '24']
     steps:
       - uses: actions/checkout@v4
