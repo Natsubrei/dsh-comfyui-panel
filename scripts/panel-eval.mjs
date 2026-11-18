@@ -11,7 +11,7 @@
  *   node scripts/panel-eval.mjs --url 'http://127.0.0.1:3080/?token=…' 'document.title'
  *   DSH_WEB_COOKIE='dsh-auth-…=v1.…' node scripts/panel-eval.mjs --panel '…'
  *
- * See docs/panel-check.md for the address and `test/ui/README.md` for what to
+ * See dev/panel-check.md for the address and `test/ui/README.md` for what to
  * do when there is no address or no browser.
  */
 import { pathToFileURL } from 'node:url'

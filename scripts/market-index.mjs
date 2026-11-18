@@ -75,8 +75,8 @@ function pluginEntry(versions) {
     name: packageJson.name,
     title: { en: 'ComfyUI Panel', zh: 'ComfyUI 面板' },
     description: {
-      en: 'The real ComfyUI editor inside the DeepSeek Harness Web UI. The model can read, edit, and run the workflow.',
-      zh: '在 DeepSeek Harness Web UI 里使用真正的 ComfyUI 编辑器，模型可读取、编辑并运行工作流。',
+      en: 'The ComfyUI editor inside the DeepSeek Harness Web UI. The model can read, edit, and run the workflow.',
+      zh: '在 DeepSeek Harness Web UI 里使用 ComfyUI 编辑器，模型可读取、编辑并运行工作流。',
     },
     icon: `https://raw.githubusercontent.com/${owner}/${repository}/${BRANCH}/icon.svg`,
     author: packageJson.author,

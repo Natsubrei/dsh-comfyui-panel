@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "ComfyUI 面板",
+    "description": "在 DeepSeek Harness Web UI 里使用 ComfyUI 编辑器，模型可读取、编辑并运行工作流。",
+    "detail": "README.md"
+  }
+}

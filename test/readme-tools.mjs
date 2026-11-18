@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const READMES = ['README.md', 'README.zh-CN.md']
+const READMES = ['README.md', 'README_en.md']
 
 /**
  * Every name captured by a pattern's first group in one file.

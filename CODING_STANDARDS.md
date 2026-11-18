@@ -6,13 +6,13 @@ the type check and the pre-commit hook cannot enforce.
 ## 1. A new frontend dependency is documented in the same change
 
 When a change starts using a ComfyUI frontend object or method the panel did
-not use before, `docs/comfyui-bridge.md` gains that dependency and a way to
+not use before, `dev/comfyui-bridge.md` gains that dependency and a way to
 verify it after a frontend upgrade, in that same change.
 
 Why: an undocumented dependency is found when an upgrade breaks it, and
 nothing on file says what to re-check.
 
-Lands in: `docs/comfyui-bridge.md`.
+Lands in: `dev/comfyui-bridge.md`.
 
 ## 2. A command that reports editor state proves it first
 

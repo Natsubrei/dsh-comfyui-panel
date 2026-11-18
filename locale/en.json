@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "ComfyUI Panel",
+    "description": "The ComfyUI editor inside the DeepSeek Harness Web UI. The model can read, edit, and run the workflow.",
+    "detail": "README_en.md"
+  }
+}

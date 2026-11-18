@@ -1,7 +1,7 @@
 {
   "name": "dsh-comfyui-panel",
   "version": "0.10.1",
-  "description": "The real ComfyUI editor inside the DeepSeek Harness Web UI. The model can read, edit, and run the workflow.",
+  "description": "The ComfyUI editor inside the DeepSeek Harness Web UI. The model can read, edit, and run the workflow.",
   "type": "module",
   "license": "MIT",
   "author": "Natsubrei",
@@ -32,7 +32,8 @@
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
-    "./icon": "./icon.svg"
+    "./icon": "./icon.svg",
+    "./locale/*.json": "./locale/*.json"
   },
   "files": [
     "index.js",
@@ -48,9 +49,8 @@
     "cordis.patch.yml",
     "icon.svg",
     "README.md",
-    "README.zh-CN.md",
-    "docs/comfyui-bridge.md",
-    "docs/release.md",
+    "README_en.md",
+    "locale/*.json",
     "docs/supervise.md",
     "CHANGELOG.md",
     "LICENSE",

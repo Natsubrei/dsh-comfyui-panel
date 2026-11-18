@@ -4,7 +4,7 @@
 
 ## Frontend
 
-- [ ] A new ComfyUI frontend object or method is recorded in `docs/comfyui-bridge.md` in this change. Not applicable.
+- [ ] A new ComfyUI frontend object or method is recorded in `dev/comfyui-bridge.md` in this change. Not applicable.
 
 ## Checks
 

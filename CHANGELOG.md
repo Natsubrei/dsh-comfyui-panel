@@ -51,6 +51,10 @@ the version bump.
 
 ### Added
 
+- The plugin's page speaks the UI language: `locale/en.json` and `locale/zh.json`
+  carry the package's title, description and the README to show, so DSH reads
+  `README_en.md` for English and `README.md` for Chinese instead of always
+  showing the front page.
 - The right column renders markdown: headings, lists, fenced code with its
   own copy control, tables, quotes, and inline code, bold, italic, strike,
   and links. Everything is built as elements, never as HTML, and a link
@@ -75,6 +79,13 @@ the version bump.
 
 ### Changed
 
+- The package's front page is Simplified Chinese, `README.md`; the English
+  README is `README_en.md`. Each links the other by absolute URL, so the switch
+  works on npm as well as on GitHub. Both are now a feature tour with
+  screenshots of the panel, the command menu and the settings sheet, and the
+  repository has a 1280×640 social preview.
+- `docs/` keeps only what a user reads (`supervise.md`); the ComfyUI surface,
+  the client check loop and the release sequence moved to `dev/`.
 - The settings dialog puts "Start with DSH" and Save on one row. A save that
   landed says so beside the title and then stops, instead of leaving no answer
   or a note that outlives the value it described.

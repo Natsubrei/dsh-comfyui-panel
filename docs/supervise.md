@@ -1,6 +1,6 @@
 # Starting ComfyUI from the profile
 
-The bottom toolbar and Settings are the usual way to start ComfyUI. The panel remembers the checkout and can start with DSH. That path needs no profile configuration. It is described in the README under Configuration.
+The bottom toolbar and Settings are the usual way to start ComfyUI. The panel remembers the checkout and can start with DSH. That path needs no profile configuration. It is described in the README under **Settings**.
 
 A `supervise` block on the plugin row overrides the panel setup at startup. The block can name any command. The profile file is trusted configuration, not a panel field. See [SECURITY.md](../SECURITY.md).
 

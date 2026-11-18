@@ -29,9 +29,11 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
   existing field needs a version bump and a migration (the domain layer has no
   migrations).
 - `service.js` / `supervisor.js` — panel-managed ComfyUI process control.
-- `docs/comfyui-bridge.md` — the frontend surface the panel depends on
-  (`comfyAPI`, string ids, `extra.ds`, the camera, command ids,
-  `server.client_id`) and how to re-derive it after a ComfyUI upgrade.
+- `dev/` — maintainer documents: `comfyui-bridge.md` (the frontend surface the
+  panel depends on — `comfyAPI`, string ids, `extra.ds`, the camera, command
+  ids, `server.client_id` — and how to re-derive it after an upgrade),
+  `panel-check.md` (the client check loop), and `release.md` (cutting a
+  release). `docs/` holds only what a user reads.
 - `docs/supervise.md` — the profile `supervise` block, which overrides the
   panel's Start and Stop at startup. Read it when changing the boot command,
   `cwd`, restart limits, or adoption from `cordis.patch.yml`.
@@ -56,9 +58,13 @@ in the profile config. Do not edit DSH core or ComfyUI sources to make this work
   `DSH_HYGIENE_STRICT=1`.
 - `.github/workflows/test.yml` — CI: `npm ci`, `npm run typecheck`, then
   `npm test` on Node 22 and 24. `.github/workflows/release.yml` cuts a release
-  from the Actions tab; see [docs/release.md](docs/release.md).
+  from the Actions tab; see [dev/release.md](dev/release.md).
 - `tsconfig.json` + `types/globals.d.ts` — `checkJs` over every `.js` and
   `.mjs`. The dev dependencies exist only for this pass.
+- `locale/*.json` — the display metadata per language: `meta.title`,
+  `meta.description`, and `meta.detail`, the Markdown file the plugin detail
+  page shows in that language. `README.md` is Simplified Chinese and the
+  package's front page, `README_en.md` the English one.
 - `market/index.json` — the plugin market index this repository hosts, the URL
   users add in Settings → Plugins → Discover. `scripts/market-index.mjs`
   regenerates it; `test/market-index.mjs` validates it with the real
@@ -107,12 +113,26 @@ checks cannot enforce.
 
 ## After a client change
 
-`docs/panel-check.md` is the whole loop: reload the live plugin, run `npm run
+`dev/panel-check.md` is the whole loop: reload the live plugin, run `npm run
 ui`, then the manual pass for what the headless check cannot see (the digest
 line, the bar's labels, the stopped stage, a queued run). For a single fact
 about the running page, `npm run eval -- '<expression>'` prints it. When the
 check cannot run at all — no launch address, no browser — `test/ui/README.md` →
 "Machines without a browser or a token" has both, in the order to try them.
+
+## Docs
+
+`README.md` is Simplified Chinese and the package's front page; `README_en.md`
+is English. The line at the top of each links both by absolute URL, so it works
+on npm and on GitHub. A change a user can see updates both.
+
+`docs/` holds what a user reads: `supervise.md`, and the README's pictures
+(`panel.png`, `commands.png`, `settings.png`, and the 1280×640
+`social-preview.png`). README images are absolute `raw.githubusercontent.com`
+URLs, so the detail page, GitHub and npm all render them. The maintainer's
+documents live in `dev/`: the ComfyUI surface, the client check loop, and the
+release sequence. `test/packaging.mjs` keeps `locale/*.json`, the document each
+language names, and `files` in agreement.
 
 ## Parallel work
 
@@ -132,7 +152,7 @@ so two suites can run at once.
 
 This repository is meant to be published, and the release details are kept
 apart so they load only when a release is being cut. Sequence, tag rules and
-the `market/index.json` constraints: [docs/release.md](docs/release.md).
+the `market/index.json` constraints: [dev/release.md](dev/release.md).
 `npm test` already rejects home-directory paths in the tree and in every
 commit; the pre-commit hook also rejects this machine's account name and
 hostname as bare words.

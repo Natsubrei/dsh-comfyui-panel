@@ -1,6 +1,6 @@
 # Contributing
 
-Issues and pull requests are welcome. The maintainer notes in [AGENTS.md](AGENTS.md) cover reloading a live plugin, and [docs/release.md](docs/release.md) the release sequence; this file is the path that does not need that machine.
+Issues and pull requests are welcome. The maintainer notes in [AGENTS.md](AGENTS.md) cover reloading a live plugin, and [dev/release.md](dev/release.md) the release sequence; this file is the path that does not need that machine.
 
 ## Checks
 
@@ -17,11 +17,13 @@ Two checks stay local, and continuous integration skips both:
 - `npm run contract` needs a built DeepSeek Harness checkout at `../deepseek-harness` (or `DSH_ROOT`).
 - `npm run ui` needs a running `dsh web` and a Chromium-family browser. See [test/ui/README.md](test/ui/README.md).
 
-A green pull request therefore does not prove the plugin still mounts on the current DSH or the current ComfyUI frontend. Say which frontend you ran against when the change touches the editor bridge ([docs/comfyui-bridge.md](docs/comfyui-bridge.md)).
+A green pull request therefore does not prove the plugin still mounts on the current DSH or the current ComfyUI frontend. Say which frontend you ran against when the change touches the editor bridge ([dev/comfyui-bridge.md](dev/comfyui-bridge.md)).
 
 A change a user can see gets one bullet under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md), in one of `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, or `Security`. Leave out an empty category. The file follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-A new ComfyUI frontend object or method is recorded in [docs/comfyui-bridge.md](docs/comfyui-bridge.md) in the same change. Those rules are in [CODING_STANDARDS.md](CODING_STANDARDS.md).
+Both READMEs describe what a user sees: `README.md` is Simplified Chinese and the package's front page, `README_en.md` is English. Their pictures live in `docs/` and are embedded by absolute raw URL, so they render on npm and in the plugin page as well as on GitHub.
+
+A new ComfyUI frontend object or method is recorded in [dev/comfyui-bridge.md](dev/comfyui-bridge.md) in the same change. Those rules are in [CODING_STANDARDS.md](CODING_STANDARDS.md).
 
 ## Hooks and hygiene
 

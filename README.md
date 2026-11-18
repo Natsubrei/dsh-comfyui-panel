@@ -1,110 +1,140 @@
+![dsh-comfyui-panel：ComfyUI 画布与右侧对话列](https://raw.githubusercontent.com/Natsubrei/dsh-comfyui-panel/main/docs/social-preview.png)
+
 # dsh-comfyui-panel
 
+[简体中文](https://github.com/Natsubrei/dsh-comfyui-panel/blob/main/README.md) · [English](https://github.com/Natsubrei/dsh-comfyui-panel/blob/main/README_en.md)
+
+[![npm version](https://img.shields.io/npm/v/dsh-comfyui-panel)](https://www.npmjs.com/package/dsh-comfyui-panel)
+[![GitHub stars](https://img.shields.io/github/stars/Natsubrei/dsh-comfyui-panel?style=social)](https://github.com/Natsubrei/dsh-comfyui-panel)
+[![dshfind](https://dshfind.com/api/badge/Natsubrei/dsh-comfyui-panel)](https://dshfind.com/en/plugins/Natsubrei/dsh-comfyui-panel?ref=badge)
 [![test](https://github.com/Natsubrei/dsh-comfyui-panel/actions/workflows/test.yml/badge.svg)](https://github.com/Natsubrei/dsh-comfyui-panel/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-[English](README.md) · [简体中文](README.zh-CN.md)
+**把 ComfyUI 编辑器作为独立的一页放进 DeepSeek Harness Web UI，画布旁的对话列让模型读取、编辑并运行这张工作流。**
 
-ComfyUI inside the DeepSeek Harness Web UI: the real editor as its own page. The column on the right talks to the session that owns the canvas.
+面板用的是这台机器上已经装好的 ComfyUI：编辑器就是 ComfyUI 自己的前端，插件不内置、不 fork，也不改它的源码。
 
-## Contents
+- **独立的一页** — 左侧栏的 **ComfyUI** 打开独立一页：编辑器占满中间主区，底部一条工具栏，右侧是和这一页同会话的对话列。
+- **模型能改图** — `comfyui_*` 工具读取图、按批次增删和重连节点、改控件值、发起运行、取回输出。UI 工作流始终是权威图。
+- **会话记得住** — 面板打开时每 1.2 秒检查一次、有改动才同步，UI 工作流和只读投影存进 `dsh_comfyui` 域，Host 重启不丢图。
+- **状态就在底部** — 状态点、当前运行的节点与步骤、预览缩略图，以及 **启动**、**停止**、**设置**、**取消**。
 
-- [Install](#install)
-- [Use](#use)
-- [Capabilities](#capabilities)
-- [Configuration](#configuration)
-- [Requirements](#requirements)
-- [Limits](#limits)
+## 安装 / 更新
 
-## Install
+### 在 DSH 网页版或桌面版中安装
 
-In DSH, open **Settings → Plugins → Discover → Add index source** and paste:
+打开 **设置 → 插件 → 发现 → 添加索引源**，粘贴：
 
 ```text
 https://raw.githubusercontent.com/Natsubrei/dsh-comfyui-panel/main/market/index.json
 ```
 
-Install the **ComfyUI Panel** card. The index pins one commit per version, so the install matches a tested release. The `plugin_market` tool reads this same index.
+然后安装 **ComfyUI 面板** 卡片。索引为每个版本钉住一个 commit，所以装到的一定是测试过的发布；`plugin_market` 工具读同一个索引。
 
-From the command line:
+### 使用 `dsh` CLI 安装
 
 ```bash
 dsh plugin --profile web add dsh-comfyui-panel
 ```
 
-Restart DSH if it was already running. Hard-refresh the browser after a bundle change.
+DSH 已经在运行时需要重启它；bundle 变化后，浏览器需要强制刷新。
 
-The panel uses the ComfyUI already on this machine. If there is none, install
-one first — [docs.comfy.org/installation](https://docs.comfy.org/installation)
-covers the official options.
+### 还没有 ComfyUI
 
-Starting ComfyUI yourself is enough: the panel uses a server that answers on
-`upstream`. A portable build launched from its own `.bat` listens there already.
-A desktop install listens on its own port, so point `upstream` at that port
-first. When the panel cannot prove it may manage the process — always the case
-on Windows — the server stays `external`, and Stop is unavailable because the
-panel did not start it.
+面板用的是这台机器上已有的 ComfyUI，官方几种装法见
+[docs.comfy.org/installation](https://docs.comfy.org/installation)。
 
-To let the panel start it instead, name a checkout in **Settings**: a manual
-install whose folder holds `main.py` with a `.venv` beside it (`.venv/bin/python`
-on Unix, `.venv/Scripts/python.exe` on Windows), or the folder a portable Windows
-build was unzipped into, where the panel uses the `ComfyUI` and `python_embeded`
-inside.
+自己先把 ComfyUI 开起来就够了：只要它在 `upstream` 上应答，面板就会用上它。用自带 `.bat`
+启动的便携版本来就监听在那里；桌面版监听自己的端口，要先把 `upstream` 指过去。面板拿不到这个
+进程的归属时（Windows 上总是如此），它就是 `external`，没有 **停止**，因为进程不是面板启动的。
 
-## Use
+想让面板代管，就在 **设置** 里给它一个检出目录：手动安装是含 `main.py`、旁边有 `.venv`
+的那层（Unix 上是 `.venv/bin/python`，Windows 上是 `.venv/Scripts/python.exe`）；
+Windows 便携版选解压出来的那一层，面板会用里面的 `ComfyUI` 和 `python_embeded`。
 
-1. Click **ComfyUI** in the left sidebar. The editor fills the main column. An assistant sits on the right.
-2. The column on the right sends into that page's session. The model then uses the tools in the table below on the open canvas.
-3. Leave the server at `http://127.0.0.1:8188`, or set another address under [Configuration](#configuration).
-4. While the server is down, the canvas is a card that says so and names the folder. The bottom toolbar always shows the same three buttons — **Start**, **Stop**, and **Settings** — and the first two grey out when they do not apply. **Settings** is where the folder that contains `main.py` is chosen. If [comfy-cli](https://docs.comfy.org/comfy-cli/getting-started) has recorded a workspace, that folder is filled in; otherwise the field stays empty until you choose it. **Start with DSH** is remembered. A server that is already running is picked up, not started twice.
-5. Wait until the bar says **Running**. Ask in the right column. The model uses this page's tools, including a run. A tool that needs the editor fails when you leave the page. **New** starts another session for this page; the previous one keeps its history. Collapsing the column leaves a tab on the right edge that opens it again.
+## 使用方法
 
-No ComfyUI yet: `node test/mock-comfyui.mjs`, open **ComfyUI** in the sidebar, and wait until the bar says **Running**. The mock is a one-node graph, and `comfyui_run` returns `p1`. Stop the mock before a real ComfyUI uses port 8188.
+1. 点左侧栏的 **ComfyUI**：编辑器占满中间主区，右侧是和这一页同会话的对话列。
+2. 在右侧把要求说清楚。模型随后用下文「模型工具」一节里的工具改当前画布。
+3. 服务地址默认是 `http://127.0.0.1:8188`，要换地址见下文的 **设置**。
+4. 服务没起来时，画布上是一张说明原因的卡片，并标出目录。画布底部的工具栏永远显示 **启动**、
+   **停止**、**设置** 三个按钮，前两个在不适用时变灰。**随 DSH 启动** 会被记住。已经在运行的服务
+   会被直接用上，不会再启动一个。
+5. 等底部工具栏显示 **运行中**。在右侧说话。模型使用这一页的工具，包括发起运行。离开这一页后，
+   需要编辑器在场的工具会失败。**新建** 会让这一页换一个会话，原来的会话和记录都还在。收起右栏后，
+   画布右缘有一条标签，点它展开。
 
-Contributors run `npm test` and `npm run typecheck`. What those cover is in [CONTRIBUTING.md](CONTRIBUTING.md).
+还没有 ComfyUI：在本仓库的检出里运行 `node test/mock-comfyui.mjs`，在左侧栏打开 **ComfyUI**，
+等底部工具栏的状态点变绿（显示 **外部运行**）。mock 是单节点图，`comfyui_run` 返回 `p1`。
+在真正的 ComfyUI 使用 8188 端口前，先停掉 mock。
 
-## Capabilities
+贡献者运行 `npm test` 和 `npm run typecheck`。覆盖范围见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-Tools exist only on a session that has synced a workflow. After a Host restart, a persisted session gets them back. A new session gets them on its first sync.
+## 🖼️ 面板
 
-**Open** in the Panel column means the panel has to be open in that session. **No** means it can be closed.
+![ComfyUI 面板：编辑器、底部工具栏与右侧对话列](https://raw.githubusercontent.com/Natsubrei/dsh-comfyui-panel/main/docs/panel.png)
 
-### Panel
+工具只出现在已经同步过工作流的会话上。Host 重启后，已持久化的会话会重新获得工具。新会话在第一次同步时获得。
 
-| Capability | What you get |
+**需打开** 表示该会话必须打开面板，**可关闭** 表示面板可以关着。
+
+| 能力 | 你得到什么 |
 | --- | --- |
-| Editor | The real ComfyUI frontend at `/comfyui/`, over authenticated HTTP and WebSocket. The same-origin iframe keeps third-party node UIs. It does not use DSH theme tokens. A custom node UI runs as the DSH page. See [SECURITY.md](SECURITY.md). |
-| Bridge | Once `window.comfyAPI.app.app` exists, the panel syncs about once a second while the page is open. It sends the UI workflow, a read-only projection, and the API prompt from `graphToPrompt()`. The UI workflow is canonical. Editor events (`execution_start`, `executing`, `progress`, `executed`, success, error, interrupted, and queue status) are relayed on the editor's own socket. That socket is the one a run is addressed to. The panel does not open a second ComfyUI socket. |
-| Digest | One line, for example `ComfyUI: rev 14 · "deepseek-chan-emoji" · 9 nodes · 9 links · selected 7 · panel open.` The name appears only when the graph has one. More than one open tab adds the count and the active tab. Zoom, pan, and resize do not advance `rev`. |
-| Name | Saving or loading a named workflow names the session, and the digest line includes that name. When `<name>.json` exists in ComfyUI's user data, the editor tab is renamed to match. |
-| Storage | Domain `dsh_comfyui`. A Host restart keeps the graph. The record is `sessionId -> { workflow, prompt, semantic, revision, name, nameSource }` for the 20 most recently updated sessions. `nameSource` is `file` or `tool`. The model sees the projection and its own edit results. A storage failure stays in memory and does not block the bridge. Named workflows live in the `workflows` table. |
-| Process | **Start** and **Stop** run ComfyUI. The command comes from the checkout (`.venv/bin/python` on Unix, `.venv/Scripts/python.exe` on Windows, `python_embeded/python.exe` beside a portable bundle, otherwise `python3` or `python`) and the upstream port. It is not an arbitrary command. The directory and **Start with DSH** are stored in `dsh_comfyui`, not in the DSH profile. |
+| 编辑器 | 在 `/comfyui/` 提供 ComfyUI 前端，走已认证的 HTTP 和 WebSocket。同源 iframe 保留第三方节点的界面。编辑器不使用 DSH 主题变量。自定义节点界面以 DSH 页面的身份运行，见 [SECURITY.md](SECURITY.md)。 |
+| 桥接 | `window.comfyAPI.app.app` 出现后，页面可见时每 1.2 秒检查一次，有改动才上传，另每 30 秒强制一次：UI 工作流、只读投影，以及 `graphToPrompt()` 给出的 API 提示。UI 工作流是权威图。编辑器事件（`execution_start`、`executing`、`progress`、`executed`、成功、错误、中断和队列状态）经编辑器自己的 socket 转发，运行就发往这个 socket。面板不再单独开一个 ComfyUI socket。 |
+| 摘要行 | 一行，例如 `ComfyUI: rev 14 · "deepseek-chan-emoji" · 9 nodes · 9 links · selected 7 · panel open.`。只有图有名字时才出现名称。打开多个标签时附加数量和当前标签。缩放、平移和改变面板大小不会增加 `rev`。 |
+| 名称 | 保存或加载具名工作流会给会话命名，摘要行里也会出现这个名字。当 ComfyUI 用户数据中存在 `<name>.json` 时，编辑器标签也改成同名。 |
+| 存储 | 域 `dsh_comfyui`。Host 重启不丢图。记录为 `sessionId -> { workflow, prompt, semantic, revision, name, nameSource }`，保留最近更新的 20 个会话。`nameSource` 是 `file` 或 `tool`。模型看到的是投影和它自己的编辑结果。存储失败时退回内存，不阻塞桥接。具名工作流放在 `workflows` 表。 |
+| 进程 | **启动** 和 **停止** 控制 ComfyUI。命令由检出目录推导（Unix 上是 `.venv/bin/python`，Windows 上是 `.venv/Scripts/python.exe`，便携版是旁边的 `python_embeded/python.exe`，否则用 `python3` 或 `python`），参数来自上游端口，不接受任意命令。目录和 **随 DSH 启动** 存在 `dsh_comfyui` 中，不写入 DSH profile。 |
 
-### Model tools
+## 💬 右侧对话列
 
-| Tool | Does | Panel |
+![输入斜杠打开命令菜单](https://raw.githubusercontent.com/Natsubrei/dsh-comfyui-panel/main/docs/commands.png)
+
+- **一条会话，一个画布** — 这一列发进的是拥有当前画布的那个会话，模型在会话里看到的正是这张图。
+- **斜杠命令** — 输入 `/` 打开命令菜单，分 **Add**（Goal、Plan）和 **Commands**（Compact、Export）
+  两组；继续输入按名字过滤，方向键选择，Escape 关闭且不清空输入行。带参数的命令把 `/name ` 填入输入行，
+  由你补完再发送；不带参数的当场执行，回答显示在列里。模型和权限是随时可点的 chip，不重复列在这里。
+- **模型与权限** — 输入框上面两个 chip 是当前模型和当前权限，点开即可切换；`danger-full-access`
+  会先确认。
+- **消息** — 回复按 Markdown 渲染：标题、列表、带复制按钮的代码块、表格、引用，以及行内代码、粗体、
+  斜体、删除线和链接；`http`、`https`、`mailto` 之外的链接保持文本。每条消息的时间在气泡下方，
+  回复另带输出 token 数和复制按钮。
+- **新建与收起** — **新建** 换一个会话；收起后画布右缘留一条玻璃标签，点它恢复。
+
+## ⌨️ 模型工具
+
+| 工具 | 作用 | 面板 |
 | --- | --- | --- |
-| `comfyui_status` | Upstream, panel, workflow summary, storage, supervisor, and the latest run. `diagnostics` has one row per layer (`upstream`, `frontend`, `panel`, `commandChannel`, `storage`, `supervisor`, `workflow`) with `ok`, a one-sentence `detail`, and an `action` when a next step exists. `warn: true` with `ok: true` means working but degraded, such as an unreported frontend version. | No |
-| `comfyui_graph_read` | Per node: `id`, `type`, `title`, `mode`, `widgets` (`name -> value`), and `inputs` (`name -> "<sourceNodeId>:<slot>"`). `layout=true` adds canvas boxes and an overlap verdict. `full=true` adds the raw UI workflow and API prompt. | No |
-| `comfyui_run` | Submits the synced API prompt and returns `prompt_id`. The Host keeps tracking the run after the call returns, with or without the panel. The output PNG carries the UI workflow, so dragging it back into ComfyUI restores the graph. `wait=true` returns up to four `type: 'output'` images, 20 MB each. Without an attachment service, or when the model route does not accept images, the result names the files instead. | No |
-| `comfyui_cancel` | Removes a queued prompt (`action: "deleted"`) or interrupts a running one (`action: "interrupted"`). A prompt that already finished is a no-op. Copying output files to a chosen path is not a tool yet. | No |
-| `comfyui_progress` | Panel events (current node, step progress, errors), the run record, the live `/queue`, and `hostRun` (terminal status and output file names). `hostRun` continues after the panel closes. Step progress does not. | No |
-| `comfyui_edit` | Adds, removes, moves, and reconnects nodes, and sets widget values, in one ordered batch. The result includes the node and link counts left behind, so a half-applied edit is visible. It does not validate graph semantics. ComfyUI rejects a bad edit when it converts the graph to a prompt. | Open |
-| `comfyui_screenshot` | Writes the editor canvas to a PNG and returns the path. Open it with `read_image`. | Open |
-| `comfyui_node_info` | Cached `/object_info` lookup for class types and input names. | No |
-| `comfyui_workflow_save` | Stores the synced workflow under a name. The same name replaces that slot. There is no merge, undo, or per-slot history. | No |
-| `comfyui_workflow_list` | Saved slots (node and link counts, write time) plus `.json` files in ComfyUI's user `workflows/` directory (size, modification time). `source` is `slot` or `comfyui`. The slot this session is editing is marked current. A failed ComfyUI read leaves the slots and sets `warning`. | No |
-| `comfyui_workflow_load` | Replaces the open graph with a saved slot or a ComfyUI user workflow, then syncs. A slot wins over a ComfyUI file of the same name unless `source` says which. | Open |
-| `comfyui_workflow_export` | Writes a UI workflow JSON from a saved slot or the session graph. The path stays inside the session workspace. | No |
-| `comfyui_workflow_import` | Reads a UI workflow JSON into a slot. The path stays inside the session workspace. | No |
-| `comfyui_workflow_switch` | Switches to another open tab by `name`, or by `path` when two tabs share a label, and keeps that tab's unsaved edits. | Open |
-| `comfyui_workflow_close` | Closes one open tab. It requires `confirm: true` and expects the user to have asked. An unsaved file tab opens ComfyUI's own save dialog. A temporary tab with unsaved changes is refused. | Open |
+| `comfyui_status` | 上游、面板、工作流摘要、存储、进程监管（`supervisor`）和最近一次运行。`diagnostics` 每层一行（`upstream`、`frontend`、`panel`、`commandChannel`、`storage`、`supervisor`、`workflow`），带 `ok`、一句话 `detail`，需要下一步时带 `action`。`warn: true` 且 `ok: true` 表示能用但降级，例如前端版本未上报。 | 可关闭 |
+| `comfyui_graph_read` | 每个节点给出 `id`、`type`、`widgets`（`name -> value`）和 `inputs`（`name -> "<sourceNodeId>:<slot>"`）；`title` 在设置且与类型不同时才有，`mode` 只在 mute/bypass 时才有。`layout=true` 只返回节点 id、类型和画布框，另加重叠判定。`full=true` 只返回原始 UI 工作流和 API 提示。 | 可关闭 |
+| `comfyui_run` | 提交已同步的 API 提示并返回 `prompt_id`。调用返回后 Host 继续跟踪这次运行，无论面板开不开。输出的 PNG 带 UI 工作流，拖回 ComfyUI 可恢复图。`wait=true` 返回最多四张 `type: 'output'` 图片，每张 20 MB。没有附件服务，或模型路由不接受图片时，结果改为列出文件名。 | 可关闭 |
+| `comfyui_cancel` | 移除排队中的提示（`action: "deleted"`）或中断正在运行的提示（`action: "interrupted"`）。已经结束的提示是空操作。把输出文件复制到指定路径目前没有对应的工具。 | 可关闭 |
+| `comfyui_progress` | 面板事件（当前节点、步骤进度、错误）、运行记录、实时 `/queue`，以及 `hostRun`（终态和输出文件名）。面板关闭后 `hostRun` 继续，步骤进度不继续。 | 可关闭 |
+| `comfyui_edit` | 在一个有序批次里增删、移动、重连节点并设置控件值。结果带回剩下的节点和连线数，所以只应用了一半的编辑看得见。它不校验图的语义，由 ComfyUI 在转成提示时拒绝错误编辑。 | 需打开 |
+| `comfyui_screenshot` | 把编辑器画布写成 PNG 并返回路径。用 `read_image` 打开。 | 需打开 |
+| `comfyui_node_info` | 缓存的 `/object_info` 查询，用于类类型和输入名。 | 可关闭 |
+| `comfyui_workflow_save` | 按名称保存已同步的工作流。同名会覆盖该槽位。没有合并、撤销或逐槽位历史。 | 可关闭 |
+| `comfyui_workflow_list` | 已保存的槽位（节点和连线数、写入时间），加上 ComfyUI 用户 `workflows/` 目录里的 `.json` 文件（大小、修改时间）。`source` 为 `slot` 或 `comfyui`。当前会话正在编辑的槽位会被标出。ComfyUI 读取失败时保留槽位并给出 `warning`。 | 可关闭 |
+| `comfyui_workflow_load` | 用已保存的槽位或 ComfyUI 用户工作流替换打开的图，然后同步。同名时槽位优先，除非 `source` 指明用哪个。 | 需打开 |
+| `comfyui_workflow_export` | 从已保存的槽位或会话的图写出一份 UI 工作流 JSON。路径必须在会话工作区内。 | 可关闭 |
+| `comfyui_workflow_import` | 把 UI 工作流 JSON 读入一个槽位。路径必须在会话工作区内。 | 可关闭 |
+| `comfyui_workflow_switch` | 按 `name` 切换到另一个已打开的标签；两个标签同名时用 `path`。该标签未保存的编辑会保留。 | 需打开 |
+| `comfyui_workflow_close` | 关闭一个已打开的标签。要求 `confirm: true`，并假定用户已经要求关闭。有未保存内容的文件标签会打开 ComfyUI 自己的保存对话框。有未保存内容的临时标签会被拒绝关闭。 | 需打开 |
 
-`comfyui_workflow_save`, `comfyui_workflow_list`, `comfyui_workflow_export`, and `comfyui_workflow_import` work with the panel closed only after this session has already synced or restored a workflow.
+`comfyui_workflow_save`、`comfyui_workflow_list`、`comfyui_workflow_export` 和 `comfyui_workflow_import` 只在该会话已经同步或恢复过工作流之后，才能在面板关闭时使用。
 
-## Configuration
+## ⚙️ 设置
 
-Default upstream is `http://127.0.0.1:8188`. Prefer a loopback address. To change it, override this plugin's row in the profile `cordis.patch.yml` by the same `id`. A patch replaces the whole `config`, so repeat `prefix`. `prefix` is fixed at `/comfyui`. Any other value fails the plugin load.
+![设置：目录、随 DSH 启动、保存](https://raw.githubusercontent.com/Natsubrei/dsh-comfyui-panel/main/docs/settings.png)
+
+- **ComfyUI 目录** — 面板代管时用的检出目录。选好之后 **启动** 和 **停止** 才归面板管。
+- **随 DSH 启动** — 记住这个开关，DSH 起来时一并启动 ComfyUI。
+- 这两项存在 `dsh_comfyui` 域里，不写进 DSH profile。
+
+默认上游是 `http://127.0.0.1:8188`。优先使用回环地址。要改地址，在 profile 的 `cordis.patch.yml`
+里按同一个 `id` 覆盖本插件的行。补丁会替换整个 `config`，所以要重复写 `prefix`。`prefix` 固定为
+`/comfyui`，其他值会让插件加载失败。
 
 ```yaml
 - insert:
@@ -115,24 +145,29 @@ Default upstream is `http://127.0.0.1:8188`. Prefer a loopback address. To chang
         prefix: /comfyui
 ```
 
-The proxy strips the DSH session cookie (`dsh-auth-…`) and still forwards every other cookie and `Authorization`. Point `upstream` only at a server you trust. See [SECURITY.md](SECURITY.md).
+代理会去掉 DSH 会话 cookie（`dsh-auth-…`），其他 cookie 和 `Authorization` 仍会转发。`upstream`
+只指向你信任的服务。见 [SECURITY.md](SECURITY.md)。
 
-Starting ComfyUI from the panel needs no profile configuration. A `supervise` block on the plugin row overrides that setup at startup. Its fields, the required `cwd`, and the defaults are in [docs/supervise.md](docs/supervise.md).
+从面板启动 ComfyUI 不需要 profile 配置。插件行上的 `supervise` 块会在启动时覆盖面板的设置。
+字段、必填的 `cwd` 和默认值见 [docs/supervise.md](docs/supervise.md)。
 
-## Requirements
+## 注意事项
 
-- A ComfyUI whose frontend is the standard `comfyui-frontend-package` build (relative `./assets/...`, `api_base` derived from the path). The panel was last verified against frontend 1.57.1. Another reported version shows a notice and still loads. A server that omits the version is left alone.
-- The panel uses `window.comfyAPI.app.app`, a legacy shim, not a stable API. What it actually touches, and how to re-check it after an upgrade, is in [docs/comfyui-bridge.md](docs/comfyui-bridge.md).
-- The DSH Web profile has `storage`, `storage-json`, and `storage-domain` mounted. The default profile does. Without them, workflows stay in memory.
-- Adopting an already-running ComfyUI, so Stop still works after a reload, needs Linux `/proc` or `lsof`. Without either, that server stays external. Starting one from the panel needs neither. Adoption is retried when the panel or `comfyui_status` sees a healthy upstream. A listener whose working directory is not the configured checkout stays external, with its pid reported and Stop unavailable. Windows can start a checkout or a portable build from the panel. An already-running server there stays external.
+### 要求
 
-## Limits
+- ComfyUI 的前端是标准 `comfyui-frontend-package` 构建（相对路径 `./assets/...`，`api_base` 由路径推导）。面板最后在 1.57.1 上验证。上报其他版本时 `comfyui_status` 会把它标出来，仍然加载。不上报版本的服务不做处理。
+- 面板使用 `window.comfyAPI.app.app`，这是兼容层，不是稳定 API。实际用到的成员和升级后如何复查见 [dev/comfyui-bridge.md](dev/comfyui-bridge.md)。
+- DSH Web profile 挂载了 `storage`、`storage-json` 和 `storage-domain`。默认 profile 有。缺少时工作流只存在内存中。
+- 接管已在运行的 ComfyUI（这样刷新后 **停止** 仍可用）需要 Linux 的 `/proc` 或 `lsof`。两者都没有时，该服务保持 external。从面板启动一个不需要这两者。面板或 `comfyui_status` 看到健康的上游时会重试接管。工作目录不是所配置检出目录的监听者保持 external，会报告 pid，且不能停止。Windows 可以从面板启动检出或便携版，那里已在运行的服务保持 external。
 
-- ComfyUI user workflows are read from `workflows/` through `/userdata`, one JSON file per load. A name is the path below `workflows/` without `.json`, so it is case-sensitive and a subfolder stays in the name. Only `.json` files are listed. The plugin never writes or moves those files. Loading one changes the panel canvas only.
-- Previews, per-node progress, elapsed time, and the bar's Cancel exist only while the panel is mounted. A run the Queue button started gets a `hostRun` watch from its first execution event. A run that started before this panel attached has no `hostRun` and no step progress. The Host stops watching after 30 minutes and reports `lost`, which means the end was not observed, not that the run failed.
-- A ComfyUI the plugin only adopted keeps running when the plugin unloads. The plugin did not start that process, and after a reload it cannot tell that process from one you started by hand. Stop it from the panel first if you want it gone. A child the plugin spawned is stopped on unload.
-- The process manager cannot tell a hung ComfyUI from a long generation that stops answering `/system_stats`. Tune health restarts per workload.
+### 限制
 
-## License
+- ComfyUI 用户工作流通过 `/userdata` 从 `workflows/` 读取，每次加载一个 JSON 文件。名称是 `workflows/` 下的路径去掉 `.json`，所以区分大小写，子目录会留在名称里。只列出 `.json` 文件。插件从不写入或移动这些文件。加载一个只改变面板画布。
+- 预览、逐节点进度、耗时和工具栏上的 **取消** 只在面板挂载期间存在。Queue 按钮发起的运行从第一个执行事件起获得 `hostRun` 跟踪。面板挂载前就开始的运行没有 `hostRun`，也没有步骤进度。Host 在 30 分钟后停止跟踪并报告 `lost`，含义是没观察到结束，不是运行失败。
+- 仅被插件接管的 ComfyUI 在插件卸载后继续运行。那个进程不是插件启动的，重载后插件也分不清它是自己的幸存进程还是你手动启动的。要关掉它，先在面板里停止。插件自己启动的子进程会在卸载时停止。
+- 进程管理器分不清卡死的 ComfyUI 和长时间生成、暂时不回应 `/system_stats` 的 ComfyUI。探活失败触发的重启要按工作负载调整（在 `supervise` 块里）。
 
-[MIT](LICENSE).
+## 喜欢它？
+
+如果 `dsh-comfyui-panel` 让你的 ComfyUI 和 Agent 待在同一个窗口里，欢迎在
+[GitHub](https://github.com/Natsubrei/dsh-comfyui-panel) 点个 ⭐，也欢迎提 issue 和 PR。
