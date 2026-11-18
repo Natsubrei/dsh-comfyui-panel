@@ -41,8 +41,8 @@
         "zh": "ComfyUI 面板"
       },
       "description": {
-        "en": "The real ComfyUI editor inside the DeepSeek Harness Web UI. The model can read, edit, and run the workflow.",
-        "zh": "在 DeepSeek Harness Web UI 里使用真正的 ComfyUI 编辑器，模型可读取、编辑并运行工作流。"
+        "en": "The ComfyUI editor inside the DeepSeek Harness Web UI. The model can read, edit, and run the workflow.",
+        "zh": "在 DeepSeek Harness Web UI 里使用 ComfyUI 编辑器，模型可读取、编辑并运行工作流。"
       },
       "icon": "https://raw.githubusercontent.com/Natsubrei/dsh-comfyui-panel/main/icon.svg",
       "author": "Natsubrei",
@@ -69,6 +69,18 @@
         ]
       },
       "versions": [
+        {
+          "version": "0.11.0",
+          "publishTimestamp": 1795009800,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/Natsubrei/dsh-comfyui-panel",
+            "commit": "b45f8a9ac429cb78ce00fbdfd78604997574bd47"
+          },
+          "engines": {
+            "dsh": ">=0.1.2-alpha.4 <0.3.0-0"
+          }
+        },
         {
           "version": "0.10.1",
           "publishTimestamp": 1794236190,
