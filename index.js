@@ -1183,22 +1183,27 @@ export function apply(ctx, rawConfig = {}) {
         const wanted = typeof args?.promptId === 'string' && args.promptId.length > 0 ? args.promptId : null
         const promptId = wanted ?? sessionStore.latestRun(sessionId).run?.promptId ?? null
         if (promptId === null || promptId.length === 0) throw new Error('No ComfyUI run to cancel in this session.')
-        // `/interrupt` only stops the prompt that is running. A queued prompt
-        // has to leave the queue instead, so ask where this one is first; a
-        // failed read is not proof either way, and the interrupt path below
-        // targets the id anyway.
+        // `/interrupt` only stops the prompt that is running, and it returns
+        // 200 even when this id is not the one running. A queued prompt has to
+        // leave the queue instead. A failed read, or an id in neither list, is
+        // not an interrupt.
         const queue = await fetchJson('/queue', 2500).catch(() => null)
-        if (queue?.ok === true && queueHas(queue.data?.queue_pending, promptId)) {
+        if (queue?.ok !== true) {
+          throw new Error('ComfyUI queue could not be read, so the prompt was not cancelled.')
+        }
+        if (queueHas(queue.data?.queue_pending, promptId)) {
           const removed = await fetchJson('/queue', 10000, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ delete: [promptId] }),
           }).catch(() => null)
-          if (removed?.ok === true) {
-            return { text: JSON.stringify({ cancelled: true, promptId, action: 'deleted' }, null, 2) }
+          if (removed?.ok !== true) {
+            throw new Error(`ComfyUI did not remove the queued prompt (HTTP ${removed?.status ?? 'no response'}).`)
           }
-          // The prompt may have started between the read and the delete. The
-          // interrupt below is targeted, so it is a no-op when it did not.
+          return { text: JSON.stringify({ cancelled: true, promptId, action: 'deleted' }, null, 2) }
+        }
+        if (!queueHas(queue.data?.queue_running, promptId)) {
+          return { text: JSON.stringify({ cancelled: false, promptId, action: 'absent' }, null, 2) }
         }
         const response = await fetchJson('/interrupt', 10000, {
           method: 'POST',
@@ -2488,10 +2493,10 @@ function normalizeSupervise(raw) {
     args,
     cwd,
     env: isObject(raw?.env) ? Object.fromEntries(Object.entries(raw.env).map(([key, value]) => [key, String(value)])) : {},
-    restartDelayMs: clamp(Number(raw?.restartDelayMs ?? 5000), 500, 120000),
-    maxRestarts: clamp(Number(raw?.maxRestarts ?? 5), 0, 50),
-    probeIntervalMs: clamp(Number(raw?.probeIntervalMs ?? 20000), 5000, 300000),
-    startTimeoutMs: clamp(Number(raw?.startTimeoutMs ?? 120000), 5000, 600000),
+    restartDelayMs: finiteSetting(raw?.restartDelayMs, 5000, 500, 120000, 'restartDelayMs'),
+    maxRestarts: finiteSetting(raw?.maxRestarts, 5, 0, 50, 'maxRestarts'),
+    probeIntervalMs: finiteSetting(raw?.probeIntervalMs, 20000, 5000, 300000, 'probeIntervalMs'),
+    startTimeoutMs: finiteSetting(raw?.startTimeoutMs, 120000, 5000, 600000, 'startTimeoutMs'),
     logPath: typeof raw?.logPath === 'string' && raw.logPath.length > 0 ? raw.logPath : null,
   }
 }
@@ -2582,6 +2587,25 @@ function delay(ms) {
 
 function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value))
+}
+
+/**
+ * A supervise timing field. Absent uses the default. A present value that is
+ * not a finite number fails at load: `clamp(NaN)` used to survive and turn
+ * the restart cap and the probe interval into NaN.
+ * @param {unknown} value - the configured value, if any.
+ * @param {number} fallback - the value when the field is absent.
+ * @param {number} minimum - the inclusive lower bound.
+ * @param {number} maximum - the inclusive upper bound.
+ * @param {string} label - the field name, for the error.
+ * @returns {number} the clamped number.
+ */
+export function finiteSetting(value, fallback, minimum, maximum, label) {
+  // YAML leaves an empty field as null. That is "not set", same as omitting it.
+  if (value === undefined || value === null) return clamp(fallback, minimum, maximum)
+  const number = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(number)) throw new Error(`dsh-comfyui: supervise.${label} must be a finite number`)
+  return clamp(number, minimum, maximum)
 }
 
 function filterResponseHeaders(headers) {

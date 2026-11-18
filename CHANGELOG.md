@@ -22,6 +22,22 @@ the version bump.
   builds them, rather than with the Host's separator. On Windows a POSIX home
   came back with backslashes, which broke the discovery assertions and the
   candidates they compared.
+- A finished run is no longer left running when the next status arrives in
+  the same burst. Cancel reports that the prompt was not queued or running,
+  instead of claiming an interrupt ComfyUI did not perform.
+- An edit, load, or tab change fails when the Host did not receive the
+  graph. A slower sync cannot overwrite a newer one, and a long editor file
+  name no longer rejects the whole sync.
+- Start adopts a ComfyUI this checkout is already serving, so Stop can reach
+  it. A server this plugin does not own still cannot be stopped, and one that
+  has already exited says it is not running.
+- A screenshot that does not fit the command channel is shrunk, or the
+  command fails, instead of being dropped. An empty workflow no longer toasts
+  "Empty canvas" on load.
+- A non-numeric `supervise` timing value fails at load instead of disabling
+  the restart limit.
+- The panel no longer warns when the ComfyUI frontend is not the verified
+  version. `comfyui_status` still reports the mismatch.
 - The permission menu shows the same three modes as the native picker:
   read only, workspace write, and full access, with full access asking
   before it switches.

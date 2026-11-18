@@ -39,4 +39,31 @@ import { createCommandChannel, takeCommand } from '../commands.js'
   assert.equal(channels.connected('s-gone'), false)
 }
 
+{
+  const channels = createCommandChannel()
+  const controller = new AbortController()
+  controller.abort()
+  const dead = await channels.poll('s-abort', { timeoutMs: 5000, signal: controller.signal })
+  assert.equal(dead.status, 499)
+  const awaited = channels.ask('s-abort', { id: 'cmd-live', operations: [] }, { timeoutMs: 5000, what: 'edit' })
+  const polled = await channels.poll('s-abort', { timeoutMs: 1000 })
+  assert.equal(polled.body.command?.id, 'cmd-live', 'an already-aborted poll must not take the next command')
+  assert.equal(channels.answer('cmd-live', { ok: true, value: { applied: 1 } }), true)
+  await awaited
+}
+
+{
+  const channels = createCommandChannel()
+  const awaited = channels.ask('s-queued', { id: 'cmd-queued', operations: [] }, { timeoutMs: 5000, what: 'edit' })
+  const controller = new AbortController()
+  controller.abort()
+  const dead = await channels.poll('s-queued', { timeoutMs: 1000, signal: controller.signal })
+  assert.equal(dead.status, 499)
+  assert.equal(dead.body.command, undefined, 'an aborted poll must not be handed a command that was already queued')
+  const live = await channels.poll('s-queued', { timeoutMs: 1000 })
+  assert.equal(live.body.command?.id, 'cmd-queued')
+  assert.equal(channels.answer('cmd-queued', { ok: true, value: { applied: 1 } }), true)
+  await awaited
+}
+
 console.log('commands test passed')

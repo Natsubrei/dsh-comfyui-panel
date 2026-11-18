@@ -148,6 +148,32 @@ assert.throws(() => run(makeGraph().graph, { op: 'add_node', type: 'NoSuchNode' 
   assert.match(shot.dataUrl, /^data:image\/png;base64,/)
   assert.throws(() => captureGraph({}), /canvas is not ready/)
   assert.throws(() => captureGraph({ canvas: { canvas: { width: 1, height: 1, toDataURL: () => '' } } }), /refused to serialize/)
+
+  const big = `data:image/png;base64,${'A'.repeat(1_200_000)}`
+  const previousDocument = globalThis.document
+  globalThis.document = /** @type {any} */ ({
+    createElement() {
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({ drawImage() {} }),
+        toDataURL: () => 'data:image/png;base64,shrunk',
+      }
+    },
+  })
+  try {
+    const shrunk = captureGraph({ canvas: { canvas: { width: 2000, height: 1000, toDataURL: () => big } } })
+    assert.equal(shrunk.dataUrl, 'data:image/png;base64,shrunk')
+    assert.equal(shrunk.width, 1000, 'the reported size is the image that was sent')
+    assert.equal(shrunk.height, 500)
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document
+    else globalThis.document = previousDocument
+  }
+  assert.throws(
+    () => captureGraph({ canvas: { canvas: { width: 4, height: 4, toDataURL: () => big } } }),
+    /too large for the command channel/,
+  )
 }
 
 // Both dictionaries carry the same keys, so a missing translation cannot ship.
@@ -238,6 +264,16 @@ const off = [['start', true], ['stop', true]]
   assert.deepEqual(matrix(result), off)
   assert.equal(result.actions[0].title, en.serverNotOwned)
   assert.equal(result.actions[1].title, en.serverNotOwned)
+}
+
+{
+  const outside = plan({ health: true, owned: false, state: 'external', pid: 4242 })
+  assert.equal(outside.label, en.barExternal)
+  assert.deepEqual(matrix(outside), off)
+  assert.equal(outside.actions[1].title, en.serverNotOwned)
+  const deadOutside = plan({ health: false, owned: false, state: 'external', pid: 4242 })
+  assert.equal(deadOutside.label, en.barStopped)
+  assert.equal(deadOutside.actions[1].title, en.serverStopped, 'a dead external process is not running')
 }
 
 // A healthy server says so while the editor is still booting: that phase is
@@ -561,6 +597,19 @@ const stage = (service, extra = {}) => overlayPlan({
   assert.equal(handlers.get('b_preview').length, 0, 'including the preview listeners')
 }
 
+{
+  const { offerRelayEvent } = mod.__ops
+  const box = { pending: null }
+  assert.equal(offerRelayEvent(box, { kind: 'progress', value: 1 }), null)
+  assert.equal(offerRelayEvent(box, { kind: 'progress', value: 2 }), null, 'a newer progress replaces the one still waiting')
+  assert.equal(box.pending.value, 2)
+  const displaced = offerRelayEvent(box, { kind: 'execution_success', promptId: 'p1' })
+  assert.equal(displaced.kind, 'progress')
+  const kept = offerRelayEvent(box, { kind: 'status', queueRemaining: 0 })
+  assert.equal(kept.kind, 'execution_success', 'status does not swallow the terminal event')
+  assert.equal(box.pending.kind, 'status')
+}
+
 // The Host has to queue as the iframe's socket, or ComfyUI sends the run's
 // events to nobody the UI is listening to.
 {
@@ -639,6 +688,13 @@ const stage = (service, extra = {}) => overlayPlan({
   assert.ok(screenY > 0 && screenY < 869, 'and vertically')
   assert.equal(viewShowsAll(app), true, 'after fitting, the view contains every node')
 
+  let emptyExecuted = false
+  const empty = makeApp({ scale: 1, offset: Float64Array.from([0, 0]) })
+  empty.rootGraph = { _nodes: [] }
+  empty.extensionManager = { command: { execute: async () => { emptyExecuted = true } } }
+  assert.equal(await fitCanvas(empty), false, 'an empty graph is not framed')
+  assert.equal(emptyExecuted, false, 'FitView would toast Empty canvas')
+
   commandApp.extensionManager.command.execute = async () => { throw new Error('command unavailable') }
   assert.equal(await fitCanvas(commandApp), true, 'a failing command falls back instead of throwing')
 
@@ -716,6 +772,29 @@ const stage = (service, extra = {}) => overlayPlan({
   assert.equal(calls[2].owner, owner, 'the workflow the caller named owns the loaded graph')
   await assert.rejects(applyWorkflowGraph(app, { links: [] }), /not a ComfyUI UI workflow/)
   await assert.rejects(applyWorkflowGraph({}, { nodes: [] }), /cannot load a workflow/)
+}
+
+{
+  const { applyEdits } = mod.__ops
+  const { graph, nodes } = makeGraph()
+  const node = makeNode(graph, 7, [], [{ name: 'steps', value: 12 }])
+  nodes.set(7, node)
+  graph._nodes = [node]
+  const app = { rootGraph: graph }
+  await assert.rejects(
+    applyEdits(app, [{ op: 'set_widget', id: 7, name: 'steps', value: 6 }], {
+      liteGraph: {},
+      sync: async () => false,
+    }),
+    /did not receive it/,
+  )
+  assert.equal(node.widgets[0].value, 6, 'the canvas keeps the edit the Host missed')
+  const landed = await applyEdits(app, [{ op: 'set_widget', id: 7, name: 'steps', value: 8 }], {
+    liteGraph: {},
+    sync: async () => true,
+  })
+  assert.equal(landed.applied, 1)
+  assert.equal(node.widgets[0].value, 8)
 }
 
 // The load is not done when the editor shows the graph: the Host has to have
@@ -1181,15 +1260,15 @@ const stage = (service, extra = {}) => overlayPlan({
     assert.equal('extra' in onlyCamera.workflow, false, 'an extra with only the camera is dropped')
     assert.deepEqual(
       Object.keys(kept).sort(),
-      ['clientId', 'file', 'prompt', 'revision', 'semantic', 'sessionId', 'tabs', 'workflow'],
+      ['clientId', 'file', 'prompt', 'pushedAt', 'revision', 'semantic', 'sessionId', 'tabs', 'workflow'],
       'the state body keeps its exact fields; no name is added when it did not change',
     )
   }
 
   // Two pushes overlap while the first is still converting the graph. The
   // older snapshot must not post once a newer one started, or the Host would
-  // store an older workflow under a higher revision and nothing would correct
-  // it: the next tick already holds the newer json and sees no change.
+  // store an older workflow under a higher revision. The older caller waits
+  // for the newer one instead of reporting a miss the newer push is sending.
   {
     /** @type {((value: any) => void) | undefined} */
     let release
@@ -1221,9 +1300,171 @@ const stage = (service, extra = {}) => overlayPlan({
     const older = sync.push(true)
     const newer = sync.push(true)
     release?.(state.prompt)
-    assert.equal((await older).posted, false, 'the stale push posts nothing')
+    assert.equal((await older).posted, true, 'the stale push waits for the snapshot that lands')
     assert.equal((await newer).posted, true)
+    assert.equal(calls, 1, 'the superseded snapshot never posts')
+  }
+
+  {
+    /** @type {((value: any) => void) | undefined} */
+    let release
+    const bodies = []
+    const state = makeState()
+    const sync = createSync({
+      sessionId: 'session-1',
+      editor: () => ({
+        graph: () => ({ serialize: () => state.workflow }),
+        serialize: () => state.workflow,
+        selection: () => state.selection,
+        name: () => state.name,
+        tabs: () => [],
+        clientId: () => state.clientId,
+        project: () => ({}),
+        toPrompt: () => Promise.resolve(state.prompt),
+      }),
+      post: async payload => {
+        bodies.push(payload)
+        const mine = bodies.length
+        if (mine === 1) await new Promise(resolve => { release = resolve })
+        // The slow response claims a higher revision. Adopting it after the
+        // newer push would move the page counter backwards.
+        return { revision: mine === 1 ? 99 : 4, name: null }
+      },
+      now: () => 5,
+    })
+    const older = sync.push(true)
+    await new Promise(resolve => setImmediate(resolve))
+    state.workflow = { nodes: [{ id: 2, type: 'Test' }], links: [], extra: { ds: { scale: 1, offset: [0, 0] } } }
+    const newer = sync.push(true)
+    await new Promise(resolve => setImmediate(resolve))
+    release?.()
+    assert.equal((await older).posted, true, 'the caller observes the newer push, whose body did land')
+    assert.equal((await newer).posted, true)
+    assert.equal(bodies.length, 2)
+    assert.ok(bodies[1].pushedAt > bodies[0].pushedAt, 'the later snapshot has the later stamp')
+    assert.equal(bodies[1].workflow.nodes[0].id, 2)
+    assert.equal(sync.snapshot().revision, 4, 'the late response does not move the counter backwards')
+  }
+
+  // A quiet tick used to bump the generation, so a post already in flight threw
+  // its response away and the bar stayed on syncing. The tick posts nothing and
+  // must not cancel the push that is actually sending.
+  {
+    /** @type {((value: any) => void) | undefined} */
+    let release
+    let calls = 0
+    const state = makeState()
+    const sync = createSync({
+      sessionId: 'session-1',
+      editor: () => ({
+        graph: () => ({ serialize: () => state.workflow }),
+        serialize: () => state.workflow,
+        selection: () => state.selection,
+        name: () => state.name,
+        tabs: () => [],
+        clientId: () => state.clientId,
+        project: () => ({}),
+        toPrompt: () => Promise.resolve(state.prompt),
+      }),
+      post: async payload => {
+        calls += 1
+        if (calls === 1) await new Promise(resolve => { release = resolve })
+        return { revision: payload.revision, name: null }
+      },
+      now: () => 7,
+    })
+    const older = sync.push(true)
+    await new Promise(resolve => setImmediate(resolve))
+    const quiet = await sync.push(false)
+    assert.equal(quiet.posted, false, 'a quiet tick does not take over an in-flight post')
+    release?.()
+    assert.equal((await older).posted, true)
     assert.equal(calls, 1)
+    assert.equal(sync.snapshot().at, 7, 'the landed post still records its sync time')
+  }
+
+  // The edit's push is still converting when the tick reads the canvas. The
+  // signature is not claimed yet, so the tick sends the edited graph, and the
+  // edit waits for that send instead of reporting success over a post that
+  // never happened.
+  {
+    /** @type {((value: any) => void) | undefined} */
+    let release
+    let blocked = true
+    const bodies = []
+    const state = makeState()
+    const sync = createSync({
+      sessionId: 'session-1',
+      editor: () => ({
+        graph: () => ({ serialize: () => state.workflow }),
+        serialize: () => state.workflow,
+        selection: () => state.selection,
+        name: () => state.name,
+        tabs: () => [],
+        clientId: () => state.clientId,
+        project: () => ({}),
+        toPrompt: () => {
+          if (!blocked) return Promise.resolve(state.prompt)
+          blocked = false
+          return new Promise(resolve => { release = resolve })
+        },
+      }),
+      post: async payload => {
+        bodies.push(payload)
+        return { revision: payload.revision, name: null }
+      },
+      now: () => 1,
+    })
+    const older = sync.push(true)
+    state.workflow = { nodes: [{ id: 2, type: 'Test' }], links: [], extra: { ds: { scale: 1, offset: [0, 0] } } }
+    const newer = sync.push(false)
+    release?.(state.prompt)
+    assert.equal((await older).posted, true, 'the edit observes the push that lands')
+    assert.equal((await newer).posted, true)
+    assert.equal(bodies.length, 1, 'the superseded conversion does not post the old graph')
+    assert.equal(bodies[0].workflow.nodes[0].id, 2)
+  }
+
+  // The winner's POST failed. Both callers see that failure, and the signature
+  // is forgotten so the next tick retries instead of treating the graph as synced.
+  {
+    /** @type {((value: any) => void) | undefined} */
+    let release
+    let blocked = true
+    const state = makeState()
+    let posts = 0
+    const sync = createSync({
+      sessionId: 'session-1',
+      editor: () => ({
+        graph: () => ({ serialize: () => state.workflow }),
+        serialize: () => state.workflow,
+        selection: () => state.selection,
+        name: () => state.name,
+        tabs: () => [],
+        clientId: () => state.clientId,
+        project: () => ({}),
+        toPrompt: () => {
+          if (!blocked) return Promise.resolve(state.prompt)
+          blocked = false
+          return new Promise(resolve => { release = resolve })
+        },
+      }),
+      post: async payload => {
+        posts += 1
+        if (posts === 1) throw new Error('Could not send the workflow to the Host. HTTP 500')
+        return { revision: payload.revision, name: null }
+      },
+      now: () => 1,
+    })
+    const older = sync.push(true)
+    const newer = sync.push(true)
+    release?.(state.prompt)
+    const settled = await Promise.allSettled([older, newer])
+    assert.equal(settled[0].status, 'rejected')
+    assert.equal(settled[1].status, 'rejected')
+    if (settled[0].status === 'rejected') assert.match(settled[0].reason?.message ?? '', /HTTP 500/)
+    assert.equal(posts, 1, 'the superseded conversion does not post')
+    assert.equal((await sync.push(false)).posted, true, 'the forgotten signature makes the next tick retry')
   }
 
   // The Host keeps the revision monotonic across page reloads, and the panel

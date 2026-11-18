@@ -114,4 +114,31 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
   store.close()
 }
 
+{
+  const store = createSessionStore({
+    logger: { warn() {} },
+    releaseCommands: () => {},
+    persist: () => {},
+  })
+  const older = { nodes: [{ id: 1, type: 'KSampler' }], links: [] }
+  const newer = { nodes: [{ id: 2, type: 'SaveImage' }], links: [] }
+  const longName = 'n'.repeat(81)
+  assert.equal(store.sync('s-race', { revision: 1, pushedAt: 100, workflow: older, file: 'short' }).ok, true)
+  assert.equal(store.sync('s-race', { revision: 2, pushedAt: 200, workflow: newer }).ok, true)
+  const late = store.sync('s-race', { revision: 3, pushedAt: 100, workflow: older })
+  assert.equal(late.ok, true)
+  assert.equal(late.state.workflow.nodes[0].id, 2, 'a slower push does not replace the newer graph')
+  const renamed = store.sync('s-race', {
+    revision: 4,
+    pushedAt: 300,
+    file: longName,
+    name: longName,
+    workflow: { nodes: [{ id: 3, type: 'VAEDecode' }], links: [] },
+  })
+  assert.equal(renamed.ok, true, 'a long editor file name does not refuse the graph')
+  assert.equal(renamed.state.workflow.nodes[0].id, 3)
+  assert.equal(renamed.state.name, 'short')
+  store.close()
+}
+
 console.log('session store test passed')

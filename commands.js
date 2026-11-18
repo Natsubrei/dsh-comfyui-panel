@@ -136,6 +136,10 @@ export function createCommandChannel() {
    * @returns {Promise<PollResult>} the response body and its HTTP status; only an abort is a non-200.
    */
   function poll(sessionId, options = {}) {
+    // Already aborted, and Node does not replay the abort event. This has to
+    // run before `takeCommand`: a dead poll must not consume a queued command
+    // and then return 499, or the tool times out and the edit is gone.
+    if (options.signal?.aborted) return Promise.resolve({ body: { ok: false, error: 'poll aborted' }, status: 499 })
     const requested = typeof options.timeoutMs === 'number' && Number.isFinite(options.timeoutMs)
       ? options.timeoutMs
       : 20000

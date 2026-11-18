@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { apply, applySeedControls, collectOutputImages, outputImageMediaType, redactCookieHeader, redactRawHeaderPairs } from '../index.js'
+import { apply, applySeedControls, collectOutputImages, finiteSetting, outputImageMediaType, redactCookieHeader, redactRawHeaderPairs } from '../index.js'
 import { createSupervisor } from '../supervisor.js'
 import { stopsOnUnload } from '../service.js'
 
@@ -619,7 +619,8 @@ const rejected = await host.fetches.get('/api/comfyui/state').fetch(new Request(
     }),
   },
 ))
-assert.equal(rejected.status, 400, 'an unusable name is a client error, not a silent rename')
+assert.equal(rejected.status, 200, 'a long editor file name does not refuse the graph')
+assert.equal((await rejected.json()).name, null, 'and it is not stored as the slot name')
 
 const renamed = await host.fetches.get('/api/comfyui/state').fetch(new Request(
   'http://127.0.0.1/api/comfyui/state?sessionId=s1',
@@ -856,7 +857,13 @@ assert.ok(runBody.extra_data.extra_pnginfo.workflow.nodes.length > 0)
 assert.equal(runBody.extra_data.dsh_session_id, 's1')
 assert.equal('prompt' in runBody.extra_data.extra_pnginfo, false, 'the API prompt stays out of the PNG metadata')
 
-const cancelled = parse(await s1.tools.get('comfyui_cancel').execute({ promptId: run.prompt_id }, exec))
+mockQueue.queue_running = [[1, run.prompt_id, [], {}, []]]
+let cancelled
+try {
+  cancelled = parse(await s1.tools.get('comfyui_cancel').execute({ promptId: run.prompt_id }, exec))
+} finally {
+  mockQueue.queue_running = []
+}
 assert.deepEqual(cancelled, { cancelled: true, promptId: run.prompt_id, action: 'interrupted' })
 assert.equal(interruptedBodies.at(-1)?.prompt_id, run.prompt_id)
 
@@ -918,9 +925,10 @@ assert.equal(interruptedBodies.at(-1)?.prompt_id, run.prompt_id)
     },
   ))
   assert.equal(evented.status, 200)
+  const before = interruptedBodies.length
   const defaulted = parse(await sCancel.tools.get('comfyui_cancel').execute({}, execOf('s-cancel')))
-  assert.deepEqual(defaulted, { cancelled: true, promptId: queued.prompt_id, action: 'interrupted' })
-  assert.equal(interruptedBodies.at(-1)?.prompt_id, queued.prompt_id)
+  assert.deepEqual(defaulted, { cancelled: false, promptId: queued.prompt_id, action: 'absent' })
+  assert.equal(interruptedBodies.length, before, 'a prompt that is not running is not interrupted')
 }
 
 // A session that synced a workflow but never ran anything has no run to
@@ -2087,6 +2095,15 @@ assert.throws(
   () => apply(createHost(createStorage()), { upstream: 'http://127.0.0.1:8188', supervise: { enabled: true } }),
   /supervise\.cwd is required/,
 )
+assert.throws(
+  () => apply(createHost(createStorage()), {
+    upstream: 'http://127.0.0.1:8188',
+    supervise: { enabled: true, cwd: '/tmp/ComfyUI', maxRestarts: '5s' },
+  }),
+  /supervise\.maxRestarts must be a finite number/,
+)
+assert.equal(finiteSetting(null, 5, 0, 50, 'maxRestarts'), 5, 'an empty YAML value keeps the default')
+assert.throws(() => finiteSetting(Number.NaN, 5, 0, 50, 'maxRestarts'), /finite number/)
 
 // "Control after generate" is a frontend behaviour, so a Host-queued run has
 // to apply it itself — otherwise every tool-driven run repeats the last image.

@@ -20,6 +20,7 @@ import { sanitizeSemantic, stripViewState } from './projection.js'
  * @property {string | null} [clientId] - the panel's ComfyUI socket id.
  * @property {TabRecord[]} tabs - the workflows the panel's editor has open, in tab order.
  * @property {number} revision - the descriptive revision the model reads.
+ * @property {number | null} [pushedAt] - stamp of the snapshot this record came from. Memory only.
  * @property {number} nodes - node count of `workflow`.
  * @property {number} links - link count of `workflow`.
  * @property {string[]} types - up to 64 node class names.
@@ -45,6 +46,7 @@ import { sanitizeSemantic, stripViewState } from './projection.js'
  * @property {any} [file]
  * @property {any} [clientId]
  * @property {any} [revision]
+ * @property {any} [pushedAt]
  * @property {any} [tabs]
  *
  * @typedef {object} PersistedSession
@@ -157,6 +159,13 @@ export function createSessionStore({ persist, releaseCommands, logger }) {
     if (workflow === null) return { ok: false, error: 'workflow must be an object' }
     const previous = sessions.get(sessionId)
     const incoming = Number.isSafeInteger(body?.revision) ? body.revision : 0
+    // A slower push can finish after a newer one. The panel stamps each
+    // snapshot when it starts, so an older stamp must not replace the graph
+    // the newer push already stored — the page will not send it again.
+    const pushedAt = typeof body?.pushedAt === 'number' && Number.isFinite(body.pushedAt) ? body.pushedAt : null
+    if (previous !== undefined && pushedAt !== null && previous.pushedAt != null && pushedAt < previous.pushedAt) {
+      return { ok: true, state: previous }
+    }
     // The panel reports the name its editor would save under, but only when
     // that name changed: a canvas whose frontend has no file yet sends no
     // `name`, and the Host must keep the name a tool gave the session rather
@@ -169,9 +178,15 @@ export function createSessionStore({ persist, releaseCommands, logger }) {
         nameSource = null
       } else {
         const requested = validWorkflowName(body.name)
-        if (requested === null) return { ok: false, error: 'name must be 1-80 characters without control characters' }
-        name = requested
-        nameSource = 'file'
+        if (requested === null) {
+          const raw = typeof body.name === 'string' ? body.name : ''
+          // An empty name is a client bug. A long editor file name arrives as
+          // both `name` and `file`; the slot rule must not refuse the graph.
+          if (raw.trim().length === 0) return { ok: false, error: 'name must be 1-80 characters without control characters' }
+        } else {
+          name = requested
+          nameSource = 'file'
+        }
       }
     }
     // The panel reports the file the editor has open on every sync. A name that
@@ -187,9 +202,15 @@ export function createSessionStore({ persist, releaseCommands, logger }) {
         }
       } else {
         const file = validWorkflowName(body.file)
-        if (file === null) return { ok: false, error: 'file must be 1-80 characters without control characters' }
-        name = file
-        nameSource = 'file'
+        if (file === null) {
+          const raw = typeof body.file === 'string' ? body.file : ''
+          // An empty file name is a client bug. A long editor file name is
+          // not: the slot rules must not refuse the graph that came with it.
+          if (raw.trim().length === 0) return { ok: false, error: 'file must be 1-80 characters without control characters' }
+        } else {
+          name = file
+          nameSource = 'file'
+        }
       }
     }
     const renamed = name !== (previous?.name ?? null)
@@ -224,6 +245,7 @@ export function createSessionStore({ persist, releaseCommands, logger }) {
       // older panel, or a body built before the list existed — keeps the last
       // list instead of blanking it.
       tabs: body?.tabs === undefined ? (previous?.tabs ?? []) : sanitizeTabs(body.tabs),
+      pushedAt: pushedAt ?? previous?.pushedAt ?? null,
       // The panel's counter restarts with the page while the Host may hold a
       // higher persisted revision; keep the descriptive revision monotonic.
       revision: changed
@@ -288,6 +310,7 @@ export function createSessionStore({ persist, releaseCommands, logger }) {
       // next sync replaces this list.
       tabs: [],
       revision: record.revision,
+      pushedAt: null,
       nodes: Array.isArray(workflow.nodes) ? workflow.nodes.length : 0,
       links: Array.isArray(workflow.links) ? workflow.links.length : 0,
       types: Array.isArray(workflow.nodes)

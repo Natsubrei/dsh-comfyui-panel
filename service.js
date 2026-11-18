@@ -539,6 +539,13 @@ export function createServiceController({
       // stop); drop it so the next start builds a fresh one.
       if (snap !== undefined && (snap.state === 'stopped' || snap.state === 'failed')) supervisor = null
       else if (snap !== undefined && snap.state !== 'external') return snapshot()
+      // Adopt before a supervisor exists. Creating one first makes `adopt`
+      // return immediately, and `supervisor.start` then marks a healthy port
+      // external, so Stop cannot reach a checkout this plugin may own.
+      if (supervisor === null) {
+        const healthy = await probe().catch(() => false)
+        if (healthy === true) return this.adopt(true)
+      }
       const target = ensureSupervisor()
       await target.start()
       lastError = null

@@ -62,7 +62,6 @@ window.__ModuleLoader__.load({
       statsTitle: '{{nodes}} nodes · {{links}} links · rev {{revision}}',
       editorLoading: 'Loading the editor…',
       bridgeUnavailable: 'ComfyUI did not expose its editor API. Check that the panel is served from /comfyui/.',
-      frontendUnverified: 'ComfyUI frontend {{installed}} is not the verified {{expected}}. Runs and edits may not show up.',
       syncFailed: 'Could not send the workflow to the Host.',
       // Not "Running": the server state already says that, and two "Running"
       // labels in one bar read as one contradictory sentence.
@@ -171,7 +170,6 @@ window.__ModuleLoader__.load({
       statsTitle: '{{nodes}} 个节点 · {{links}} 条连线 · rev {{revision}}',
       editorLoading: '正在加载编辑器…',
       bridgeUnavailable: 'ComfyUI 没有暴露编辑器 API。请确认面板是通过 /comfyui/ 同源加载的。',
-      frontendUnverified: '当前 ComfyUI 前端是 {{installed}}，本面板只验证过 {{expected}}。运行和编辑可能不会显示。',
       syncFailed: '工作流未能发送到 Host。',
       queued: '排队中',
       runNode: '节点 {{node}}',
@@ -957,6 +955,10 @@ window.__ModuleLoader__.load({
       const whyNotStop = () => {
         if (!known) return t('barUnknown')
         if (busy) return t('serverBusy')
+        // A live server this plugin does not own, including `state: 'external'`.
+        // A dead one still says nothing is running, even if the last snapshot
+        // was external: the pid can outlive the process.
+        if (healthy && !owned) return t('serverNotOwned')
         if (state === 'running') return t('serverNotOwned')
         return t('serverStopped')
       }
@@ -1453,6 +1455,38 @@ window.__ModuleLoader__.load({
       return run?.cancel === 'busy' ? t('runCancelling') : t('runCancel')
     }
 
+    /**
+     * Kinds a burst may collapse to the latest copy. Anything else is a
+     * different fact: `execution_success` followed by `status` must not
+     * disappear, or the Host's run record stays `running` after the graph
+     * has finished.
+     */
+    const REPLACEABLE_RELAY_KINDS = new Set(['progress', 'status', 'executing'])
+
+    /**
+     * Fold one event into the relay box.
+     *
+     * Same-kind progress, status, and executing replace whatever is waiting,
+     * because the Host only needs the latest of those. A different kind is
+     * returned so the caller posts it now; the new event waits for the next gap.
+     * @param {{ pending: object | null }} box - the relay's one waiting slot.
+     * @param {object} event - the event just mapped from the editor bus.
+     * @returns {object | null} the event to post immediately, when one was displaced.
+     */
+    function offerRelayEvent(box, event) {
+      const pending = box.pending
+      if (pending !== null && pending.kind === event.kind && REPLACEABLE_RELAY_KINDS.has(event.kind)) {
+        box.pending = event
+        return null
+      }
+      if (pending !== null) {
+        box.pending = event
+        return pending
+      }
+      box.pending = event
+      return null
+    }
+
     /** Event kinds the editor's bus dispatches that the Host records. */
     const PANEL_EVENTS = [
       'status',
@@ -1882,6 +1916,9 @@ window.__ModuleLoader__.load({
      * (`screen = (graph + offset) * scale`) for frontends without commands.
      */
     async function fitCanvas(app) {
+      // FitView toasts "Empty canvas" when the graph has no nodes. A load of
+      // an empty workflow must not show a toast the user did not ask for.
+      if (nodeBounds(app?.rootGraph ?? app?.graph) === null) return false
       const command = app?.extensionManager?.command
       if (typeof command?.execute === 'function') {
         try {
@@ -2098,6 +2135,40 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Apply a batch of edits and prove the Host received the graph.
+     *
+     * The canvas changes before the sync. A caller that ignores a failed sync
+     * tells the model the edit landed while the Host still mirrors the previous
+     * graph, which is the mistake `loadWorkflow` already refuses.
+     * @param {any} app - the editor's `comfyAPI.app.app`.
+     * @param {any[]} operations - the edit batch.
+     * @param {{ liteGraph: any, sync: () => Promise<boolean>, onApplied?: (summary: string, touched: Set<number>) => void }} hooks
+     *   `sync` reports whether the state POST landed. `onApplied` runs after the
+     *   canvas changes and before that proof, so a toast still shows when the
+     *   mirror fails.
+     * @returns {Promise<{applied: number, nodes: number, links: number, operations: any[]}>}
+     */
+    async function applyEdits(app, operations, { liteGraph, sync, onApplied }) {
+      const graph = app.rootGraph ?? app.graph
+      if (graph === undefined || graph === null || liteGraph === undefined) throw new Error('ComfyUI graph is not ready')
+      const applied = []
+      const touched = new Set()
+      const parts = []
+      for (const operation of operations) {
+        const result = applyOperation({ graph, LiteGraph: liteGraph, app, operation })
+        applied.push(result)
+        const ids = [operation?.id, result?.id, operation?.to?.id, operation?.from?.id]
+        for (const id of ids) if (Number.isSafeInteger(Number(id))) touched.add(Number(id))
+        parts.push(describeOperation(operation, result))
+      }
+      graph.setDirtyCanvas?.(true, true)
+      onApplied?.(parts.join(' · '), touched)
+      if (!(await sync())) throw new Error('The edit was applied, but the Host did not receive it; retry Sync')
+      const links = graph.links instanceof Map ? graph.links.size : Object.keys(graph.links ?? {}).length
+      return { applied: applied.length, nodes: graph._nodes?.length ?? 0, links, operations: applied }
+    }
+
+    /**
      * Capture the editor canvas as a PNG data URL.
      *
      * The panel is the only place that can see the graph: the Host stores the
@@ -2114,22 +2185,31 @@ window.__ModuleLoader__.load({
       if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png')) {
         throw new Error('The editor canvas refused to serialize as PNG')
       }
-      // The command channel carries this as one JSON body. A large retina canvas
-      // can serialize past a few megabytes, so halve it once before sending
-      // rather than letting the round trip fail on a body limit.
-      if (dataUrl.length > 3_000_000 && typeof document !== 'undefined' && typeof document.createElement === 'function') {
+      // The result route rejects a body over 1_000_000 characters before the
+      // command is answered, and the panel used to swallow that 413. Shrink
+      // until the data URL fits, with room for the JSON around it, and report
+      // the size actually sent.
+      const budget = 900_000
+      let width = canvas.width
+      let height = canvas.height
+      let source = canvas
+      while (dataUrl.length > budget && width > 1 && height > 1
+        && typeof document !== 'undefined' && typeof document.createElement === 'function') {
         const copy = document.createElement('canvas')
-        copy.width = Math.max(1, Math.round(canvas.width / 2))
-        copy.height = Math.max(1, Math.round(canvas.height / 2))
-        copy.getContext('2d')?.drawImage(canvas, 0, 0, copy.width, copy.height)
-        dataUrl = copy.toDataURL('image/png')
+        width = Math.max(1, Math.round(width / 2))
+        height = Math.max(1, Math.round(height / 2))
+        copy.width = width
+        copy.height = height
+        copy.getContext('2d')?.drawImage(source, 0, 0, width, height)
+        const next = copy.toDataURL('image/png')
+        if (typeof next !== 'string' || !next.startsWith('data:image/png') || next.length >= dataUrl.length) break
+        dataUrl = next
+        source = copy
       }
-      return {
-        kind: 'screenshot',
-        dataUrl,
-        width: canvas.width,
-        height: canvas.height,
+      if (dataUrl.length > budget) {
+        throw new Error('The screenshot is too large for the command channel; zoom out and retry')
       }
+      return { kind: 'screenshot', dataUrl, width, height }
     }
 
     /**
@@ -2375,7 +2455,7 @@ window.__ModuleLoader__.load({
      * @param {() => any | null} options.editor - returns the adapter for the editor to sync now, or null before the panel has booted it.
      * @param {(payload: any) => Promise<any | null>} options.post - sends one state body and resolves to its parsed response, or null when the body cannot be parsed.
      * @param {() => number} options.now - the clock for the last-sync stamp.
-     * @param {() => void} [options.onPost] - called once a push decides to post, before the prompt conversion, so the caller can show its pending state.
+     * @param {() => void} [options.onPost] - called once a push decides to post, so the caller can show its pending state. A superseded push does not call it.
      * @param {() => string} [options.bridgeError] - the message for a push whose editor exposes no graph.
      * @returns {{push: (force?: boolean) => Promise<any>, snapshot: () => any, reset: () => void, adopt: (name: string) => void}}
      *   `push` reports the decision; `snapshot` reads what the last successful
@@ -2385,6 +2465,7 @@ window.__ModuleLoader__.load({
      */
     function createSync({ sessionId, editor, post, now, onPost, bridgeError }) {
       let revision = 0
+      let pushSeq = 0
       let lastJson = ''
       /** The tab list travels outside the graph, so it needs its own signature. */
       let lastTabsJson = ''
@@ -2399,8 +2480,18 @@ window.__ModuleLoader__.load({
       let lastLinks = 0
       let lastTabs = 0
       let lastAt = 0
-      /** Bumped by every push; a slower one must not overtake a newer snapshot. */
+      /**
+       * Bumped only by a push that will try to post. A quiet tick must not
+       * take a number: it would cancel an in-flight post that the Host is
+       * about to accept, and the next tick would then see no change.
+       */
       let generation = 0
+      /**
+       * The newest push that has decided to post. An older call waits for this
+       * instead of reporting failure while that newer snapshot is on its way.
+       * @type {Promise<any>}
+       */
+      let latest = Promise.resolve({ posted: false })
 
       /**
        * What the last successful sync left behind, for a caller that has no
@@ -2441,14 +2532,7 @@ window.__ModuleLoader__.load({
        */
       async function push(force = false) {
         if (sessionId === undefined || sessionId === null) return { posted: false, ...snapshot() }
-        try {
-          return await pushOnce(force)
-        } catch (error) {
-          // The signature no longer matches what the Host holds, so the next
-          // tick has to retry this graph instead of skipping it as unchanged.
-          lastJson = ''
-          throw error
-        }
+        return pushOnce(force)
       }
 
       /**
@@ -2457,7 +2541,6 @@ window.__ModuleLoader__.load({
        * @returns {Promise<any>} what the caller should render.
        */
       async function pushOnce(force) {
-        const started = ++generation
         const view = editor()
         if (view === null || view === undefined) throw new Error(bridgeError?.() ?? 'The editor is not ready')
         const graph = view.graph()
@@ -2498,77 +2581,121 @@ window.__ModuleLoader__.load({
         if (!force && json === lastJson && !renamed && tabsJson === lastTabsJson) {
           return { posted: false, ...snapshot() }
         }
-        lastJson = json
-        lastTabsJson = tabsJson
-        onPost?.()
-        let semantic = null
-        try {
-          semantic = view.project()
-        } catch {
-          // A projection failure must not block the raw workflow sync.
-        }
-        let prompt = null
-        try {
-          const converted = await view.toPrompt()
-          prompt = converted?.output ?? null
-        } catch {
-          // A graph that cannot be converted yet (missing links, empty graph)
-          // still syncs; the run tool will report the missing prompt.
-        }
-        // A newer push started while this one was converting the graph. Its
-        // snapshot is later than ours, so posting this one would make the Host
-        // store an older workflow under a higher revision — and nothing would
-        // correct it, because `lastJson` already holds the newer json and the
-        // next tick sees no change.
-        if (started !== generation) return { posted: false, ...snapshot() }
-        revision += 1
-        const nodes = Array.isArray(workflow.nodes) ? workflow.nodes.length : 0
-        const links = Array.isArray(workflow.links) ? workflow.links.length : 0
-        const saved = await post({
-          sessionId,
-          workflow,
-          prompt,
-          semantic,
-          revision,
-          clientId,
-          // The file the editor has open, on every push: the Host drops a name
-          // that no longer describes the canvas, and a quiet re-sync would
-          // otherwise leave the old one attached.
-          file: editorName,
-          tabs,
-          // A canvas without a file reports only that. `file: null` is what
-          // tells the Host to drop a name that came from a file, while a name a
-          // workflow tool gave the canvas survives — which is what a temporary
-          // tab opened over a saved slot should do.
-          ...(renamed && editorName !== null ? { name: editorName } : {}),
+        // Taken before the prompt conversion and the POST, so a slower push
+        // carries an earlier stamp even when its response arrives last. Not
+        // named `syncedAt`: that string is the bar's "synced at" label. A quiet
+        // tick never reaches here, so it cannot supersede a push that is posting.
+        const started = ++generation
+        const pushedAt = now() * 1000 + (pushSeq % 1000)
+        pushSeq += 1
+        /** @type {(value: any) => void} */
+        let finish = () => {}
+        /** @type {(error: unknown) => void} */
+        let fail = () => {}
+        const run = new Promise((resolve, reject) => {
+          finish = resolve
+          fail = reject
         })
-        // The Host keeps the revision monotonic across page reloads, so adopt
-        // its number: showing the page-local counter made the panel say rev 14
-        // while the same workflow read rev 49 from the model side.
-        const persisted = Number.isSafeInteger(saved?.revision) ? saved.revision : revision
-        revision = Math.max(revision, persisted)
-        lastEditorName = editorName
-        const hostName = typeof saved?.name === 'string' && saved.name.length > 0 ? saved.name : null
-        // Only a name the Host *changed* is pushed into the editor: a steady
-        // name must not fight a file the user opened in the meantime.
-        const hostRenamed = lastHostName !== hostName
-        lastHostName = hostName
-        // An unparseable body says nothing about the name; a body without one
-        // means the Host cleared it.
-        if (saved !== null && saved !== undefined) displayName = hostName
-        lastNodes = nodes
-        lastLinks = links
-        lastTabs = tabs.length
-        lastAt = now()
-        return {
-          posted: true,
-          revision,
-          name: displayName,
-          nodes,
-          links,
-          tabs: lastTabs,
-          at: lastAt,
-          adoptName: hostRenamed && hostName !== null && hostName !== editorName ? hostName : null,
+        // Assigned before `send` can await, so a push that loses the race waits
+        // for this promise and never for itself.
+        latest = run
+        void send().then(finish, fail)
+        return run
+
+        /**
+         * Post this snapshot, or wait for the newer one that took the generation.
+         * @returns {Promise<any>} the result the caller should treat as its own.
+         */
+        async function send() {
+          let semantic = null
+          try {
+            semantic = view.project()
+          } catch {
+            // A projection failure must not block the raw workflow sync.
+          }
+          let prompt = null
+          try {
+            const converted = await view.toPrompt()
+            prompt = converted?.output ?? null
+          } catch {
+            // A graph that cannot be converted yet (missing links, empty graph)
+            // still syncs; the run tool will report the missing prompt.
+          }
+          // A newer push started while this one was converting the graph. Posting
+          // this snapshot would store an older workflow under a higher revision.
+          // Leave the signature unset so the winner, or the next tick, still sees
+          // the change. The caller waits for that winner instead of being told
+          // the Host missed an edit the winner is about to send.
+          if (started !== generation) return latest
+          lastJson = json
+          lastTabsJson = tabsJson
+          onPost?.()
+          revision += 1
+          const nodes = Array.isArray(workflow.nodes) ? workflow.nodes.length : 0
+          const links = Array.isArray(workflow.links) ? workflow.links.length : 0
+          try {
+            const saved = await post({
+              sessionId,
+              workflow,
+              prompt,
+              semantic,
+              revision,
+              clientId,
+              // The file the editor has open, on every push: the Host drops a name
+              // that no longer describes the canvas, and a quiet re-sync would
+              // otherwise leave the old one attached.
+              file: editorName,
+              pushedAt,
+              tabs,
+              // A canvas without a file reports only that. `file: null` is what
+              // tells the Host to drop a name that came from a file, while a name a
+              // workflow tool gave the canvas survives — which is what a temporary
+              // tab opened over a saved slot should do.
+              ...(renamed && editorName !== null ? { name: editorName } : {}),
+            })
+            // The POST landed, but a newer snapshot has since taken over. Adopting
+            // this response would move the page counter backwards. The Host keeps
+            // the newer body because this one carries the earlier stamp, and the
+            // caller observes that newer push's result.
+            if (started !== generation) return latest
+            // The Host keeps the revision monotonic across page reloads, so adopt
+            // its number: showing the page-local counter made the panel say rev 14
+            // while the same workflow read rev 49 from the model side.
+            const persisted = Number.isSafeInteger(saved?.revision) ? saved.revision : revision
+            revision = Math.max(revision, persisted)
+            lastEditorName = editorName
+            const hostName = typeof saved?.name === 'string' && saved.name.length > 0 ? saved.name : null
+            // Only a name the Host *changed* is pushed into the editor: a steady
+            // name must not fight a file the user opened in the meantime.
+            const hostRenamed = lastHostName !== hostName
+            lastHostName = hostName
+            // An unparseable body says nothing about the name; a body without one
+            // means the Host cleared it.
+            if (saved !== null && saved !== undefined) displayName = hostName
+            lastNodes = nodes
+            lastLinks = links
+            lastTabs = tabs.length
+            lastAt = now()
+            return {
+              posted: true,
+              revision,
+              name: displayName,
+              nodes,
+              links,
+              tabs: lastTabs,
+              at: lastAt,
+              adoptName: hostRenamed && hostName !== null && hostName !== editorName ? hostName : null,
+            }
+          } catch (error) {
+            // A newer snapshot owns the outcome. This POST failed, but failing
+            // the caller would report a lost edit while that snapshot is still
+            // going out — and a retry would apply it twice.
+            if (started !== generation) return latest
+            // The signature no longer matches what the Host holds, so the next
+            // tick has to retry this graph instead of skipping it as unchanged.
+            lastJson = ''
+            throw error
+          }
         }
       }
 
@@ -2792,8 +2919,11 @@ window.__ModuleLoader__.load({
           return false
         }
         try {
-          applySync(app, await loop.push(force))
-          return true
+          const result = await loop.push(force)
+          applySync(app, result)
+          // `posted: false` here is a quiet tick, not a lost edit: a forced push
+          // that lost the race resolves with the newer push's result.
+          return result?.posted === true
         } catch (error) {
           setStatus('error')
           setMessage(error instanceof Error ? error.message : String(error))
@@ -2802,29 +2932,14 @@ window.__ModuleLoader__.load({
       }, [applySync, loop, readApp, t])
 
       const applyOperations = useCallback(async (app, operations) => {
-        const win = iframeRef.current?.contentWindow
-        const LiteGraph = win?.LiteGraph
-        const graph = app.rootGraph ?? app.graph
-        if (graph === undefined || graph === null || LiteGraph === undefined) throw new Error('ComfyUI graph is not ready')
-        const applied = []
-        const touched = new Set()
-        const parts = []
-        for (const operation of operations) {
-          const result = applyOperation({ graph, LiteGraph, app, operation })
-          applied.push(result)
-          const ids = [operation?.id, result?.id, operation?.to?.id, operation?.from?.id]
-          for (const id of ids) if (Number.isSafeInteger(Number(id))) touched.add(Number(id))
-          parts.push(describeOperation(operation, result))
-        }
-        graph.setDirtyCanvas?.(true, true)
-        setNotice({ text: `${t('modelEdited')}: ${parts.join(' · ')}`, at: Date.now() })
-        flashNodes(app, touched)
-        await syncNow(true)
-        // Counters travel with the edit so a batch that half-applied (a graph
-        // left with no links) is visible in the tool result, not only in the
-        // next status read.
-        const links = graph.links instanceof Map ? graph.links.size : Object.keys(graph.links ?? {}).length
-        return { applied: applied.length, nodes: graph._nodes?.length ?? 0, links, operations: applied }
+        return applyEdits(app, operations, {
+          liteGraph: iframeRef.current?.contentWindow?.LiteGraph,
+          sync: () => syncNow(true),
+          onApplied: (summary, touched) => {
+            setNotice({ text: `${t('modelEdited')}: ${summary}`, at: Date.now() })
+            flashNodes(app, touched)
+          },
+        })
       }, [syncNow, t])
 
       const applyWorkflow = useCallback((app, workflow, name) => loadWorkflow(app, workflow, {
@@ -2913,19 +3028,24 @@ window.__ModuleLoader__.load({
       const postEvent = useCallback((event) => {
         if (sessionId === undefined || sessionId === null) return
         const box = eventRef.current
-        box.pending = event
+        const send = payload => {
+          void fetch(EVENT_URL, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sessionId, event: payload }),
+          }).catch(() => {})
+        }
+        const displaced = offerRelayEvent(box, event)
+        if (displaced !== null) send(displaced)
         if (box.timer !== null) return
         const wait = Math.max(0, 200 - (Date.now() - box.sentAt))
         box.timer = setTimeout(() => {
           box.timer = null
           const payload = box.pending
           box.pending = null
+          if (payload === null) return
           box.sentAt = Date.now()
-          void fetch(EVENT_URL, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ sessionId, event: payload }),
-          }).catch(() => {})
+          send(payload)
         }, wait)
       }, [sessionId])
 
@@ -3278,9 +3398,6 @@ window.__ModuleLoader__.load({
           onCancel: () => { void cancelRun() },
         }),
         message === '' ? null : h('div', { className: 'dsh-comfyui-notice', 'data-tone': status === 'error' ? 'error' : 'info' }, message),
-        service?.frontend?.status === 'mismatch'
-          ? h('div', { className: 'dsh-comfyui-notice', 'data-tone': 'info' }, t('frontendUnverified').replace('{{installed}}', String(service.frontend.installed)).replace('{{expected}}', String(service.frontend.expected)))
-          : null,
         // Explicit-only: an unhealthy upstream must not force this open, and it
         // floats, so opening it never resizes the canvas.
         serviceOpen ? serviceDialog : null,
@@ -4309,7 +4426,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale'],
       // Editor operations, dictionaries, and the bar/stage rules, exposed for
       // test/client-ops.mjs. The Host loader reads only `inject` and `apply`.
-      __ops: { applyOperation, captureGraph, applyWorkflowGraph, loadWorkflow, switchTab, closeTab, readTabs, tabLabel, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, mapApiEvent, relayEditorEvents, readPreview, progressSummary, applyRunEvent, runLabel, cancelLabel, TopBar, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, viewShowsAll, describeOperation, en, zh, createSync, parseMarkdown, parseInline, renderInline, renderMarkdown },
+      __ops: { applyOperation, applyEdits, captureGraph, applyWorkflowGraph, loadWorkflow, switchTab, closeTab, readTabs, tabLabel, coerceWidgetValue, frontendClientId, panelApp, workflowNameFromEditor, bindWorkflowLabel, mapApiEvent, offerRelayEvent, relayEditorEvents, readPreview, progressSummary, applyRunEvent, runLabel, cancelLabel, TopBar, barPlan, overlayPlan, servicePollMs, StageOverlay, projectGraph, fitCanvas, viewShowsAll, describeOperation, en, zh, createSync, parseMarkdown, parseInline, renderInline, renderMarkdown },
       apply(ctx) {
         const t = ctx.locale.bind(NS)
         // A cordis context throws on an uninjected service property, and that

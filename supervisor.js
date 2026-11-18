@@ -258,13 +258,20 @@ export function createSupervisor({ config, probe, logger }) {
 
   return {
     /**
-     * Begin supervising. Adopts a healthy external upstream, otherwise starts
-     * one and waits for the health probe before reporting `running`.
+     * Begin supervising. A healthy port that this supervisor did not spawn is
+     * left external; the controller adopts a checkout it may stop before
+     * calling this. Otherwise a child is started and the probe has to answer
+     * before the state is `running`.
      */
     async start() {
       if (stopping) return
+      // The controller adopts a healthy checkout by pid before calling this.
+      // A process already attached must not be downgraded to external just
+      // because the port answers.
+      if (status.state === 'running' && (child !== null || status.attached === true)) return
       const healthy = await probe().catch(() => false)
       if (healthy) {
+        if (status.state === 'running') return
         status.state = 'external'
         logger?.info(`dsh-comfyui: ComfyUI is already running upstream; supervising it in place`)
         monitor()

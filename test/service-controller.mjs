@@ -85,6 +85,39 @@ function makeController(initial = {}) {
   assert.equal(supervisor.calls.attach.length, 1)
 }
 
+{
+  const { controller, supervisor } = makeController()
+  const started = await controller.start()
+  assert.equal(started.state, 'running')
+  assert.equal(started.owned, true)
+  assert.deepEqual(supervisor.calls.attach, [4242])
+  assert.equal(supervisor.calls.start, 0, 'an already-listening checkout is not launched')
+}
+
+{
+  const { controller, supervisor } = makeController({ serves: false })
+  const started = await controller.start()
+  assert.equal(started.state, 'external')
+  assert.equal(started.owned, false)
+  assert.equal(supervisor.calls.start, 0, 'a foreign listener is not launched over')
+}
+
+{
+  const { controller, supervisor } = makeController({ healthy: false })
+  await controller.start()
+  assert.equal(supervisor.calls.start, 1, 'a quiet port is launched')
+}
+
+{
+  const { controller, supervisor } = makeController({ pid: null })
+  const started = await controller.start()
+  assert.equal(started.state, 'external')
+  assert.equal(started.owned, false)
+  assert.equal(started.pid, null)
+  assert.equal(supervisor.calls.start, 0, 'an unnamed listener is not launched over')
+  await assert.rejects(controller.stop(), /started outside the plugin/)
+}
+
 // A failed adoption is replaced, not repeated: once the checkout matches, the
 // external pid must not survive beside the managed process.
 {
